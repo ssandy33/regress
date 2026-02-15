@@ -5,11 +5,9 @@ pydantic-settings==2.7.1
 sqlalchemy==2.0.36
 yfinance==0.2.36
 fredapi==0.5.2
-scikit-learn==1.6.1
 statsmodels==0.14.4
 numpy==1.26.4
 pandas==2.2.3
-httpx==0.28.1
 tenacity==9.0.0
 python-dotenv==1.0.1
 pytest==8.3.4
