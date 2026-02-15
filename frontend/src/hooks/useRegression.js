@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import toast from 'react-hot-toast';
 import {
   runLinearRegression,
@@ -28,6 +28,12 @@ export function useRegression() {
 
   // Sidebar mode: 'standard' or 'realestate'
   const [sidebarTab, setSidebarTab] = useState('standard');
+
+  // Clear stale result when mode changes to prevent data/chart mismatch
+  useEffect(() => {
+    setResult(null);
+    setError(null);
+  }, [mode]);
 
   const runAnalysis = useCallback(async () => {
     setLoading(true);
