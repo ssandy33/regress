@@ -63,7 +63,6 @@ export function useRegression() {
     } catch (err) {
       const message = err.response?.data?.detail || err.message || 'Analysis failed';
       setError(message);
-      toast.error(message);
       setResult(null);
     } finally {
       setLoading(false);

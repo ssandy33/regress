@@ -162,7 +162,7 @@ function AnalysisPage() {
 
   const [showDifferenced, setShowDifferenced] = useState(false);
 
-  const { result, mode, loading, asset, compareAssets, annotations, addAnnotation, removeAnnotation } = regression;
+  const { result, mode, loading, error, asset, compareAssets, annotations, addAnnotation, removeAnnotation } = regression;
   const meta = result?.data_meta;
   const displayAsset = mode === 'compare' ? compareAssets.join(', ') : asset;
 
@@ -202,6 +202,16 @@ function AnalysisPage() {
       >
         {loading ? (
           <LoadingSkeleton />
+        ) : error && !result ? (
+          <div className="h-full flex items-center justify-center">
+            <div className="max-w-md text-center">
+              <svg className="w-16 h-16 mx-auto mb-4 text-red-300 dark:text-red-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+              <h2 className="text-lg font-medium text-slate-700 dark:text-slate-200 mb-2">Analysis failed</h2>
+              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            </div>
+          </div>
         ) : !result ? (
           <EmptyState />
         ) : (
