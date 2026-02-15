@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, create_engine
+from sqlalchemy import Column, String, Text, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
@@ -37,6 +37,16 @@ class AppSetting(Base):
 
 
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragma(dbapi_conn, connection_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
+
+
 SessionLocal = sessionmaker(bind=engine)
 
 
