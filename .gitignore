@@ -1,0 +1,14 @@
+.env
+*.db
+*.sqlite3
+__pycache__/
+node_modules/
+.DS_Store
+dist/
+build/
+*.pyc
+.pytest_cache/
+venv/
+.venv/
+*.egg-info/
+backend/data/backups/
