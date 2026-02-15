@@ -48,6 +48,18 @@ FRED_SERIES = {
     "WDXRNSA", "CEXRNSA",
     # FHFA HPI
     "USSTHPI",
+    # Economic indicators - Labor
+    "UNRATE", "ICSA", "PAYEMS",
+    # Economic indicators - Inflation
+    "CPIAUCSL", "PCEPI", "T10YIE",
+    # Economic indicators - GDP & Growth
+    "GDP", "GDPC1",
+    # Economic indicators - Consumer
+    "UMCSENT", "RSAFS",
+    # Economic indicators - Housing
+    "HOUST", "PERMIT", "MSPUS",
+    # Economic indicators - Money Supply & Credit
+    "M2SL", "TOTCI",
 }
 
 # --- Asset registry for search ---
@@ -82,6 +94,27 @@ ASSET_REGISTRY = [
     {"identifier": "SDXRNSA", "name": "Case-Shiller San Diego", "source": "fred", "category": "housing"},
     {"identifier": "WDXRNSA", "name": "Case-Shiller Washington DC", "source": "fred", "category": "housing"},
     {"identifier": "CEXRNSA", "name": "Case-Shiller Charlotte", "source": "fred", "category": "housing"},
+    # Economic indicators - Labor market
+    {"identifier": "UNRATE", "name": "US Unemployment Rate", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "ICSA", "name": "Initial Jobless Claims", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "PAYEMS", "name": "Total Nonfarm Payrolls", "source": "fred", "category": "economic_indicators"},
+    # Economic indicators - Inflation
+    {"identifier": "CPIAUCSL", "name": "Consumer Price Index (CPI)", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "PCEPI", "name": "PCE Price Index", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "T10YIE", "name": "10-Year Breakeven Inflation Rate", "source": "fred", "category": "economic_indicators"},
+    # Economic indicators - GDP & Growth
+    {"identifier": "GDP", "name": "Gross Domestic Product", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "GDPC1", "name": "Real GDP (inflation-adjusted)", "source": "fred", "category": "economic_indicators"},
+    # Economic indicators - Consumer
+    {"identifier": "UMCSENT", "name": "U of Michigan Consumer Sentiment", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "RSAFS", "name": "Advance Retail Sales", "source": "fred", "category": "economic_indicators"},
+    # Economic indicators - Housing
+    {"identifier": "HOUST", "name": "Housing Starts", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "PERMIT", "name": "Building Permits", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "MSPUS", "name": "Median Home Sale Price", "source": "fred", "category": "economic_indicators"},
+    # Economic indicators - Money Supply & Credit
+    {"identifier": "M2SL", "name": "M2 Money Supply", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "TOTCI", "name": "Total Consumer Credit", "source": "fred", "category": "economic_indicators"},
     # Market indices
     {"identifier": "^GSPC", "name": "S&P 500", "source": "yfinance", "category": "indices"},
     {"identifier": "^IXIC", "name": "NASDAQ Composite", "source": "yfinance", "category": "indices"},
