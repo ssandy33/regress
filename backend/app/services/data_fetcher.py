@@ -14,6 +14,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from app.config import settings, get_fred_api_key
 from app.models.schemas import DataMeta, DateRange
 from app.services.cache import CacheService
+from app.utils.transforms import _infer_frequency
 
 logger = logging.getLogger(__name__)
 
@@ -327,19 +328,6 @@ def _json_to_df(data_json: str) -> pd.DataFrame:
     df = df.set_index("date")
     df["value"] = df["value"].astype(float)
     return df
-
-
-def _infer_frequency(df: pd.DataFrame) -> str:
-    """Infer data frequency from a DataFrame."""
-    if len(df) < 2:
-        return "daily"
-    diffs = pd.Series(df.index).diff().dropna()
-    median_days = diffs.dt.days.median()
-    if median_days <= 7:
-        return "daily"
-    elif median_days <= 45:
-        return "monthly"
-    return "quarterly"
 
 
 def _build_meta(
