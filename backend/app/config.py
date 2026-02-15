@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./regression_tool.db"
     cache_ttl_daily_hours: int = 24
     cache_ttl_monthly_days: int = 7
+    cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

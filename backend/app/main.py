@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.config import settings as app_settings
 from app.models.database import init_db, SessionLocal
 from app.routers import assets, data, health, regression, sessions, settings
 from app.services.backup import create_backup
@@ -67,13 +68,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow all origins for development
+# CORS — restrict to configured origins (default: localhost dev servers)
+# In production behind Caddy, requests are same-origin so CORS is not needed.
+# Override with CORS_ORIGINS env var: CORS_ORIGINS="https://mysite.com,https://www.mysite.com"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[o.strip() for o in app_settings.cors_origins.split(",") if o.strip()],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
 # Include routers
