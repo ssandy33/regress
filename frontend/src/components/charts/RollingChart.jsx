@@ -59,10 +59,10 @@ export default function RollingChart({ result }) {
       y: result.r_squared_over_time,
       type: 'scatter',
       mode: 'lines',
-      name: 'R\u00B2',
+      name: 'R²',
       line: { color: '#f59e0b', width: 2 },
       yaxis: 'y2',
-      hovertemplate: 'R\u00B2: %{y:.4f}<extra></extra>',
+      hovertemplate: 'R²: %{y:.4f}<extra></extra>',
     },
   ];
 
@@ -97,7 +97,7 @@ export default function RollingChart({ result }) {
       titlefont: { color: '#2563eb' },
     },
     yaxis2: {
-      title: 'R\u00B2',
+      title: 'R²',
       titlefont: { color: '#f59e0b' },
       overlaying: 'y',
       side: 'right',

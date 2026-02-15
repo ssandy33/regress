@@ -34,13 +34,13 @@ function StationarityWarning({ result }) {
 
   let extraNote = '';
   if (result.differenced && result.r_squared > 0 && result.differenced.r_squared < result.r_squared * 0.5) {
-    extraNote = ` When trends are removed, R\u00B2 drops to ${formatNumber(result.differenced.r_squared, 4)}, suggesting the relationship is driven by coinciding trends.`;
+    extraNote = ` When trends are removed, R² drops to ${formatNumber(result.differenced.r_squared, 4)}, suggesting the relationship is driven by coinciding trends.`;
   }
 
   return (
     <div className="mb-3 px-4 py-2 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg text-sm text-yellow-800 dark:text-yellow-200">
       <strong>Spurious correlation risk:</strong> {nonStationary.join(', ')} {nonStationary.length === 1 ? 'is' : 'are'} trending (non-stationary).
-      High R\u00B2 may reflect shared trends rather than a real relationship.
+      High R² may reflect shared trends rather than a real relationship.
       {result.differenced && ' See differenced regression for a more reliable measure.'}
       {extraNote}
     </div>

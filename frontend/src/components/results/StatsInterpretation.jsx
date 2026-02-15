@@ -49,7 +49,7 @@ function interpretMultiFactor(result) {
       ? descriptions[0]
       : descriptions.slice(0, -1).join(', ') + ' and ' + descriptions[descriptions.length - 1];
 
-    text = `The dependent variable is ${joined}. Together, these factors explain ${formatPercent(r2)} of the variation (Adjusted R\u00B2: ${formatPercent(result.adjusted_r_squared)}).`;
+    text = `The dependent variable is ${joined}. Together, these factors explain ${formatPercent(r2)} of the variation (Adjusted R²: ${formatPercent(result.adjusted_r_squared)}).`;
   }
 
   // Stationarity caveat
@@ -101,11 +101,11 @@ function interpretRolling(result) {
 
   let change = '';
   if (recentR2 > earlierR2 + 0.15) {
-    change = `, strengthening from R\u00B2 ${formatNumber(earlierR2, 2)} to ${formatNumber(recentR2, 2)}`;
+    change = `, strengthening from R² ${formatNumber(earlierR2, 2)} to ${formatNumber(recentR2, 2)}`;
   } else if (recentR2 < earlierR2 - 0.15) {
-    change = `, weakening significantly from R\u00B2 ${formatNumber(earlierR2, 2)} to ${formatNumber(recentR2, 2)}`;
+    change = `, weakening significantly from R² ${formatNumber(earlierR2, 2)} to ${formatNumber(recentR2, 2)}`;
   } else {
-    change = ` with relatively stable trend strength (R\u00B2 around ${formatNumber(recentR2, 2)})`;
+    change = ` with relatively stable trend strength (R² around ${formatNumber(recentR2, 2)})`;
   }
 
   return `The asset shows a ${trendStrength} ${trendDirection} trend in the most recent window${change}. Current slope: ${formatNumber(recentSlope, 4)} per period.`;
@@ -118,7 +118,7 @@ function interpretCompare(result) {
   const best = sorted[0];
   const worst = sorted[sorted.length - 1];
 
-  return `${best.identifier} had the highest annualized return at ${formatPercent(best.annualized_return)} with ${formatPercent(best.volatility)} volatility. ${worst.identifier} had the lowest at ${formatPercent(worst.annualized_return)}. ${sorted[0].r_squared > 0.7 ? `${sorted[0].identifier} showed the most consistent trend (R\u00B2: ${formatNumber(sorted[0].r_squared, 2)}).` : 'None of the assets showed a particularly consistent trend.'}`;
+  return `${best.identifier} had the highest annualized return at ${formatPercent(best.annualized_return)} with ${formatPercent(best.volatility)} volatility. ${worst.identifier} had the lowest at ${formatPercent(worst.annualized_return)}. ${sorted[0].r_squared > 0.7 ? `${sorted[0].identifier} showed the most consistent trend (R²: ${formatNumber(sorted[0].r_squared, 2)}).` : 'None of the assets showed a particularly consistent trend.'}`;
 }
 
 export default function StatsInterpretation({ result, mode, asset }) {
