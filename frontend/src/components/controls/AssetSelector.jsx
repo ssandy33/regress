@@ -39,7 +39,7 @@ export default function AssetSelector({ value, onChange, multi = false, placehol
     }
   };
 
-  const categoryOrder = ['indices', 'stock', 'interest_rates', 'housing', 'commodities', 'other'];
+  const categoryOrder = ['indices', 'stock', 'interest_rates', 'economic_indicators', 'housing', 'commodities', 'other'];
 
   return (
     <div ref={wrapperRef} className="relative">

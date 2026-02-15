@@ -47,6 +47,7 @@ export function categoryLabel(category) {
     indices: 'Indices',
     interest_rates: 'Interest Rates',
     housing: 'Real Estate',
+    economic_indicators: 'Economic Indicators',
     commodities: 'Precious Metals',
     other: 'Other',
   };
