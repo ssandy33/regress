@@ -1,0 +1,35 @@
+{$DOMAIN} {
+	# Compression
+	encode gzip
+
+	# Security headers
+	header {
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		X-XSS-Protection "1; mode=block"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# Basic auth (conditionally injected by entrypoint script)
+	# BASIC_AUTH_BLOCK
+
+	# API reverse proxy
+	handle /api/* {
+		reverse_proxy backend:8000 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# Frontend reverse proxy
+	handle {
+		reverse_proxy frontend:80 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}

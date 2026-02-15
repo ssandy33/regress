@@ -152,6 +152,103 @@ When the backend is running, interactive API docs are available at:
 
 **Infrastructure**: Docker, nginx, Docker Compose
 
+## Production Deployment
+
+Deploy to a single VPS (Hetzner, DigitalOcean, or similar) with automatic HTTPS via Caddy.
+
+**Estimated cost:** $4.50–6/month for a small VPS with 2GB+ RAM.
+
+### Prerequisites
+
+- A VPS with 2GB+ RAM running Ubuntu/Debian
+- A domain name (e.g., `regression.yourdomain.com`)
+- DNS A record pointing your domain to the server's IP address
+- A FRED API key ([get one free](https://fred.stlouisfed.org/docs/api/api_key.html))
+
+### Deploy to a fresh server
+
+```bash
+# SSH into your server
+ssh root@your-server-ip
+
+# Clone the repo
+git clone <repo-url> /opt/regression-tool
+cd /opt/regression-tool
+
+# Run the deploy script
+sudo bash deploy/deploy.sh
+```
+
+The script will:
+- Install Docker and configure the firewall (UFW)
+- Prompt for your domain name, FRED API key, and optional basic auth credentials
+- Build and start all containers (Caddy + backend + frontend)
+- Print your live URL when done
+
+### Update to latest version
+
+```bash
+cd /opt/regression-tool
+bash deploy/update.sh
+```
+
+Pulls latest code, rebuilds containers, and cleans up old images.
+
+### Backup the database
+
+```bash
+cd /opt/regression-tool
+bash deploy/backup.sh
+```
+
+Creates a timestamped copy of the SQLite database and prints an `scp` command to download it.
+
+### Check status
+
+```bash
+cd /opt/regression-tool
+bash deploy/status.sh
+```
+
+Shows container health, resource usage, HTTPS cert expiry, and recent backend logs.
+
+### Friends-only access (basic auth)
+
+To restrict access to your group, add these to your `.env` file:
+
+```
+BASIC_AUTH_USER=myusername
+BASIC_AUTH_PASS=mypassword
+```
+
+Then restart Caddy:
+
+```bash
+docker compose -f docker-compose.prod.yml restart caddy
+```
+
+To remove basic auth, delete those lines from `.env` and restart Caddy.
+
+### DNS setup
+
+Create an **A record** in your DNS provider:
+
+| Type | Name | Value |
+|------|------|-------|
+| A | regression (or your subdomain) | Your server's IP address |
+
+Caddy will automatically obtain and renew HTTPS certificates from Let's Encrypt once DNS is pointing correctly.
+
+### Architecture (production)
+
+```
+Internet → Caddy (HTTPS, :80/:443)
+              ├── /api/*  → Backend (FastAPI, internal only)
+              └── /*      → Frontend (nginx, internal only)
+```
+
+Backend port 8000 is **not** exposed to the internet — only Caddy can reach it via Docker's internal network.
+
 ## Contributing
 
 1. Fork the repository
