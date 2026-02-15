@@ -3,11 +3,11 @@ import { Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import Layout from './components/layout/Layout';
 import LoadingSkeleton from './components/layout/LoadingSkeleton';
-import RegressionChart from './components/charts/RegressionChart';
-import ComparisonChart from './components/charts/ComparisonChart';
-import CompareChart from './components/charts/CompareChart';
-import ResidualChart from './components/charts/ResidualChart';
-import RollingChart from './components/charts/RollingChart';
+const RegressionChart = lazy(() => import('./components/charts/RegressionChart'));
+const ComparisonChart = lazy(() => import('./components/charts/ComparisonChart'));
+const CompareChart = lazy(() => import('./components/charts/CompareChart'));
+const ResidualChart = lazy(() => import('./components/charts/ResidualChart'));
+const RollingChart = lazy(() => import('./components/charts/RollingChart'));
 import StatsPanel from './components/results/StatsPanel';
 import StatsInterpretation from './components/results/StatsInterpretation';
 import DataQualityBadge from './components/results/DataQualityBadge';
@@ -230,19 +230,21 @@ function AnalysisPage() {
             )}
 
             {/* Chart */}
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: mode === 'rolling' ? '600px' : '400px' }}>
-              {mode === 'linear' && <RegressionChart result={result} annotations={annotations} earningsDates={regression.showEarnings ? result?.earnings_dates : null} />}
-              {mode === 'multi-factor' && <ComparisonChart result={activeResult} />}
-              {mode === 'rolling' && <RollingChart result={result} />}
-              {mode === 'compare' && <CompareChart result={result} annotations={annotations} />}
-            </div>
-
-            {/* Residuals chart for multi-factor */}
-            {mode === 'multi-factor' && activeResult.residuals && (
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: '200px' }}>
-                <ResidualChart result={activeResult} />
+            <Suspense fallback={<LoadingSkeleton />}>
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: mode === 'rolling' ? '600px' : '400px' }}>
+                {mode === 'linear' && <RegressionChart result={result} annotations={annotations} earningsDates={regression.showEarnings ? result?.earnings_dates : null} />}
+                {mode === 'multi-factor' && <ComparisonChart result={activeResult} />}
+                {mode === 'rolling' && <RollingChart result={result} />}
+                {mode === 'compare' && <CompareChart result={result} annotations={annotations} />}
               </div>
-            )}
+
+              {/* Residuals chart for multi-factor */}
+              {mode === 'multi-factor' && activeResult.residuals && (
+                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: '200px' }}>
+                  <ResidualChart result={activeResult} />
+                </div>
+              )}
+            </Suspense>
 
             {/* Annotations */}
             {(mode === 'linear' || mode === 'compare') && (
