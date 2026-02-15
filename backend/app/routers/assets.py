@@ -1,5 +1,6 @@
 import logging
 
+import requests as _requests
 from fastapi import APIRouter
 
 from app.models.schemas import AssetInfo, AssetSearchResponse
@@ -8,6 +9,52 @@ from app.services.data_fetcher import ASSET_REGISTRY
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/assets", tags=["assets"])
+
+_YAHOO_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+}
+
+
+def _validate_ticker_yahoo(symbol: str) -> dict | None:
+    """Validate a ticker via Yahoo Finance chart API. Returns {symbol, name} or None."""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
+        resp = _requests.get(url, headers=_YAHOO_HEADERS, timeout=5)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        result = data.get("chart", {}).get("result")
+        if not result:
+            return None
+        meta = result[0].get("meta", {})
+        if not meta.get("regularMarketPrice"):
+            return None
+        name = meta.get("shortName") or meta.get("longName") or symbol
+        return {"symbol": meta.get("symbol", symbol), "name": name}
+    except Exception:
+        logger.debug(f"Yahoo chart validation failed for '{symbol}'")
+        return None
+
+
+def _search_yahoo(query: str) -> list[dict]:
+    """Search Yahoo Finance for tickers matching a query string. Returns list of {symbol, name}."""
+    try:
+        url = "https://query2.finance.yahoo.com/v1/finance/search"
+        params = {"q": query, "quotesCount": 5, "newsCount": 0, "listsCount": 0}
+        resp = _requests.get(url, params=params, headers=_YAHOO_HEADERS, timeout=5)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        results = []
+        for quote in data.get("quotes", []):
+            symbol = quote.get("symbol")
+            name = quote.get("shortname") or quote.get("longname") or symbol
+            if symbol:
+                results.append({"symbol": symbol, "name": name})
+        return results
+    except Exception:
+        logger.debug(f"Yahoo search failed for '{query}'")
+        return []
 
 
 @router.get("/search", response_model=AssetSearchResponse)
@@ -18,6 +65,9 @@ def search_assets(q: str, offline: bool = False):
         return AssetSearchResponse(results=[])
 
     results = []
+    seen_identifiers = set()
+
+    # 1. Registry matches
     for asset in ASSET_REGISTRY:
         if (
             query in asset["identifier"].lower()
@@ -25,62 +75,12 @@ def search_assets(q: str, offline: bool = False):
             or query in asset["category"].lower()
         ):
             results.append(AssetInfo(**asset))
+            seen_identifiers.add(asset["identifier"].upper())
 
-    # If no match in registry, try yfinance validation (skip when offline)
-    if not results and not offline:
-        validated = False
+    if offline:
+        # When offline, offer raw query as unverified ticker if no registry match
         ticker_symbol = q.upper().strip()
-
-        # Attempt 1: fast_info (lightweight, less likely to be rate-limited)
-        try:
-            import yfinance as yf
-            ticker = yf.Ticker(ticker_symbol)
-            fi = ticker.fast_info
-            last_price = fi.get("lastPrice")
-            if last_price is not None and last_price > 0:
-                validated = True
-                results.append(
-                    AssetInfo(
-                        identifier=ticker_symbol,
-                        name=ticker_symbol,
-                        source="yfinance",
-                        category="stock",
-                    )
-                )
-        except Exception:
-            logger.debug(f"yfinance fast_info failed for '{q}'")
-
-        # Attempt 2: ticker.info for name resolution
-        if validated:
-            try:
-                info = ticker.info
-                name = info.get("shortName") or info.get("longName")
-                if name:
-                    results[-1] = AssetInfo(
-                        identifier=ticker_symbol,
-                        name=name,
-                        source="yfinance",
-                        category="stock",
-                    )
-            except Exception:
-                pass  # Keep the result from fast_info
-
-        # Attempt 3: If both failed, still offer the ticker as unverified
-        # so users can try it — actual validation happens at data fetch time
-        if not validated and len(ticker_symbol) <= 6 and ticker_symbol.isalpha():
-            results.append(
-                AssetInfo(
-                    identifier=ticker_symbol,
-                    name=f"{ticker_symbol} (unverified)",
-                    source="yfinance",
-                    category="stock",
-                )
-            )
-
-    # When offline and no registry match, offer ticker as unverified
-    if not results and offline:
-        ticker_symbol = q.upper().strip()
-        if len(ticker_symbol) <= 6 and ticker_symbol.isalpha():
+        if ticker_symbol not in seen_identifiers and len(ticker_symbol) <= 6 and ticker_symbol.isalpha():
             results.append(
                 AssetInfo(
                     identifier=ticker_symbol,
@@ -89,6 +89,34 @@ def search_assets(q: str, offline: bool = False):
                     category="stock",
                 )
             )
+        return AssetSearchResponse(results=results)
+
+    # 2. Always try to validate the raw query as a ticker symbol
+    ticker_symbol = q.upper().strip()
+    if ticker_symbol not in seen_identifiers and len(ticker_symbol) <= 6 and ticker_symbol.isalnum():
+        validated = _validate_ticker_yahoo(ticker_symbol)
+        if validated:
+            results.insert(0, AssetInfo(
+                identifier=validated["symbol"],
+                name=validated["name"],
+                source="yfinance",
+                category="stock",
+            ))
+            seen_identifiers.add(validated["symbol"].upper())
+
+    # 3. Search Yahoo Finance for company name -> ticker resolution
+    #    (e.g. "Ford" -> "F", "Apple" -> "AAPL")
+    if len(query) >= 2:
+        search_results = _search_yahoo(q.strip())
+        for sr in search_results:
+            if sr["symbol"].upper() not in seen_identifiers:
+                results.append(AssetInfo(
+                    identifier=sr["symbol"],
+                    name=sr["name"],
+                    source="yfinance",
+                    category="stock",
+                ))
+                seen_identifiers.add(sr["symbol"].upper())
 
     return AssetSearchResponse(results=results)
 
