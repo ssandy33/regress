@@ -85,6 +85,195 @@ pytest tests/ -v
 
 ## Architecture
 
+### System Context
+
+```mermaid
+graph TB
+    User["Analyst"]
+    App["Regression Analysis Tool<br/><i>FastAPI + React</i>"]
+    Yahoo["Yahoo Finance<br/><i>Stocks, indices, commodities</i>"]
+    FRED["FRED API<br/><i>Rates, housing, economic data</i>"]
+    Zillow["Zillow Research<br/><i>ZHVI home values by zip</i>"]
+
+    User -->|"HTTPS"| App
+    App -->|"HTTPS"| Yahoo
+    App -->|"HTTPS + API key"| FRED
+    App -->|"HTTPS (CSV)"| Zillow
+
+    style App fill:#438DD5,color:#fff
+    style Yahoo fill:#999,color:#fff
+    style FRED fill:#999,color:#fff
+    style Zillow fill:#999,color:#fff
+```
+
+### Container Diagram
+
+```mermaid
+graph TB
+    User["Analyst"]
+
+    subgraph sys ["Regression Analysis Tool"]
+        Frontend["Frontend SPA<br/><i>React 19, Plotly, Tailwind CSS</i>"]
+        Backend["Backend API<br/><i>FastAPI, Python 3.12</i>"]
+        DB[("SQLite<br/><i>Cache, sessions, settings</i>")]
+    end
+
+    Yahoo["Yahoo Finance"]
+    FRED["FRED API"]
+    Zillow["Zillow Research"]
+
+    User -->|"HTTPS"| Frontend
+    Frontend -->|"HTTP/JSON"| Backend
+    Backend -->|"SQLAlchemy"| DB
+    Backend -->|"yfinance + direct API"| Yahoo
+    Backend -->|"fredapi (throttled)"| FRED
+    Backend -->|"CSV download"| Zillow
+
+    style Frontend fill:#438DD5,color:#fff
+    style Backend fill:#438DD5,color:#fff
+    style DB fill:#438DD5,color:#fff
+    style Yahoo fill:#999,color:#fff
+    style FRED fill:#999,color:#fff
+    style Zillow fill:#999,color:#fff
+```
+
+### Backend Components
+
+```mermaid
+graph TB
+    subgraph Routers
+        RR["Regression Router<br/><i>linear, multi-factor,<br/>rolling, compare</i>"]
+        DR["Data Router<br/><i>GET /data/{ticker}<br/>GET /data/zillow/{zip}</i>"]
+        AR["Assets Router<br/><i>search, case-shiller,<br/>suggest</i>"]
+        SR["Sessions Router<br/><i>CRUD /sessions</i>"]
+        STR["Settings Router<br/><i>config, cache mgmt,<br/>backups</i>"]
+        HR["Health Router<br/><i>source checks</i>"]
+    end
+
+    subgraph Services
+        DF["Data Fetcher<br/><i>Source detection, retry,<br/>dual Yahoo endpoints,<br/>FRED throttle</i>"]
+        RS["Regression Service<br/><i>OLS, ADF stationarity,<br/>VIF, Durbin-Watson</i>"]
+        CS["Cache Service<br/><i>Frequency-aware TTL,<br/>fresh/stale retrieval</i>"]
+        BS["Backup Service<br/><i>SQLite backup/restore</i>"]
+        TR["Transforms<br/><i>Align datasets,<br/>frequency inference</i>"]
+    end
+
+    DB[("SQLite<br/><i>cache, sessions,<br/>app_settings</i>")]
+    Yahoo["Yahoo Finance"]
+    FRED["FRED API"]
+    Zillow["Zillow Research"]
+
+    RR --> RS
+    RR --> DF
+    RR --> TR
+    DR --> DF
+    AR --> DF
+    SR --> DB
+    STR --> CS
+    STR --> BS
+    HR --> Yahoo
+    HR --> FRED
+
+    DF --> CS
+    DF --> Yahoo
+    DF --> FRED
+    DF --> Zillow
+    CS --> DB
+    BS --> DB
+
+    style RR fill:#438DD5,color:#fff
+    style DR fill:#438DD5,color:#fff
+    style AR fill:#438DD5,color:#fff
+    style SR fill:#438DD5,color:#fff
+    style STR fill:#438DD5,color:#fff
+    style HR fill:#438DD5,color:#fff
+    style DF fill:#1168BD,color:#fff
+    style RS fill:#1168BD,color:#fff
+    style CS fill:#1168BD,color:#fff
+    style BS fill:#1168BD,color:#fff
+    style TR fill:#1168BD,color:#fff
+    style DB fill:#438DD5,color:#fff
+    style Yahoo fill:#999,color:#fff
+    style FRED fill:#999,color:#fff
+    style Zillow fill:#999,color:#fff
+```
+
+### Frontend Components
+
+```mermaid
+graph TB
+    subgraph Pages
+        AP["AnalysisPage<br/><i>Main analysis UI</i>"]
+        SP["SettingsPage<br/><i>FRED key, cache, backups</i>"]
+        HP["HelpPage<br/><i>Docs & data sources</i>"]
+    end
+
+    subgraph UI ["UI Components"]
+        Layout["Layout<br/><i>Header, Sidebar,<br/>OfflineBanner</i>"]
+        Controls["Controls<br/><i>AssetSelector, DateRange,<br/>ComparePicker, ModeSelector</i>"]
+        Charts["Charts<br/><i>Regression, Comparison,<br/>Residual, Rolling, Compare</i>"]
+        Results["Results<br/><i>StatsPanel, Interpretation,<br/>DataQuality, Export</i>"]
+    end
+
+    subgraph State ["State Management"]
+        UR["useRegression<br/><i>Analysis state & modes</i>"]
+        US["useSessions<br/><i>Save/load sessions</i>"]
+        UA["useAssetSearch<br/><i>Search with offline fallback</i>"]
+        UH["useSourceHealth<br/><i>Data source availability</i>"]
+    end
+
+    API["API Client<br/><i>Axios, 30s timeout</i>"]
+    CTX["Contexts<br/><i>Theme (dark/light),<br/>Offline awareness</i>"]
+    Backend["Backend API"]
+
+    AP --> Layout
+    AP --> Controls
+    AP --> Charts
+    AP --> Results
+
+    AP --> UR
+    AP --> US
+    Controls --> UA
+    Layout --> UH
+
+    UR --> API
+    US --> API
+    UA --> API
+    UH --> API
+    Layout --> CTX
+
+    API -->|"HTTP/JSON"| Backend
+
+    style AP fill:#438DD5,color:#fff
+    style SP fill:#438DD5,color:#fff
+    style HP fill:#438DD5,color:#fff
+    style Layout fill:#438DD5,color:#fff
+    style Controls fill:#438DD5,color:#fff
+    style Charts fill:#438DD5,color:#fff
+    style Results fill:#438DD5,color:#fff
+    style UR fill:#1168BD,color:#fff
+    style US fill:#1168BD,color:#fff
+    style UA fill:#1168BD,color:#fff
+    style UH fill:#1168BD,color:#fff
+    style API fill:#1168BD,color:#fff
+    style CTX fill:#1168BD,color:#fff
+    style Backend fill:#999,color:#fff
+```
+
+### Key Design Decisions
+
+| Decision | Detail |
+|---|---|
+| **Cache-first fetching** | All data checks SQLite cache before calling external APIs |
+| **Frequency-aware TTL** | Daily data cached 24h, monthly/quarterly cached 7 days |
+| **Stale fallback** | If API fails after retries, serves stale cache with `is_stale` flag |
+| **Dual Yahoo endpoints** | yfinance library (query2) with direct API (query1) fallback |
+| **FRED throttle** | Thread-safe 500ms minimum interval between calls |
+| **Exponential backoff** | 3 attempts with 2-10s waits (Yahoo) and 1-4s waits (FRED) |
+| **Stationarity checks** | ADF test + auto-differencing for non-stationary series |
+
+### Project Structure
+
 ```
 regression_tool/
 ├── backend/                    # Python/FastAPI
