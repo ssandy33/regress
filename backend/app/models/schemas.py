@@ -90,6 +90,7 @@ class LinearRegressionResponse(BaseModel):
     data_meta: DataMeta
     durbin_watson: Optional[float] = None
     sample_size: Optional[int] = None
+    earnings_dates: Optional[list[str]] = None
 
 
 class MultiFactorResponse(BaseModel):

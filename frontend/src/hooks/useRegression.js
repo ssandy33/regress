@@ -29,10 +29,14 @@ export function useRegression() {
   // Sidebar mode: 'standard' or 'realestate'
   const [sidebarTab, setSidebarTab] = useState('standard');
 
+  // Earnings overlay toggle
+  const [showEarnings, setShowEarnings] = useState(false);
+
   // Clear stale result when mode changes to prevent data/chart mismatch
   useEffect(() => {
     setResult(null);
     setError(null);
+    setShowEarnings(false);
   }, [mode]);
 
   const runAnalysis = useCallback(async () => {
@@ -86,6 +90,7 @@ export function useRegression() {
     setWindowSize(30);
     setAnnotations([]);
     setSidebarTab('standard');
+    setShowEarnings(false);
     setResult(null);
     setError(null);
   }, []);
@@ -116,6 +121,7 @@ export function useRegression() {
     windowSize, setWindowSize,
     annotations, addAnnotation, removeAnnotation, setAnnotations,
     sidebarTab, setSidebarTab,
+    showEarnings, setShowEarnings,
     result, loading, error,
     runAnalysis, reset, restoreParams, getConfig,
   };

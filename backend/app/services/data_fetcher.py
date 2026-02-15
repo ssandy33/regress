@@ -60,6 +60,8 @@ FRED_SERIES = {
     "HOUST", "PERMIT", "MSPUS",
     # Economic indicators - Money Supply & Credit
     "M2SL", "TOTCI",
+    # Economic indicators - Automotive & Energy
+    "TOTALSA", "LAUTOSA", "GASREGW", "DCOILWTICO", "PCUOMFG",
 }
 
 # --- Asset registry for search ---
@@ -115,6 +117,12 @@ ASSET_REGISTRY = [
     # Economic indicators - Money Supply & Credit
     {"identifier": "M2SL", "name": "M2 Money Supply", "source": "fred", "category": "economic_indicators"},
     {"identifier": "TOTCI", "name": "Total Consumer Credit", "source": "fred", "category": "economic_indicators"},
+    # Economic indicators - Automotive & Energy
+    {"identifier": "TOTALSA", "name": "Total Vehicle Sales", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "LAUTOSA", "name": "Light Auto Sales", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "GASREGW", "name": "Regular Gas Price", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "DCOILWTICO", "name": "WTI Crude Oil Price", "source": "fred", "category": "economic_indicators"},
+    {"identifier": "PCUOMFG", "name": "PPI: Motor Vehicle Manufacturing", "source": "fred", "category": "economic_indicators"},
     # Market indices
     {"identifier": "^GSPC", "name": "S&P 500", "source": "yfinance", "category": "indices"},
     {"identifier": "^IXIC", "name": "NASDAQ Composite", "source": "yfinance", "category": "indices"},

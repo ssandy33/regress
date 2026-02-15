@@ -231,7 +231,7 @@ function AnalysisPage() {
 
             {/* Chart */}
             <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: mode === 'rolling' ? '600px' : '400px' }}>
-              {mode === 'linear' && <RegressionChart result={result} annotations={annotations} />}
+              {mode === 'linear' && <RegressionChart result={result} annotations={annotations} earningsDates={regression.showEarnings ? result?.earnings_dates : null} />}
               {mode === 'multi-factor' && <ComparisonChart result={activeResult} />}
               {mode === 'rolling' && <RollingChart result={result} />}
               {mode === 'compare' && <CompareChart result={result} annotations={annotations} />}

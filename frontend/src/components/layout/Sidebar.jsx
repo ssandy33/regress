@@ -15,6 +15,7 @@ export default function Sidebar({
   endDate, setEndDate,
   windowSize, setWindowSize,
   sidebarTab, setSidebarTab,
+  showEarnings, setShowEarnings,
   onRun, loading,
   onSave, onReset,
 }) {
@@ -114,6 +115,21 @@ export default function Sidebar({
         {/* Window Size (rolling only) */}
         {mode === 'rolling' && (
           <WindowSizeSlider value={windowSize} onChange={setWindowSize} />
+        )}
+
+        {/* Earnings overlay (linear mode only) */}
+        {mode === 'linear' && (
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showEarnings}
+              onChange={(e) => setShowEarnings(e.target.checked)}
+              className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              Show Earnings Dates
+            </span>
+          </label>
         )}
       </div>
 

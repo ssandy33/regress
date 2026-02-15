@@ -16,8 +16,10 @@ from app.models.schemas import (
     RollingRegressionRequest,
     RollingRegressionResponse,
 )
+import logging
+
 from app.services.cache import CacheService
-from app.services.data_fetcher import DataFetcher, DataAlignmentError, DataMeta
+from app.services.data_fetcher import DataFetcher, DataAlignmentError, DataMeta, detect_source
 from app.services.regression import (
     compute_linear_regression,
     compute_multifactor_ols,
@@ -45,6 +47,21 @@ def linear_regression(
 
     result = compute_linear_regression(dates, values)
     result["data_meta"] = meta
+
+    # Fetch earnings dates for yfinance tickers
+    if detect_source(req.asset) == "yfinance":
+        try:
+            import yfinance as yf
+            ticker = yf.Ticker(req.asset)
+            ed = ticker.get_earnings_dates(limit=40)
+            if ed is not None and not ed.empty:
+                start = df.index.min()
+                end = df.index.max()
+                ed_dates = ed.index.normalize()
+                in_range = ed_dates[(ed_dates >= start) & (ed_dates <= end)]
+                result["earnings_dates"] = sorted(set(d.strftime("%Y-%m-%d") for d in in_range))
+        except Exception:
+            logging.getLogger(__name__).debug(f"Could not fetch earnings dates for {req.asset}")
 
     return LinearRegressionResponse(**result)
 

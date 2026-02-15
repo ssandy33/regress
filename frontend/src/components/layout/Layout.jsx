@@ -33,6 +33,8 @@ export default function Layout({
           setWindowSize={regression.setWindowSize}
           sidebarTab={regression.sidebarTab}
           setSidebarTab={regression.setSidebarTab}
+          showEarnings={regression.showEarnings}
+          setShowEarnings={regression.setShowEarnings}
           onRun={onRun}
           loading={regression.loading}
           onSave={onSave}

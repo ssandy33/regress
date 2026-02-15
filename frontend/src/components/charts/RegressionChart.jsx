@@ -1,7 +1,7 @@
 import Plot from 'react-plotly.js';
 import { useTheme } from '../../context/ThemeContext';
 
-export default function RegressionChart({ result, annotations = [] }) {
+export default function RegressionChart({ result, annotations = [], earningsDates = null }) {
   const { dark } = useTheme();
 
   if (!result) return null;
@@ -20,6 +20,28 @@ export default function RegressionChart({ result, annotations = [] }) {
     borderpad: 4,
   }));
 
+  // Earnings date annotations (small "E" labels at top)
+  const earningsAnnotations = (earningsDates || []).map((date) => ({
+    x: date,
+    y: 1,
+    yref: 'paper',
+    text: 'E',
+    showarrow: false,
+    font: { size: 9, color: '#f59e0b', weight: 'bold' },
+    yanchor: 'bottom',
+  }));
+
+  // Earnings date vertical lines
+  const earningsShapes = (earningsDates || []).map((date) => ({
+    type: 'line',
+    x0: date,
+    x1: date,
+    y0: 0,
+    y1: 1,
+    yref: 'paper',
+    line: { color: dark ? '#fbbf24' : '#d97706', width: 1, dash: 'dot' },
+  }));
+
   const layout = {
     paper_bgcolor: 'transparent',
     plot_bgcolor: 'transparent',
@@ -36,7 +58,8 @@ export default function RegressionChart({ result, annotations = [] }) {
     hovermode: 'x unified',
     showlegend: true,
     legend: { orientation: 'h', y: -0.15 },
-    annotations: plotAnnotations,
+    annotations: [...plotAnnotations, ...earningsAnnotations],
+    shapes: earningsShapes,
   };
 
   const traces = [
