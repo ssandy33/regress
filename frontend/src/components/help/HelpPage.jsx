@@ -24,6 +24,11 @@ This guide explains each chart type in the Financial Regression Analysis Tool, w
 | **Blue line (Trend)** | The best-fit straight line through the price data |
 | **Blue shaded band (95% CI)** | The 95% confidence interval around the trend line. If the trend is reliable, actual prices will mostly stay within this band |
 | **Annotations** | User-added notes pinned to specific dates on the chart |
+| **Amber dashed lines (Earnings)** | Vertical dotted lines marking quarterly earnings announcement dates. Toggle with "Show Earnings Dates" in the sidebar. Only available for stock tickers |
+
+### Earnings Dates Overlay
+
+When analyzing a stock (not a FRED series or index), enable the **"Show Earnings Dates"** checkbox in the sidebar. This adds vertical amber dashed lines at each quarterly earnings date, with an "E" label at the top. Use this to identify whether price jumps coincide with earnings announcements versus macro trends.
 
 ### Statistics
 
@@ -212,6 +217,36 @@ Available in Linear and Compare modes. Click "Add Annotation" to pin a text note
 ### Dark Mode
 
 All charts automatically adapt to the selected theme. Toggle the sun/moon icon in the header to switch.
+
+---
+
+## Available Data Sources
+
+### Stocks & Market Indices
+
+Type any stock ticker (e.g., "AAPL", "F") or company name (e.g., "Ford", "Tesla") in the search box. The tool validates tickers against Yahoo Finance and resolves company names to correct symbols. Market indices (S&P 500, NASDAQ, Dow Jones) and precious metals futures (Gold, Silver, Platinum) are also available.
+
+### Interest Rates
+
+FRED series including the Federal Funds Rate, 10-Year and 2-Year Treasury Yields, and the 30-Year Fixed Mortgage Rate.
+
+### Economic Indicators
+
+A broad set of FRED series for macroeconomic analysis:
+
+| Subcategory | Series |
+|-------------|--------|
+| **Labor Market** | US Unemployment Rate (UNRATE), Initial Jobless Claims (ICSA), Nonfarm Payrolls (PAYEMS) |
+| **Inflation** | Consumer Price Index (CPIAUCSL), PCE Price Index (PCEPI), 10-Year Breakeven Inflation (T10YIE) |
+| **GDP & Growth** | Gross Domestic Product (GDP), Real GDP (GDPC1) |
+| **Consumer** | U of Michigan Consumer Sentiment (UMCSENT), Advance Retail Sales (RSAFS) |
+| **Housing** | Housing Starts (HOUST), Building Permits (PERMIT), Median Home Sale Price (MSPUS) |
+| **Money Supply** | M2 Money Supply (M2SL), Total Consumer Credit (TOTCI) |
+| **Automotive & Energy** | Total Vehicle Sales (TOTALSA), Light Auto Sales (LAUTOSA), Regular Gas Price (GASREGW), WTI Crude Oil (DCOILWTICO), PPI Motor Vehicle Mfg (PCUOMFG) |
+
+### Real Estate
+
+Case-Shiller Home Price Indices for 20 metro areas plus the national composite, the FHFA House Price Index, and Zillow zip code data. Access via the "Real Estate" link in the sidebar.
 
 ---
 
