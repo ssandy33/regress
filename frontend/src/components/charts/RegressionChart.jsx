@@ -1,4 +1,4 @@
-import Plot from 'react-plotly.js';
+import Plot from './PlotlyChart';
 import { useTheme } from '../../context/ThemeContext';
 
 export default function RegressionChart({ result, annotations = [], earningsDates = null }) {
