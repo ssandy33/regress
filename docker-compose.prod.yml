@@ -25,7 +25,8 @@ services:
     build: ./backend
     # No ports exposed — only accessible via Caddy through Docker network
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     environment:
       - FRED_API_KEY=${FRED_API_KEY}
       - DATABASE_URL=sqlite:///./data/regression_tool.db
