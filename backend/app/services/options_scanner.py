@@ -194,18 +194,27 @@ class OptionScanner:
     # ---- Data fetching ----
 
     def _get_current_price(self, ticker_obj, symbol: str) -> float:
+        # Try fast_info first (lightweight, avoids rate limits)
         try:
-            info = ticker_obj.info
-            price = info.get("currentPrice") or info.get("regularMarketPrice")
-            if price:
+            fi = ticker_obj.fast_info
+            price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
+            if price and price > 0:
                 return float(price)
         except Exception:
             pass
 
         try:
-            hist = ticker_obj.history(period="1d")
+            hist = ticker_obj.history(period="5d")
             if not hist.empty:
                 return float(hist["Close"].iloc[-1])
+        except Exception:
+            pass
+
+        try:
+            info = ticker_obj.info
+            price = info.get("currentPrice") or info.get("regularMarketPrice")
+            if price:
+                return float(price)
         except Exception:
             pass
 
@@ -236,16 +245,30 @@ class OptionScanner:
         return None
 
     def _get_market_context(self, ticker_obj) -> MarketContext:
+        vix = None
+        try:
+            vix_ticker = yf.Ticker("^VIX")
+            fi = vix_ticker.fast_info
+            vix_price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
+            if vix_price and vix_price > 0:
+                vix = round(float(vix_price), 2)
+        except Exception:
+            pass
+
+        try:
+            fi = ticker_obj.fast_info
+            return MarketContext(
+                vix=vix,
+                beta=None,  # not available in fast_info
+                fifty_two_week_high=getattr(fi, "year_high", None),
+                fifty_two_week_low=getattr(fi, "year_low", None),
+                avg_volume=None,
+            )
+        except Exception:
+            pass
+
         try:
             info = ticker_obj.info
-            vix = None
-            try:
-                vix_data = yf.Ticker("^VIX").history(period="1d")
-                if not vix_data.empty:
-                    vix = round(float(vix_data["Close"].iloc[-1]), 2)
-            except Exception:
-                pass
-
             return MarketContext(
                 vix=vix,
                 beta=info.get("beta"),
@@ -255,7 +278,7 @@ class OptionScanner:
             )
         except Exception as e:
             logger.warning(f"Failed to get market context: {e}")
-            return MarketContext()
+            return MarketContext(vix=vix)
 
     def _get_valid_expirations(
         self,
