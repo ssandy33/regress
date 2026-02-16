@@ -14,10 +14,11 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings as app_settings
 from app.models.database import init_db, SessionLocal
-from app.routers import assets, data, health, regression, sessions, settings
+from app.routers import assets, data, health, options, regression, sessions, settings
 from app.services.backup import create_backup
 from app.services.cache import CacheService
 from app.services.data_fetcher import DataFetcher, DataFetchError, InvalidTickerError, DataAlignmentError
+from app.services.options_scanner import OptionScannerError
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ app.include_router(regression.router)
 app.include_router(sessions.router)
 app.include_router(settings.router)
 app.include_router(health.router)
+app.include_router(options.router)
 
 
 # --- Exception handlers ---
@@ -103,6 +105,11 @@ async def invalid_ticker_error_handler(request: Request, exc: InvalidTickerError
 @app.exception_handler(DataAlignmentError)
 async def data_alignment_error_handler(request: Request, exc: DataAlignmentError):
     return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+
+@app.exception_handler(OptionScannerError)
+async def option_scanner_error_handler(request: Request, exc: OptionScannerError):
+    return JSONResponse(status_code=404, content={"detail": str(exc)})
 
 
 @app.exception_handler(ValueError)

@@ -8,6 +8,7 @@ const ComparisonChart = lazy(() => import('./components/charts/ComparisonChart')
 const CompareChart = lazy(() => import('./components/charts/CompareChart'));
 const ResidualChart = lazy(() => import('./components/charts/ResidualChart'));
 const RollingChart = lazy(() => import('./components/charts/RollingChart'));
+const OptionScannerPage = lazy(() => import('./components/options/OptionScanner'));
 import StatsPanel from './components/results/StatsPanel';
 import StatsInterpretation from './components/results/StatsInterpretation';
 import DataQualityBadge from './components/results/DataQualityBadge';
@@ -293,6 +294,7 @@ export default function App() {
       <OfflineBanner />
       <Routes>
         <Route path="/" element={<AnalysisPage />} />
+        <Route path="/options" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900"><LoadingSkeleton /></div>}><OptionScannerPage /></Suspense>} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/help" element={<HelpPage />} />
       </Routes>

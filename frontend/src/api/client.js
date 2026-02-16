@@ -164,4 +164,23 @@ export async function refreshStaleCache() {
   return data.results;
 }
 
+// --- Options Scanner ---
+
+export async function scanOptions(request) {
+  const { data } = await api.post('/api/options/scan', request);
+  return data;
+}
+
+export async function getEarningsDate(ticker) {
+  const { data } = await api.get(`/api/options/earnings/${encodeURIComponent(ticker)}`);
+  return data;
+}
+
+export async function getOptionChain(ticker, expiration = null) {
+  const { data } = await api.get(`/api/options/chain/${encodeURIComponent(ticker)}`, {
+    params: expiration ? { expiration } : {},
+  });
+  return data;
+}
+
 export default api;

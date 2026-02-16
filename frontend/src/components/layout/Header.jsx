@@ -11,6 +11,14 @@ export default function Header({ sessions, onLoadSession }) {
       </Link>
 
       <div className="flex items-center gap-3">
+        {/* Options scanner link */}
+        <Link
+          to="/options"
+          className="px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium"
+        >
+          Options
+        </Link>
+
         {/* Saved sessions dropdown */}
         {sessions.length > 0 && (
           <select

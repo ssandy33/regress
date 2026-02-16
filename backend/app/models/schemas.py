@@ -200,3 +200,84 @@ class CacheStatsResponse(BaseModel):
     entry_count: int
     total_size_bytes: int
     entries: list[dict]
+
+
+# --- Option Scanner ---
+
+
+class RuleCompliance(BaseModel):
+    passes_10pct_rule: bool
+    passes_dte_range: bool
+    passes_delta_range: bool
+    passes_earnings_check: bool
+    passes_return_target: bool
+
+
+class StrikeRecommendation(BaseModel):
+    rank: int
+    strike: float
+    expiration: str
+    dte: int
+    bid: float
+    ask: float
+    mid: float
+    delta: float
+    gamma: Optional[float] = None
+    theta: Optional[float] = None
+    vega: Optional[float] = None
+    iv: Optional[float] = None
+    open_interest: int
+    volume: int
+    premium_per_contract: float
+    total_premium: float
+    return_on_capital_pct: float
+    annualized_return_pct: float
+    distance_from_price_pct: float
+    distance_from_basis_pct: Optional[float] = None
+    max_profit: float
+    breakeven: Optional[float] = None
+    fifty_pct_profit_target: float
+    rule_compliance: RuleCompliance
+    flags: list[str] = []
+
+
+class RejectedStrike(BaseModel):
+    strike: float
+    expiration: str
+    rejection_reasons: list[str]
+
+
+class MarketContext(BaseModel):
+    vix: Optional[float] = None
+    beta: Optional[float] = None
+    fifty_two_week_high: Optional[float] = None
+    fifty_two_week_low: Optional[float] = None
+    avg_volume: Optional[int] = None
+
+
+class OptionScanRequest(BaseModel):
+    ticker: str
+    strategy: str  # "cash_secured_put" | "covered_call"
+    cost_basis: Optional[float] = None
+    capital_available: Optional[float] = None
+    shares_held: Optional[int] = 100
+    min_dte: int = 25
+    max_dte: int = 50
+    min_return_pct: float = 1.0
+    max_return_pct: Optional[float] = None
+    min_call_distance_pct: float = 10.0
+    max_delta: float = 0.35
+    min_delta: float = 0.15
+    exclude_earnings_dte: int = 5
+
+
+class OptionScanResponse(BaseModel):
+    ticker: str
+    current_price: float
+    strategy: str
+    scan_time: str
+    earnings_date: Optional[str] = None
+    iv_rank: Optional[float] = None
+    recommendations: list[StrikeRecommendation]
+    rejected: list[RejectedStrike]
+    market_context: MarketContext
