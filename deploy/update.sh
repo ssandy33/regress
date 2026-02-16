@@ -26,6 +26,11 @@ echo ">>> Restarting services..."
 docker compose -f docker-compose.prod.yml up -d
 echo ""
 
+# Restart Caddy so it re-resolves upstream DNS for the new containers
+echo ">>> Restarting Caddy reverse proxy..."
+docker compose -f docker-compose.prod.yml restart caddy
+echo ""
+
 # Show status
 echo ">>> Container status:"
 docker compose -f docker-compose.prod.yml ps
