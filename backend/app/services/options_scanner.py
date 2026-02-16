@@ -200,23 +200,26 @@ class OptionScanner:
             price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
             if price and price > 0:
                 return float(price)
-        except Exception:
-            pass
+            logger.debug(f"{symbol}: fast_info returned no valid price")
+        except Exception as e:
+            logger.warning(f"{symbol}: fast_info failed: {e}")
 
         try:
             hist = ticker_obj.history(period="5d")
             if not hist.empty:
                 return float(hist["Close"].iloc[-1])
-        except Exception:
-            pass
+            logger.debug(f"{symbol}: history(5d) returned empty")
+        except Exception as e:
+            logger.warning(f"{symbol}: history failed: {e}")
 
         try:
             info = ticker_obj.info
             price = info.get("currentPrice") or info.get("regularMarketPrice")
             if price:
                 return float(price)
-        except Exception:
-            pass
+            logger.debug(f"{symbol}: info returned no price keys")
+        except Exception as e:
+            logger.warning(f"{symbol}: info failed: {e}")
 
         raise OptionScannerError(f"Cannot get current price for '{symbol}'")
 
