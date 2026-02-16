@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from app.models.schemas import OptionScanRequest
-from app.services.options_scanner import OptionScanner, OptionScannerError, _normalize_val
+from app.services.options_scanner import OptionScanner, OptionScannerError, _normalize_val, calculate_greeks
 
 
 def _make_chain_df(strikes, bids, asks, deltas, ois, volumes, ivs):
@@ -295,3 +295,31 @@ class TestExpirationFiltering:
 
         with pytest.raises(OptionScannerError, match="No options"):
             scanner._get_valid_expirations(mock_ticker, 25, 50, None, 5)
+
+
+class TestCalculateGreeks:
+    """Black-Scholes Greeks calculation tests."""
+
+    def test_otm_call_delta(self):
+        # $24 call on $21.70 stock, 33 DTE, 62% IV
+        greeks = calculate_greeks(S=21.70, K=24.0, T=33/365, sigma=0.62, option_type="call")
+        assert 0.10 < greeks["delta"] < 0.45
+        assert greeks["gamma"] > 0
+        assert greeks["theta"] < 0
+        assert greeks["vega"] > 0
+
+    def test_atm_call_delta_near_half(self):
+        greeks = calculate_greeks(S=100.0, K=100.0, T=30/365, sigma=0.30, option_type="call")
+        assert 0.45 < greeks["delta"] < 0.60
+
+    def test_put_delta_negative(self):
+        greeks = calculate_greeks(S=100.0, K=95.0, T=30/365, sigma=0.30, option_type="put")
+        assert greeks["delta"] < 0
+
+    def test_zero_time_returns_none(self):
+        greeks = calculate_greeks(S=100.0, K=100.0, T=0, sigma=0.30, option_type="call")
+        assert greeks["delta"] is None
+
+    def test_zero_iv_returns_none(self):
+        greeks = calculate_greeks(S=100.0, K=100.0, T=30/365, sigma=0.0, option_type="call")
+        assert greeks["delta"] is None

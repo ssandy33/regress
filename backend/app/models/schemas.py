@@ -238,6 +238,7 @@ class StrikeRecommendation(BaseModel):
     breakeven: Optional[float] = None
     fifty_pct_profit_target: float
     rule_compliance: RuleCompliance
+    greeks_source: str = "market"
     flags: list[str] = []
 
 

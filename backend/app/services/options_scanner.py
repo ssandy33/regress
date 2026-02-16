@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import numpy as np
+from scipy.stats import norm
 import yfinance as yf
 
 from app.models.schemas import (
@@ -37,6 +38,53 @@ def _safe_int(val, default=0) -> int:
         return default if math.isnan(f) else int(f)
     except (ValueError, TypeError):
         return default
+
+
+RISK_FREE_RATE = 0.043  # approximate current rate; could fetch DGS3MO from FRED
+
+
+def calculate_greeks(
+    S: float, K: float, T: float, sigma: float, option_type: str,
+    r: float = RISK_FREE_RATE,
+) -> dict:
+    """Calculate Black-Scholes Greeks from implied volatility.
+
+    Args:
+        S: current stock price
+        K: strike price
+        T: time to expiration in years (dte / 365)
+        sigma: implied volatility as decimal (e.g. 0.621)
+        option_type: "call" or "put"
+        r: risk-free rate
+    """
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return {"delta": None, "gamma": None, "theta": None, "vega": None}
+
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+
+    gamma = float(norm.pdf(d1) / (S * sigma * np.sqrt(T)))
+    vega = float(S * norm.pdf(d1) * np.sqrt(T) / 100)  # per 1% IV move
+
+    if option_type == "call":
+        delta = float(norm.cdf(d1))
+        theta = float(
+            (-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T))
+             - r * K * np.exp(-r * T) * norm.cdf(d2)) / 365
+        )
+    else:
+        delta = float(norm.cdf(d1) - 1)
+        theta = float(
+            (-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T))
+             + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365
+        )
+
+    return {
+        "delta": round(delta, 4),
+        "gamma": round(gamma, 4),
+        "theta": round(theta, 4),
+        "vega": round(vega, 4),
+    }
 
 
 class OptionScannerError(Exception):
@@ -94,15 +142,48 @@ class OptionScanner:
             exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
             dte = (exp_date - datetime.now().date()).days
 
+            option_type = "call" if request.strategy == "covered_call" else "put"
+
             for _, row in options_df.iterrows():
                 strike = float(row["strike"])
                 bid = _safe_float(row.get("bid"))
                 ask = _safe_float(row.get("ask"))
                 mid = round((bid + ask) / 2, 4)
-                delta = _safe_float(row.get("delta")) if "delta" in row.index else None
                 oi = _safe_int(row.get("openInterest"))
                 vol = _safe_int(row.get("volume"))
                 iv = _safe_float(row.get("impliedVolatility"))
+
+                # --- Resolve Greeks ---
+                raw_delta = _safe_float(row.get("delta")) if "delta" in row.index else 0.0
+                raw_gamma = _safe_float(row.get("gamma")) if "gamma" in row.index else 0.0
+                raw_theta = _safe_float(row.get("theta")) if "theta" in row.index else 0.0
+                raw_vega = _safe_float(row.get("vega")) if "vega" in row.index else 0.0
+
+                # Check if yfinance Greeks are usable (delta != 0 is the key signal)
+                yf_greeks_valid = abs(raw_delta) > 0.001 and (raw_gamma != 0 or raw_theta != 0)
+
+                if yf_greeks_valid:
+                    delta = raw_delta
+                    gamma = raw_gamma
+                    theta = raw_theta
+                    vega = raw_vega
+                    greeks_source = "market"
+                elif iv > 0:
+                    # Calculate from IV using Black-Scholes
+                    T = dte / 365.0
+                    bs = calculate_greeks(current_price, strike, T, iv, option_type)
+                    delta = bs["delta"]
+                    gamma = bs["gamma"]
+                    theta = bs["theta"]
+                    vega = bs["vega"]
+                    greeks_source = "calculated"
+                else:
+                    # No market Greeks and no IV — can't calculate
+                    delta = None
+                    gamma = None
+                    theta = None
+                    vega = None
+                    greeks_source = "unavailable"
 
                 reasons = self._check_rejection(
                     request, strike, current_price, delta, oi, bid, mid, dte,
@@ -143,7 +224,7 @@ class OptionScanner:
                     continue
 
                 flags = []
-                if delta is None:
+                if greeks_source == "unavailable":
                     flags.append("missing_greeks")
 
                 compliance = RuleCompliance(
@@ -156,10 +237,6 @@ class OptionScanner:
                     passes_earnings_check=True,  # already filtered at expiration level
                     passes_return_target=metrics["return_on_capital_pct"] >= request.min_return_pct,
                 )
-
-                gamma = _safe_float(row.get("gamma")) if "gamma" in row.index else None
-                theta = _safe_float(row.get("theta")) if "theta" in row.index else None
-                vega = _safe_float(row.get("vega")) if "vega" in row.index else None
 
                 candidates.append(StrikeRecommendation(
                     rank=0,  # set during ranking
@@ -186,6 +263,7 @@ class OptionScanner:
                     breakeven=metrics.get("breakeven"),
                     fifty_pct_profit_target=metrics["fifty_pct_profit_target"],
                     rule_compliance=compliance,
+                    greeks_source=greeks_source,
                     flags=flags,
                 ))
 

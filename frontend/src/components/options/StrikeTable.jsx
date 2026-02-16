@@ -123,7 +123,14 @@ function ExpandedDetails({ strike }) {
   return (
     <div className="grid grid-cols-3 gap-6 text-sm">
       <div>
-        <h4 className="font-medium text-slate-900 dark:text-white mb-2">Greeks</h4>
+        <h4 className="font-medium text-slate-900 dark:text-white mb-2">
+          Greeks
+          {strike.greeks_source && strike.greeks_source !== 'market' && (
+            <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">
+              {strike.greeks_source === 'calculated' ? 'BS calc' : strike.greeks_source}
+            </span>
+          )}
+        </h4>
         <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
           <div>Delta: {strike.delta.toFixed(3)}</div>
           <div>Gamma: {strike.gamma?.toFixed(4) ?? 'N/A'}</div>
