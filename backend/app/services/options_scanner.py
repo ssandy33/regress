@@ -17,6 +17,28 @@ from app.models.schemas import (
 logger = logging.getLogger(__name__)
 
 
+def _safe_float(val, default=0.0) -> float:
+    """Convert to float, treating NaN/None as default."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if math.isnan(f) else f
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_int(val, default=0) -> int:
+    """Convert to int, treating NaN/None as default."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        return default if math.isnan(f) else int(f)
+    except (ValueError, TypeError):
+        return default
+
+
 class OptionScannerError(Exception):
     pass
 
@@ -74,13 +96,13 @@ class OptionScanner:
 
             for _, row in options_df.iterrows():
                 strike = float(row["strike"])
-                bid = float(row.get("bid", 0) or 0)
-                ask = float(row.get("ask", 0) or 0)
+                bid = _safe_float(row.get("bid"))
+                ask = _safe_float(row.get("ask"))
                 mid = round((bid + ask) / 2, 4)
-                delta = float(row.get("delta", 0) or 0) if "delta" in row.index else None
-                oi = int(row.get("openInterest", 0) or 0)
-                vol = int(row.get("volume", 0) or 0)
-                iv = float(row.get("impliedVolatility", 0) or 0)
+                delta = _safe_float(row.get("delta")) if "delta" in row.index else None
+                oi = _safe_int(row.get("openInterest"))
+                vol = _safe_int(row.get("volume"))
+                iv = _safe_float(row.get("impliedVolatility"))
 
                 reasons = self._check_rejection(
                     request, strike, current_price, delta, oi, bid, mid, dte,
@@ -135,9 +157,9 @@ class OptionScanner:
                     passes_return_target=metrics["return_on_capital_pct"] >= request.min_return_pct,
                 )
 
-                gamma = float(row.get("gamma", 0) or 0) if "gamma" in row.index else None
-                theta = float(row.get("theta", 0) or 0) if "theta" in row.index else None
-                vega = float(row.get("vega", 0) or 0) if "vega" in row.index else None
+                gamma = _safe_float(row.get("gamma")) if "gamma" in row.index else None
+                theta = _safe_float(row.get("theta")) if "theta" in row.index else None
+                vega = _safe_float(row.get("vega")) if "vega" in row.index else None
 
                 candidates.append(StrikeRecommendation(
                     rank=0,  # set during ranking
