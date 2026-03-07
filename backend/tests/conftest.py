@@ -24,7 +24,7 @@ def _make_price_df(seed=42, n=60):
 
 def _make_meta(n=60):
     return DataMeta(
-        source="yfinance",
+        source="schwab",
         frequency="daily",
         fetched_at="2024-06-01T00:00:00+00:00",
         is_stale=False,

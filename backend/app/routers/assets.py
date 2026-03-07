@@ -4,7 +4,7 @@ import requests as _requests
 from fastapi import APIRouter
 
 from app.models.schemas import AssetInfo, AssetSearchResponse
-from app.services.data_fetcher import ASSET_REGISTRY
+from app.services.data_fetcher import ASSET_REGISTRY, detect_source
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ def search_assets(q: str, offline: bool = False):
                 AssetInfo(
                     identifier=ticker_symbol,
                     name=f"{ticker_symbol} (cached/unverified)",
-                    source="yfinance",
+                    source=detect_source(ticker_symbol),
                     category="stock",
                 )
             )
@@ -99,7 +99,7 @@ def search_assets(q: str, offline: bool = False):
             results.insert(0, AssetInfo(
                 identifier=validated["symbol"],
                 name=validated["name"],
-                source="yfinance",
+                source=detect_source(validated["symbol"]),
                 category="stock",
             ))
             seen_identifiers.add(validated["symbol"].upper())
@@ -113,7 +113,7 @@ def search_assets(q: str, offline: bool = False):
                 results.append(AssetInfo(
                     identifier=sr["symbol"],
                     name=sr["name"],
-                    source="yfinance",
+                    source=detect_source(sr["symbol"]),
                     category="stock",
                 ))
                 seen_identifiers.add(sr["symbol"].upper())
