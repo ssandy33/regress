@@ -1,13 +1,14 @@
 import logging
 
-import yfinance as yf
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
 from app.models.schemas import OptionScanRequest, OptionScanResponse
-from app.services.cache import CacheService
 from app.services.options_scanner import OptionScanner, OptionScannerError
+from app.services.schwab_client import SchwabClient, SchwabClientError
+from app.services.schwab_auth import SchwabAuthError
+from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,7 @@ def scan_options(
 def get_earnings(ticker: str):
     """Get next earnings date for a ticker."""
     scanner = OptionScanner()
-    ticker_obj = yf.Ticker(ticker)
-    earnings_date = scanner._get_earnings_date(ticker_obj)
+    earnings_date = scanner.get_earnings_date(ticker)
     return {"ticker": ticker, "earnings_date": earnings_date}
 
 
@@ -41,43 +41,66 @@ def get_option_chain(
     ticker: str,
     expiration: str = Query(None, description="Expiration date (YYYY-MM-DD)"),
 ):
-    """Get raw option chain data for a ticker."""
-    ticker_obj = yf.Ticker(ticker)
-
+    """Get raw option chain data for a ticker via Schwab."""
+    client = SchwabClient()
     try:
-        expirations = ticker_obj.options
-    except Exception:
+        chain_data = client.get_option_chain(
+            ticker,
+            contract_type="ALL",
+            from_date=expiration,
+            to_date=expiration,
+        )
+    except SchwabAuthError:
+        raise
+    except SchwabClientError:
+        raise  # preserve fetch failures as-is
+
+    call_map = chain_data.get("callExpDateMap", {})
+    put_map = chain_data.get("putExpDateMap", {})
+
+    # Determine available expirations
+    all_exps = sorted(set(
+        k.split(":")[0] for k in list(call_map.keys()) + list(put_map.keys())
+    ))
+
+    if not all_exps:
         raise OptionScannerError(f"No options available for '{ticker}'")
 
-    if not expirations:
-        raise OptionScannerError(f"No options available for '{ticker}'")
-
-    if expiration and expiration not in expirations:
-        raise ValueError(
-            f"Expiration {expiration} not available. "
-            f"Available: {', '.join(expirations[:10])}"
+    target_exp = expiration or all_exps[0]
+    if expiration and expiration not in all_exps:
+        raise OptionScannerError(
+            f"Expiration '{expiration}' not found for '{ticker}'. "
+            f"Available: {', '.join(all_exps[:5])}{'...' if len(all_exps) > 5 else ''}"
         )
 
-    target_exp = expiration or expirations[0]
-    chain = ticker_obj.option_chain(target_exp)
-
-    def _df_to_records(df):
+    def _map_to_records(exp_date_map: dict, target: str) -> list[dict]:
         records = []
-        for _, row in df.iterrows():
-            records.append({
-                "strike": float(row["strike"]),
-                "bid": float(row.get("bid", 0) or 0),
-                "ask": float(row.get("ask", 0) or 0),
-                "volume": int(row.get("volume", 0) or 0),
-                "openInterest": int(row.get("openInterest", 0) or 0),
-                "impliedVolatility": float(row.get("impliedVolatility", 0) or 0),
-            })
-        return records
+        for exp_key, strikes_map in exp_date_map.items():
+            if not exp_key.startswith(target):
+                continue
+            for _strike_str, contracts in strikes_map.items():
+                if not contracts:
+                    continue
+                c = contracts[0]
+                vol_raw = to_float(c.get("volatility"), None)
+                records.append({
+                    "strike": to_float(c.get("strikePrice")),
+                    "bid": to_float(c.get("bid")),
+                    "ask": to_float(c.get("ask")),
+                    "volume": to_int(c.get("totalVolume")),
+                    "openInterest": to_int(c.get("openInterest")),
+                    "impliedVolatility": vol_raw / 100.0 if vol_raw else 0,
+                    "delta": to_float(c.get("delta")),
+                    "gamma": to_float(c.get("gamma")),
+                    "theta": to_float(c.get("theta")),
+                    "vega": to_float(c.get("vega")),
+                })
+        return sorted(records, key=lambda r: r["strike"])
 
     return {
         "ticker": ticker,
         "expiration": target_exp,
-        "available_expirations": list(expirations),
-        "calls": _df_to_records(chain.calls),
-        "puts": _df_to_records(chain.puts),
+        "available_expirations": all_exps,
+        "calls": _map_to_records(call_map, target_exp),
+        "puts": _map_to_records(put_map, target_exp),
     }

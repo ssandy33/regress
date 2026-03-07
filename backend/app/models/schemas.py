@@ -255,7 +255,7 @@ class MarketContext(BaseModel):
     beta: Optional[float] = None
     fifty_two_week_high: Optional[float] = None
     fifty_two_week_low: Optional[float] = None
-    avg_volume: Optional[int] = None
+    daily_volume: Optional[int] = None
 
 
 class OptionScanRequest(BaseModel):

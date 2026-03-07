@@ -1,28 +1,73 @@
-import math
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import patch, MagicMock
 
-import pandas as pd
 import pytest
 
-from app.models.schemas import OptionScanRequest
-from app.services.options_scanner import OptionScanner, OptionScannerError, _normalize_val, calculate_greeks
+from app.models.schemas import OptionScanRequest, RuleCompliance, StrikeRecommendation
+from app.services.options_scanner import OptionScanner, OptionScannerError, _normalize_val
 
 
-def _make_chain_df(strikes, bids, asks, deltas, ois, volumes, ivs):
-    """Helper to build an option chain DataFrame matching yfinance format."""
-    return pd.DataFrame({
-        "strike": strikes,
-        "bid": bids,
-        "ask": asks,
-        "delta": deltas,
-        "gamma": [0.03] * len(strikes),
-        "theta": [-0.02] * len(strikes),
-        "vega": [0.04] * len(strikes),
-        "openInterest": ois,
-        "volume": volumes,
-        "impliedVolatility": ivs,
-    })
+def _make_schwab_contract(
+    strike=17.0, bid=0.40, ask=0.50, mark=0.45,
+    delta=-0.20, gamma=0.03, theta=-0.02, vega=0.04,
+    oi=500, volume=100, volatility=35.0, dte=30,
+):
+    """Helper to build a Schwab-format option contract dict."""
+    return {
+        "strikePrice": strike,
+        "bid": bid,
+        "ask": ask,
+        "mark": mark,
+        "delta": delta,
+        "gamma": gamma,
+        "theta": theta,
+        "vega": vega,
+        "openInterest": oi,
+        "totalVolume": volume,
+        "volatility": volatility,
+        "daysToExpiration": dte,
+    }
+
+
+def _make_schwab_chain_response(
+    symbol="TEST",
+    underlying_price=14.0,
+    contracts=None,
+    contract_type="call",
+    exp_date=None,
+    dte=30,
+):
+    """Build a Schwab chains API response fixture."""
+    if exp_date is None:
+        exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
+    exp_key = f"{exp_date}:{dte}"
+
+    if contracts is None:
+        contracts = [_make_schwab_contract(dte=dte)]
+
+    strikes_map = {}
+    for c in contracts:
+        strike_str = str(c["strikePrice"])
+        strikes_map[strike_str] = [c]
+
+    map_key = "callExpDateMap" if contract_type == "call" else "putExpDateMap"
+
+    return {
+        "symbol": symbol,
+        "status": "SUCCESS",
+        "underlying": {
+            "last": underlying_price,
+            "close": underlying_price,
+            "fiftyTwoWeekHigh": underlying_price * 1.3,
+            "fiftyTwoWeekLow": underlying_price * 0.7,
+            "totalVolume": 5000000,
+        },
+        map_key: {
+            exp_key: strikes_map,
+        },
+        # Include empty opposite map
+        "putExpDateMap" if contract_type == "call" else "callExpDateMap": {},
+    }
 
 
 @pytest.fixture()
@@ -185,8 +230,6 @@ class TestMetricCalculations:
 class TestRanking:
     def test_ranking_order(self, scanner):
         """Higher return and distance should rank better."""
-        from app.models.schemas import RuleCompliance, StrikeRecommendation
-
         compliance = RuleCompliance(
             passes_10pct_rule=True, passes_dte_range=True,
             passes_delta_range=True, passes_earnings_check=True,
@@ -221,8 +264,6 @@ class TestRanking:
         assert ranked[1].rank == 2
 
     def test_single_candidate(self, scanner):
-        from app.models.schemas import RuleCompliance, StrikeRecommendation
-
         compliance = RuleCompliance(
             passes_10pct_rule=True, passes_dte_range=True,
             passes_delta_range=True, passes_earnings_check=True,
@@ -260,66 +301,172 @@ class TestNormalization:
         assert _normalize_val(5, [5, 5, 5]) == 0.5
 
 
+class TestScanWithSchwabChain:
+    """Integration-style tests for scan() using mocked Schwab chain responses."""
+
+    @patch("app.services.options_scanner.SchwabClient")
+    @patch("app.services.options_scanner.yf")
+    def test_covered_call_scan_returns_results(self, mock_yf, mock_client_cls, scanner, cc_request):
+        dte = 30
+        exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
+
+        contract = _make_schwab_contract(
+            strike=17.0, bid=0.40, ask=0.50, mark=0.45,
+            delta=-0.20, gamma=0.03, theta=-0.02, vega=0.04,
+            oi=500, volume=100, volatility=35.0, dte=dte,
+        )
+        chain_resp = _make_schwab_chain_response(
+            underlying_price=14.0,
+            contracts=[contract],
+            contract_type="call",
+            exp_date=exp_date,
+            dte=dte,
+        )
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.return_value = chain_resp
+        mock_client.get_quote.return_value = {"lastPrice": 18.5}
+
+        mock_yf.Ticker.return_value.calendar = None
+
+        result = scanner.scan(cc_request)
+
+        assert result["ticker"] == "TEST"
+        assert result["current_price"] == 14.0
+        assert result["strategy"] == "covered_call"
+        assert len(result["recommendations"]) == 1
+        rec = result["recommendations"][0]
+        assert rec.strike == 17.0
+        assert rec.greeks_source == "market"
+        assert rec.flags == []
+        assert rec.delta == -0.20
+        assert rec.gamma == 0.03
+
+    @patch("app.services.options_scanner.SchwabClient")
+    @patch("app.services.options_scanner.yf")
+    def test_csp_scan_returns_results(self, mock_yf, mock_client_cls, scanner, csp_request):
+        dte = 30
+        exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
+
+        contract = _make_schwab_contract(
+            strike=13.0, bid=0.35, ask=0.45, mark=0.40,
+            delta=-0.25, gamma=0.02, theta=-0.01, vega=0.03,
+            oi=200, volume=50, volatility=40.0, dte=dte,
+        )
+        chain_resp = _make_schwab_chain_response(
+            underlying_price=14.0,
+            contracts=[contract],
+            contract_type="put",
+            exp_date=exp_date,
+            dte=dte,
+        )
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.return_value = chain_resp
+        mock_client.get_quote.return_value = {"lastPrice": 18.5}
+
+        mock_yf.Ticker.return_value.calendar = None
+
+        result = scanner.scan(csp_request)
+
+        assert result["ticker"] == "TEST"
+        assert result["current_price"] == 14.0
+        assert len(result["recommendations"]) == 1
+        rec = result["recommendations"][0]
+        assert rec.strike == 13.0
+        assert rec.greeks_source == "market"
+        assert rec.delta == -0.25
+
+    @patch("app.services.options_scanner.SchwabClient")
+    @patch("app.services.options_scanner.yf")
+    def test_scan_no_chains_returns_empty(self, mock_yf, mock_client_cls, scanner, cc_request):
+        chain_resp = {
+            "symbol": "TEST",
+            "status": "SUCCESS",
+            "underlying": {"last": 14.0, "close": 14.0},
+            "callExpDateMap": {},
+            "putExpDateMap": {},
+        }
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.return_value = chain_resp
+        mock_client.get_quote.return_value = {"lastPrice": 18.5}
+
+        mock_yf.Ticker.return_value.calendar = None
+
+        result = scanner.scan(cc_request)
+
+        assert result["recommendations"] == []
+
+    @patch("app.services.options_scanner.SchwabClient")
+    @patch("app.services.options_scanner.yf")
+    def test_greeks_source_always_market(self, mock_yf, mock_client_cls, scanner, cc_request):
+        """Verify greeks_source is always 'market' — no 'calculated' or 'unavailable'."""
+        dte = 30
+        exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
+
+        contracts = [
+            _make_schwab_contract(strike=17.0, delta=-0.20, oi=500, dte=dte),
+            _make_schwab_contract(strike=18.0, delta=-0.15, oi=300, dte=dte),
+        ]
+        chain_resp = _make_schwab_chain_response(
+            underlying_price=14.0,
+            contracts=contracts,
+            contract_type="call",
+            exp_date=exp_date,
+            dte=dte,
+        )
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.return_value = chain_resp
+        mock_client.get_quote.return_value = {"lastPrice": 18.5}
+
+        mock_yf.Ticker.return_value.calendar = None
+
+        result = scanner.scan(cc_request)
+
+        for rec in result["recommendations"]:
+            assert rec.greeks_source == "market"
+            assert "missing_greeks" not in rec.flags
+
+    @patch("app.services.options_scanner.SchwabClient")
+    def test_schwab_error_raises_scanner_error(self, mock_client_cls, scanner, cc_request):
+        from app.services.schwab_client import SchwabClientError
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.side_effect = SchwabClientError("API down")
+
+        with pytest.raises(OptionScannerError, match="Failed to fetch option chain"):
+            scanner.scan(cc_request)
+
+
 class TestExpirationFiltering:
     def test_dte_range_filter(self, scanner):
         today = datetime.now().date()
-        mock_ticker = MagicMock()
-        mock_ticker.options = [
-            (today + timedelta(days=10)).strftime("%Y-%m-%d"),  # too soon
-            (today + timedelta(days=30)).strftime("%Y-%m-%d"),  # in range
-            (today + timedelta(days=45)).strftime("%Y-%m-%d"),  # in range
-            (today + timedelta(days=60)).strftime("%Y-%m-%d"),  # too far
-        ]
+        exp_date_map = {
+            f"{(today + timedelta(days=10)).strftime('%Y-%m-%d')}:10": {},
+            f"{(today + timedelta(days=30)).strftime('%Y-%m-%d')}:30": {},
+            f"{(today + timedelta(days=45)).strftime('%Y-%m-%d')}:45": {},
+            f"{(today + timedelta(days=60)).strftime('%Y-%m-%d')}:60": {},
+        }
 
-        valid = scanner._get_valid_expirations(mock_ticker, 25, 50, None, 5)
+        valid = scanner._get_valid_expirations(exp_date_map, 25, 50, None, 5)
         assert len(valid) == 2
 
     def test_earnings_buffer_filter(self, scanner):
         today = datetime.now().date()
         earnings = (today + timedelta(days=35)).strftime("%Y-%m-%d")
-        mock_ticker = MagicMock()
-        mock_ticker.options = [
-            (today + timedelta(days=30)).strftime("%Y-%m-%d"),  # within 5 days of earnings
-            (today + timedelta(days=33)).strftime("%Y-%m-%d"),  # within 5 days of earnings
-            (today + timedelta(days=45)).strftime("%Y-%m-%d"),  # outside buffer
-        ]
+        exp_date_map = {
+            f"{(today + timedelta(days=30)).strftime('%Y-%m-%d')}:30": {},
+            f"{(today + timedelta(days=33)).strftime('%Y-%m-%d')}:33": {},
+            f"{(today + timedelta(days=45)).strftime('%Y-%m-%d')}:45": {},
+        }
 
-        valid = scanner._get_valid_expirations(mock_ticker, 25, 50, earnings, 5)
+        valid = scanner._get_valid_expirations(exp_date_map, 25, 50, earnings, 5)
         assert len(valid) == 1
         assert valid[0] == (today + timedelta(days=45)).strftime("%Y-%m-%d")
-
-    def test_no_options_raises(self, scanner):
-        mock_ticker = MagicMock()
-        mock_ticker.options = []
-        mock_ticker.ticker = "NOOPT"
-
-        with pytest.raises(OptionScannerError, match="No options"):
-            scanner._get_valid_expirations(mock_ticker, 25, 50, None, 5)
-
-
-class TestCalculateGreeks:
-    """Black-Scholes Greeks calculation tests."""
-
-    def test_otm_call_delta(self):
-        # $24 call on $21.70 stock, 33 DTE, 62% IV
-        greeks = calculate_greeks(S=21.70, K=24.0, T=33/365, sigma=0.62, option_type="call")
-        assert 0.10 < greeks["delta"] < 0.45
-        assert greeks["gamma"] > 0
-        assert greeks["theta"] < 0
-        assert greeks["vega"] > 0
-
-    def test_atm_call_delta_near_half(self):
-        greeks = calculate_greeks(S=100.0, K=100.0, T=30/365, sigma=0.30, option_type="call")
-        assert 0.45 < greeks["delta"] < 0.60
-
-    def test_put_delta_negative(self):
-        greeks = calculate_greeks(S=100.0, K=95.0, T=30/365, sigma=0.30, option_type="put")
-        assert greeks["delta"] < 0
-
-    def test_zero_time_returns_none(self):
-        greeks = calculate_greeks(S=100.0, K=100.0, T=0, sigma=0.30, option_type="call")
-        assert greeks["delta"] is None
-
-    def test_zero_iv_returns_none(self):
-        greeks = calculate_greeks(S=100.0, K=100.0, T=30/365, sigma=0.0, option_type="call")
-        assert greeks["delta"] is None

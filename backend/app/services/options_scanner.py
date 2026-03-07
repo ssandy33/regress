@@ -1,10 +1,7 @@
 import logging
-import math
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-import numpy as np
-from scipy.stats import norm
 import yfinance as yf
 
 from app.models.schemas import (
@@ -16,77 +13,9 @@ from app.models.schemas import (
 )
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
+from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
-
-
-def _safe_float(val, default=0.0) -> float:
-    """Convert to float, treating NaN/None as default."""
-    if val is None:
-        return default
-    try:
-        f = float(val)
-        return default if math.isnan(f) else f
-    except (ValueError, TypeError):
-        return default
-
-
-def _safe_int(val, default=0) -> int:
-    """Convert to int, treating NaN/None as default."""
-    if val is None:
-        return default
-    try:
-        f = float(val)
-        return default if math.isnan(f) else int(f)
-    except (ValueError, TypeError):
-        return default
-
-
-RISK_FREE_RATE = 0.043  # approximate current rate; could fetch DGS3MO from FRED
-
-
-def calculate_greeks(
-    S: float, K: float, T: float, sigma: float, option_type: str,
-    r: float = RISK_FREE_RATE,
-) -> dict:
-    """Calculate Black-Scholes Greeks from implied volatility.
-
-    Args:
-        S: current stock price
-        K: strike price
-        T: time to expiration in years (dte / 365)
-        sigma: implied volatility as decimal (e.g. 0.621)
-        option_type: "call" or "put"
-        r: risk-free rate
-    """
-    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-        return {"delta": None, "gamma": None, "theta": None, "vega": None}
-
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-
-    gamma = float(norm.pdf(d1) / (S * sigma * np.sqrt(T)))
-    vega = float(S * norm.pdf(d1) * np.sqrt(T) / 100)  # per 1% IV move
-
-    if option_type == "call":
-        delta = float(norm.cdf(d1))
-        theta = float(
-            (-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T))
-             - r * K * np.exp(-r * T) * norm.cdf(d2)) / 365
-        )
-    else:
-        delta = float(norm.cdf(d1) - 1)
-        theta = float(
-            (-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T))
-             + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365
-        )
-
-    return {
-        "delta": round(delta, 4),
-        "gamma": round(gamma, 4),
-        "theta": round(theta, 4),
-        "vega": round(vega, 4),
-    }
 
 
 class OptionScannerError(Exception):
@@ -97,25 +26,56 @@ class OptionScanner:
     """Scans option chains for wheel strategy opportunities (CC and CSP)."""
 
     def scan(self, request: OptionScanRequest) -> dict:
-        """Main entry point: fetch market data, filter strikes, rank, return."""
+        """Main entry point: fetch Schwab chain, filter strikes, rank, return."""
         self._validate_request(request)
 
-        ticker_obj = yf.Ticker(request.ticker)
+        today = datetime.now().date()
+        from_date = (today + timedelta(days=request.min_dte)).strftime("%Y-%m-%d")
+        to_date = (today + timedelta(days=request.max_dte)).strftime("%Y-%m-%d")
 
-        current_price = self._get_current_price(ticker_obj, request.ticker)
-        earnings_date = self._get_earnings_date(ticker_obj)
-        market_context = self._get_market_context(ticker_obj)
+        contract_type = "CALL" if request.strategy == "covered_call" else "PUT"
 
-        # Get expirations within DTE range, excluding earnings buffer
-        valid_expirations = self._get_valid_expirations(
-            ticker_obj,
-            request.min_dte,
-            request.max_dte,
-            earnings_date,
-            request.exclude_earnings_dte,
+        client = SchwabClient()
+        try:
+            chain_data = client.get_option_chain(
+                request.ticker,
+                contract_type=contract_type,
+                from_date=from_date,
+                to_date=to_date,
+            )
+        except (SchwabClientError, SchwabAuthError) as e:
+            raise OptionScannerError(f"Failed to fetch option chain for '{request.ticker}': {e}") from e
+
+        # Extract underlying price from chain response
+        underlying = chain_data.get("underlying", {})
+        current_price = underlying.get("last", 0) or underlying.get("close", 0)
+        if not current_price or current_price <= 0:
+            current_price = self._get_current_price_fallback(client, request.ticker)
+
+        fifty_two_week_high = underlying.get("fiftyTwoWeekHigh")
+        fifty_two_week_low = underlying.get("fiftyTwoWeekLow")
+        daily_volume = underlying.get("totalVolume")
+
+        # Earnings date from yfinance (Schwab chains don't include this)
+        earnings_date = self.get_earnings_date(request.ticker)
+
+        # Market context: VIX from Schwab, 52-week data from underlying quote
+        vix = self._get_vix(client)
+        market_context = MarketContext(
+            vix=vix,
+            beta=None,
+            fifty_two_week_high=fifty_two_week_high,
+            fifty_two_week_low=fifty_two_week_low,
+            daily_volume=daily_volume,
         )
 
-        if not valid_expirations:
+        # Parse the expiration date maps
+        if request.strategy == "covered_call":
+            exp_date_map = chain_data.get("callExpDateMap", {})
+        else:
+            exp_date_map = chain_data.get("putExpDateMap", {})
+
+        if not exp_date_map:
             return {
                 "ticker": request.ticker,
                 "current_price": current_price,
@@ -128,64 +88,41 @@ class OptionScanner:
                 "market_context": market_context,
             }
 
-        # Process each expiration
         candidates = []
         rejected = []
 
-        for exp_str in valid_expirations:
-            try:
-                chain = ticker_obj.option_chain(exp_str)
-            except Exception as e:
-                logger.warning(f"Failed to fetch chain for {request.ticker} {exp_str}: {e}")
+        valid_exps = set(self._get_valid_expirations(
+            exp_date_map, request.min_dte, request.max_dte,
+            earnings_date, request.exclude_earnings_dte,
+        ))
+
+        for exp_key, strikes_map in exp_date_map.items():
+            exp_str = exp_key.split(":")[0]
+            if exp_str not in valid_exps:
                 continue
 
-            options_df = chain.calls if request.strategy == "covered_call" else chain.puts
-
             exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
-            dte = (exp_date - datetime.now().date()).days
+            dte = (exp_date - today).days
 
-            option_type = "call" if request.strategy == "covered_call" else "put"
+            for strike_str, contracts in strikes_map.items():
+                if not contracts:
+                    continue
+                contract = contracts[0]  # first contract at this strike
 
-            for _, row in options_df.iterrows():
-                strike = float(row["strike"])
-                bid = _safe_float(row.get("bid"))
-                ask = _safe_float(row.get("ask"))
-                mid = round((bid + ask) / 2, 4)
-                oi = _safe_int(row.get("openInterest"))
-                vol = _safe_int(row.get("volume"))
-                iv = _safe_float(row.get("impliedVolatility"))
+                strike = to_float(contract.get("strikePrice", strike_str))
+                bid = to_float(contract.get("bid"))
+                ask = to_float(contract.get("ask"))
+                mid = to_float(contract.get("mark")) or round((bid + ask) / 2, 4)
+                oi = to_int(contract.get("openInterest"))
+                vol = to_int(contract.get("totalVolume"))
+                vol_raw = to_float(contract.get("volatility"), None)
+                iv = vol_raw / 100.0 if vol_raw else None
 
-                # --- Resolve Greeks ---
-                raw_delta = _safe_float(row.get("delta")) if "delta" in row.index else 0.0
-                raw_gamma = _safe_float(row.get("gamma")) if "gamma" in row.index else 0.0
-                raw_theta = _safe_float(row.get("theta")) if "theta" in row.index else 0.0
-                raw_vega = _safe_float(row.get("vega")) if "vega" in row.index else 0.0
-
-                # Check if yfinance Greeks are usable (delta != 0 is the key signal)
-                yf_greeks_valid = abs(raw_delta) > 0.001 and (raw_gamma != 0 or raw_theta != 0)
-
-                if yf_greeks_valid:
-                    delta = raw_delta
-                    gamma = raw_gamma
-                    theta = raw_theta
-                    vega = raw_vega
-                    greeks_source = "market"
-                elif iv > 0:
-                    # Calculate from IV using Black-Scholes
-                    T = dte / 365.0
-                    bs = calculate_greeks(current_price, strike, T, iv, option_type)
-                    delta = bs["delta"]
-                    gamma = bs["gamma"]
-                    theta = bs["theta"]
-                    vega = bs["vega"]
-                    greeks_source = "calculated"
-                else:
-                    # No market Greeks and no IV — can't calculate
-                    delta = None
-                    gamma = None
-                    theta = None
-                    vega = None
-                    greeks_source = "unavailable"
+                # Native Schwab Greeks — default None to distinguish missing from zero
+                delta = to_float(contract.get("delta"), None)
+                gamma = to_float(contract.get("gamma"), None)
+                theta = to_float(contract.get("theta"), None)
+                vega = to_float(contract.get("vega"), None)
 
                 reasons = self._check_rejection(
                     request, strike, current_price, delta, oi, bid, mid, dte,
@@ -199,12 +136,10 @@ class OptionScanner:
                     ))
                     continue
 
-                # Calculate metrics
                 metrics = self._calculate_metrics(
                     request, strike, current_price, mid, dte,
                 )
 
-                # Check return target after calculation
                 if metrics["return_on_capital_pct"] < request.min_return_pct:
                     rejected.append(RejectedStrike(
                         strike=strike,
@@ -225,34 +160,29 @@ class OptionScanner:
                     ))
                     continue
 
-                flags = []
-                if greeks_source == "unavailable":
-                    flags.append("missing_greeks")
-
                 compliance = RuleCompliance(
                     passes_10pct_rule=self._passes_10pct_rule(request, strike),
                     passes_dte_range=request.min_dte <= dte <= request.max_dte,
                     passes_delta_range=(
-                        delta is None
-                        or request.min_delta <= abs(delta) <= request.max_delta
+                        delta is not None and request.min_delta <= abs(delta) <= request.max_delta
                     ),
-                    passes_earnings_check=True,  # already filtered at expiration level
+                    passes_earnings_check=True,
                     passes_return_target=metrics["return_on_capital_pct"] >= request.min_return_pct,
                 )
 
                 candidates.append(StrikeRecommendation(
-                    rank=0,  # set during ranking
+                    rank=0,
                     strike=strike,
                     expiration=exp_str,
                     dte=dte,
                     bid=bid,
                     ask=ask,
                     mid=mid,
-                    delta=delta if delta is not None else 0.0,
+                    delta=delta,
                     gamma=gamma,
                     theta=theta,
                     vega=vega,
-                    iv=iv if iv else None,
+                    iv=iv,
                     open_interest=oi,
                     volume=vol,
                     premium_per_contract=metrics["premium_per_contract"],
@@ -265,8 +195,8 @@ class OptionScanner:
                     breakeven=metrics.get("breakeven"),
                     fifty_pct_profit_target=metrics["fifty_pct_profit_target"],
                     rule_compliance=compliance,
-                    greeks_source=greeks_source,
-                    flags=flags,
+                    greeks_source="market",
+                    flags=[],
                 ))
 
         ranked = self._rank_strikes(candidates)
@@ -295,47 +225,20 @@ class OptionScanner:
 
     # ---- Data fetching ----
 
-    def _get_current_price(self, ticker_obj, symbol: str) -> float:
-        # Try Schwab quote first
+    def _get_current_price_fallback(self, client: SchwabClient, symbol: str) -> float:
+        last_error = None
         try:
-            quote = SchwabClient().get_quote(symbol)
+            quote = client.get_quote(symbol)
             price = quote.get("lastPrice")
             if price and price > 0:
                 return float(price)
-            logger.debug(f"{symbol}: Schwab quote returned no lastPrice")
+            logger.warning("Quote for '%s' returned invalid price: %s", symbol, price)
         except (SchwabClientError, SchwabAuthError) as e:
-            logger.warning(f"{symbol}: Schwab quote failed, falling back to yfinance: {e}")
+            last_error = e
+        raise OptionScannerError(f"Cannot get current price for '{symbol}'") from last_error
 
-        # Fall back to yfinance
-        try:
-            fi = ticker_obj.fast_info
-            price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
-            if price and price > 0:
-                return float(price)
-            logger.debug(f"{symbol}: fast_info returned no valid price")
-        except Exception as e:
-            logger.warning(f"{symbol}: fast_info failed: {e}")
-
-        try:
-            hist = ticker_obj.history(period="5d")
-            if not hist.empty:
-                return float(hist["Close"].iloc[-1])
-            logger.debug(f"{symbol}: history(5d) returned empty")
-        except Exception as e:
-            logger.warning(f"{symbol}: history failed: {e}")
-
-        try:
-            info = ticker_obj.info
-            price = info.get("currentPrice") or info.get("regularMarketPrice")
-            if price:
-                return float(price)
-            logger.debug(f"{symbol}: info returned no price keys")
-        except Exception as e:
-            logger.warning(f"{symbol}: info failed: {e}")
-
-        raise OptionScannerError(f"Cannot get current price for '{symbol}'")
-
-    def _get_earnings_date(self, ticker_obj) -> Optional[str]:
+    def get_earnings_date(self, symbol: str) -> Optional[str]:
+        ticker_obj = yf.Ticker(symbol)
         try:
             cal = ticker_obj.calendar
             if cal is not None:
@@ -359,92 +262,24 @@ class OptionScanner:
 
         return None
 
-    def _get_market_context(self, ticker_obj) -> MarketContext:
-        vix = None
-        fifty_two_week_high = None
-        fifty_two_week_low = None
-        avg_volume = None
-
-        # Try Schwab for VIX
+    def _get_vix(self, client: SchwabClient) -> Optional[float]:
         try:
-            vix_quote = SchwabClient().get_quote("^VIX")
+            vix_quote = client.get_quote("^VIX")
             vix_price = vix_quote.get("lastPrice")
             if vix_price and vix_price > 0:
-                vix = round(float(vix_price), 2)
-        except (SchwabClientError, SchwabAuthError):
-            # Fall back to yfinance for VIX
-            try:
-                vix_ticker = yf.Ticker("^VIX")
-                fi = vix_ticker.fast_info
-                vix_price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
-                if vix_price and vix_price > 0:
-                    vix = round(float(vix_price), 2)
-            except Exception as e:
-                logger.debug(f"VIX yfinance fallback failed: {e}")
-
-        # Try Schwab for ticker's 52-week data
-        try:
-            ticker_quote = SchwabClient().get_quote(ticker_obj.ticker)
-            fifty_two_week_high = ticker_quote.get("52WeekHigh")
-            fifty_two_week_low = ticker_quote.get("52WeekLow")
-            avg_volume = ticker_quote.get("totalVolume")
-            if fifty_two_week_high or fifty_two_week_low:
-                return MarketContext(
-                    vix=vix,
-                    beta=None,
-                    fifty_two_week_high=fifty_two_week_high,
-                    fifty_two_week_low=fifty_two_week_low,
-                    avg_volume=avg_volume,
-                )
+                return round(float(vix_price), 2)
         except (SchwabClientError, SchwabAuthError):
             pass
-
-        # Fall back to yfinance for ticker context
-        try:
-            fi = ticker_obj.fast_info
-            return MarketContext(
-                vix=vix,
-                beta=None,
-                fifty_two_week_high=getattr(fi, "year_high", None),
-                fifty_two_week_low=getattr(fi, "year_low", None),
-                avg_volume=None,
-            )
-        except Exception:
-            pass
-
-        try:
-            info = ticker_obj.info
-            return MarketContext(
-                vix=vix,
-                beta=info.get("beta"),
-                fifty_two_week_high=info.get("fiftyTwoWeekHigh"),
-                fifty_two_week_low=info.get("fiftyTwoWeekLow"),
-                avg_volume=info.get("averageDailyVolume10Day") or info.get("averageVolume"),
-            )
-        except Exception as e:
-            logger.warning(f"Failed to get market context: {e}")
-            return MarketContext(vix=vix)
+        return None
 
     def _get_valid_expirations(
         self,
-        ticker_obj,
+        exp_date_map: dict,
         min_dte: int,
         max_dte: int,
         earnings_date: Optional[str],
         exclude_earnings_dte: int,
     ) -> list[str]:
-        try:
-            all_exps = ticker_obj.options
-        except Exception:
-            raise OptionScannerError(
-                f"No options available for '{ticker_obj.ticker}'"
-            )
-
-        if not all_exps:
-            raise OptionScannerError(
-                f"No options available for '{ticker_obj.ticker}'"
-            )
-
         today = datetime.now().date()
         earnings_dt = (
             datetime.strptime(earnings_date, "%Y-%m-%d").date()
@@ -453,7 +288,8 @@ class OptionScanner:
         )
 
         valid = []
-        for exp_str in all_exps:
+        for exp_key in exp_date_map:
+            exp_str = exp_key.split(":")[0]
             exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
             dte = (exp_date - today).days
 
@@ -498,7 +334,7 @@ class OptionScanner:
                     f"itm_put: strike ${strike:.2f} > price ${current_price:.2f}"
                 )
 
-        # Delta filter (skip if missing)
+        # Delta filter
         if delta is not None:
             if abs(delta) < req.min_delta or abs(delta) > req.max_delta:
                 reasons.append(
