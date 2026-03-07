@@ -1,28 +1,41 @@
-import { useState, useCallback, useEffect, lazy, Suspense } from 'react';
-import { Routes, Route } from 'react-router-dom';
-import { Toaster } from 'react-hot-toast';
-import Layout from './components/layout/Layout';
-import LoadingSkeleton from './components/layout/LoadingSkeleton';
-const RegressionChart = lazy(() => import('./components/charts/RegressionChart'));
-const ComparisonChart = lazy(() => import('./components/charts/ComparisonChart'));
-const CompareChart = lazy(() => import('./components/charts/CompareChart'));
-const ResidualChart = lazy(() => import('./components/charts/ResidualChart'));
-const RollingChart = lazy(() => import('./components/charts/RollingChart'));
-const OptionScannerPage = lazy(() => import('./components/options/OptionScanner'));
-import StatsPanel from './components/results/StatsPanel';
-import StatsInterpretation from './components/results/StatsInterpretation';
-import DataQualityBadge from './components/results/DataQualityBadge';
-import ExportButtons from './components/results/ExportButtons';
-import AnnotationPanel from './components/results/AnnotationPanel';
-import SaveSession from './components/sessions/SaveSession';
-import SetupWizard from './components/settings/SetupWizard';
-import SettingsPage from './components/settings/SettingsPage';
-import HelpPage from './components/help/HelpPage';
-import OfflineBanner from './components/layout/OfflineBanner';
-import { useRegression } from './hooks/useRegression';
-import { useSessions } from './hooks/useSessions';
-import { checkFredHealth } from './api/client';
-import { formatDate, formatNumber, formatPercent } from './utils/formatters';
+"use client";
+
+import { useState, useCallback, useEffect } from 'react';
+import dynamic from 'next/dynamic';
+import Layout from '@/components/layout/Layout';
+import LoadingSkeleton from '@/components/layout/LoadingSkeleton';
+import StatsPanel from '@/components/results/StatsPanel';
+import StatsInterpretation from '@/components/results/StatsInterpretation';
+import DataQualityBadge from '@/components/results/DataQualityBadge';
+import ExportButtons from '@/components/results/ExportButtons';
+import AnnotationPanel from '@/components/results/AnnotationPanel';
+import SaveSession from '@/components/sessions/SaveSession';
+import SetupWizard from '@/components/settings/SetupWizard';
+import { useRegression } from '@/hooks/useRegression';
+import { useSessions } from '@/hooks/useSessions';
+import { checkFredHealth } from '@/api/client';
+import { formatDate, formatNumber } from '@/utils/formatters';
+
+const RegressionChart = dynamic(() => import('@/components/charts/RegressionChart'), {
+  loading: () => <LoadingSkeleton />,
+  ssr: false,
+});
+const ComparisonChart = dynamic(() => import('@/components/charts/ComparisonChart'), {
+  loading: () => <LoadingSkeleton />,
+  ssr: false,
+});
+const CompareChart = dynamic(() => import('@/components/charts/CompareChart'), {
+  loading: () => <LoadingSkeleton />,
+  ssr: false,
+});
+const ResidualChart = dynamic(() => import('@/components/charts/ResidualChart'), {
+  loading: () => <LoadingSkeleton />,
+  ssr: false,
+});
+const RollingChart = dynamic(() => import('@/components/charts/RollingChart'), {
+  loading: () => <LoadingSkeleton />,
+  ssr: false,
+});
 
 function StationarityWarning({ result }) {
   if (!result?.stationarity) return null;
@@ -113,7 +126,7 @@ function EmptyState() {
           Select an asset and run analysis
         </h2>
         <p className="text-sm text-slate-400 dark:text-slate-500">
-          Choose a stock, index, or economic indicator from the sidebar, set your date range, and click "Run Analysis" to see regression results.
+          Choose a stock, index, or economic indicator from the sidebar, set your date range, and click &quot;Run Analysis&quot; to see regression results.
         </p>
       </div>
     </div>
@@ -125,13 +138,12 @@ function getModeLabel(mode) {
   return labels[mode] || mode;
 }
 
-function AnalysisPage() {
+export default function AnalysisPage() {
   const regression = useRegression();
   const sessions = useSessions();
   const [saveOpen, setSaveOpen] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
 
-  // Check if FRED key is configured on first load
   useEffect(() => {
     const checked = sessionStorage.getItem('setupChecked');
     if (!checked) {
@@ -167,7 +179,6 @@ function AnalysisPage() {
   const meta = result?.data_meta;
   const displayAsset = mode === 'compare' ? compareAssets.join(', ') : asset;
 
-  // Compute the active result for display: either levels or differenced
   const activeResult = (showDifferenced && result?.differenced)
     ? {
         ...result,
@@ -217,7 +228,6 @@ function AnalysisPage() {
           <EmptyState />
         ) : (
           <div className="space-y-4">
-            {/* Header row */}
             <div className="flex items-start justify-between flex-wrap gap-2">
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -235,29 +245,23 @@ function AnalysisPage() {
               <AlignmentNotes notes={result.alignment_notes} />
             )}
 
-            {/* Differenced toggle for multi-factor */}
             {mode === 'multi-factor' && result.differenced && (
               <DifferencedToggle showDifferenced={showDifferenced} onToggle={setShowDifferenced} />
             )}
 
-            {/* Chart */}
-            <Suspense fallback={<LoadingSkeleton />}>
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: mode === 'rolling' ? '600px' : '400px' }}>
-                {mode === 'linear' && <RegressionChart result={result} annotations={annotations} earningsDates={regression.showEarnings ? result?.earnings_dates : null} />}
-                {mode === 'multi-factor' && <ComparisonChart result={activeResult} />}
-                {mode === 'rolling' && <RollingChart result={result} />}
-                {mode === 'compare' && <CompareChart result={result} annotations={annotations} />}
+            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: mode === 'rolling' ? '600px' : '400px' }}>
+              {mode === 'linear' && <RegressionChart result={result} annotations={annotations} earningsDates={regression.showEarnings ? result?.earnings_dates : null} />}
+              {mode === 'multi-factor' && <ComparisonChart result={activeResult} />}
+              {mode === 'rolling' && <RollingChart result={result} />}
+              {mode === 'compare' && <CompareChart result={result} annotations={annotations} />}
+            </div>
+
+            {mode === 'multi-factor' && activeResult.residuals && (
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: '200px' }}>
+                <ResidualChart result={activeResult} />
               </div>
+            )}
 
-              {/* Residuals chart for multi-factor */}
-              {mode === 'multi-factor' && activeResult.residuals && (
-                <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" style={{ height: '200px' }}>
-                  <ResidualChart result={activeResult} />
-                </div>
-              )}
-            </Suspense>
-
-            {/* Annotations */}
             {(mode === 'linear' || mode === 'compare') && (
               <AnnotationPanel
                 annotations={annotations}
@@ -267,37 +271,11 @@ function AnalysisPage() {
               />
             )}
 
-            {/* Stats panel */}
             <StatsPanel result={activeResult} mode={mode} />
-
-            {/* Plain-English interpretation */}
             <StatsInterpretation result={activeResult} mode={mode} asset={displayAsset} />
           </div>
         )}
       </Layout>
-    </>
-  );
-}
-
-export default function App() {
-  return (
-    <>
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          className: 'text-sm',
-          duration: 4000,
-          success: { duration: 4000 },
-          error: { duration: 8000 },
-        }}
-      />
-      <OfflineBanner />
-      <Routes>
-        <Route path="/" element={<AnalysisPage />} />
-        <Route path="/options" element={<Suspense fallback={<div className="h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-900"><LoadingSkeleton /></div>}><OptionScannerPage /></Suspense>} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/help" element={<HelpPage />} />
-      </Routes>
     </>
   );
 }
