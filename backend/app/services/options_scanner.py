@@ -14,6 +14,8 @@ from app.models.schemas import (
     RuleCompliance,
     StrikeRecommendation,
 )
+from app.services.schwab_client import SchwabClient, SchwabClientError
+from app.services.schwab_auth import SchwabAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +296,17 @@ class OptionScanner:
     # ---- Data fetching ----
 
     def _get_current_price(self, ticker_obj, symbol: str) -> float:
-        # Try fast_info first (lightweight, avoids rate limits)
+        # Try Schwab quote first
+        try:
+            quote = SchwabClient().get_quote(symbol)
+            price = quote.get("lastPrice")
+            if price and price > 0:
+                return float(price)
+            logger.debug(f"{symbol}: Schwab quote returned no lastPrice")
+        except (SchwabClientError, SchwabAuthError) as e:
+            logger.warning(f"{symbol}: Schwab quote failed, falling back to yfinance: {e}")
+
+        # Fall back to yfinance
         try:
             fi = ticker_obj.fast_info
             price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
@@ -349,20 +361,50 @@ class OptionScanner:
 
     def _get_market_context(self, ticker_obj) -> MarketContext:
         vix = None
+        fifty_two_week_high = None
+        fifty_two_week_low = None
+        avg_volume = None
+
+        # Try Schwab for VIX
         try:
-            vix_ticker = yf.Ticker("^VIX")
-            fi = vix_ticker.fast_info
-            vix_price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
+            vix_quote = SchwabClient().get_quote("^VIX")
+            vix_price = vix_quote.get("lastPrice")
             if vix_price and vix_price > 0:
                 vix = round(float(vix_price), 2)
-        except Exception:
+        except (SchwabClientError, SchwabAuthError):
+            # Fall back to yfinance for VIX
+            try:
+                vix_ticker = yf.Ticker("^VIX")
+                fi = vix_ticker.fast_info
+                vix_price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
+                if vix_price and vix_price > 0:
+                    vix = round(float(vix_price), 2)
+            except Exception:
+                pass
+
+        # Try Schwab for ticker's 52-week data
+        try:
+            ticker_quote = SchwabClient().get_quote(ticker_obj.ticker)
+            fifty_two_week_high = ticker_quote.get("52WeekHigh")
+            fifty_two_week_low = ticker_quote.get("52WeekLow")
+            avg_volume = ticker_quote.get("totalVolume")
+            if fifty_two_week_high or fifty_two_week_low:
+                return MarketContext(
+                    vix=vix,
+                    beta=None,
+                    fifty_two_week_high=fifty_two_week_high,
+                    fifty_two_week_low=fifty_two_week_low,
+                    avg_volume=avg_volume,
+                )
+        except (SchwabClientError, SchwabAuthError):
             pass
 
+        # Fall back to yfinance for ticker context
         try:
             fi = ticker_obj.fast_info
             return MarketContext(
                 vix=vix,
-                beta=None,  # not available in fast_info
+                beta=None,
                 fifty_two_week_high=getattr(fi, "year_high", None),
                 fifty_two_week_low=getattr(fi, "year_low", None),
                 avg_volume=None,

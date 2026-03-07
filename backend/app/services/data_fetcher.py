@@ -2,18 +2,17 @@ import json
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import pandas as pd
-import requests as _requests
-import yfinance as yf
 from fredapi import Fred
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.config import settings, get_fred_api_key
 from app.models.schemas import DataMeta, DateRange
 from app.services.cache import CacheService
+from app.services.schwab_client import SchwabClient, SchwabClientError
+from app.services.schwab_auth import SchwabAuthError
 from app.utils.transforms import _infer_frequency
 
 logger = logging.getLogger(__name__)
@@ -125,18 +124,14 @@ ASSET_REGISTRY = [
     {"identifier": "DCOILWTICO", "name": "WTI Crude Oil Price", "source": "fred", "category": "economic_indicators"},
     {"identifier": "PCUOMFG", "name": "PPI: Motor Vehicle Manufacturing", "source": "fred", "category": "economic_indicators"},
     # Market indices
-    {"identifier": "^GSPC", "name": "S&P 500", "source": "yfinance", "category": "indices"},
-    {"identifier": "^IXIC", "name": "NASDAQ Composite", "source": "yfinance", "category": "indices"},
-    {"identifier": "^DJI", "name": "Dow Jones Industrial Average", "source": "yfinance", "category": "indices"},
+    {"identifier": "^GSPC", "name": "S&P 500", "source": "schwab", "category": "indices"},
+    {"identifier": "^IXIC", "name": "NASDAQ Composite", "source": "schwab", "category": "indices"},
+    {"identifier": "^DJI", "name": "Dow Jones Industrial Average", "source": "schwab", "category": "indices"},
     # Metals
-    {"identifier": "GC=F", "name": "Gold Futures", "source": "yfinance", "category": "commodities"},
-    {"identifier": "SI=F", "name": "Silver Futures", "source": "yfinance", "category": "commodities"},
-    {"identifier": "PL=F", "name": "Platinum Futures", "source": "yfinance", "category": "commodities"},
+    {"identifier": "GC=F", "name": "Gold Futures", "source": "schwab", "category": "commodities"},
+    {"identifier": "SI=F", "name": "Silver Futures", "source": "schwab", "category": "commodities"},
+    {"identifier": "PL=F", "name": "Platinum Futures", "source": "schwab", "category": "commodities"},
 ]
-
-# --- Thread pool for sync yfinance calls ---
-
-_executor = ThreadPoolExecutor(max_workers=4)
 
 # --- FRED rate limiter ---
 
@@ -164,71 +159,28 @@ def detect_source(identifier: str) -> str:
         return "zillow"
     if identifier.upper() in FRED_SERIES:
         return "fred"
-    return "yfinance"
+    return "schwab"
 
 
 # --- Fetcher functions with retry ---
 
 
-def _fetch_yahoo_direct(ticker: str, start: str, end: str) -> pd.DataFrame:
-    """Fetch data directly from Yahoo Finance API (bypasses yfinance library)."""
-    start_ts = int(pd.Timestamp(start).timestamp())
-    end_ts = int(pd.Timestamp(end).timestamp())
-    url = (
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        f"?period1={start_ts}&period2={end_ts}&interval=1d"
-    )
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-    }
-    resp = _requests.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
-
-    chart = data.get("chart", {}).get("result")
-    if not chart:
-        raise InvalidTickerError(f"No data returned for ticker '{ticker}'")
-
-    timestamps = chart[0].get("timestamp", [])
-    closes = chart[0]["indicators"]["quote"][0].get("close", [])
-    if not timestamps:
-        raise InvalidTickerError(f"No data returned for ticker '{ticker}'")
-
-    df = pd.DataFrame({"date": pd.to_datetime(timestamps, unit="s"), "value": closes})
-    df = df.dropna(subset=["value"])
-    df = df.set_index("date")
-    df.index = df.index.normalize()
-    df.index.name = "date"
-    return df
-
-
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=2, min=2, max=10),
-    retry=retry_if_exception_type(DataFetchError),
+    retry=retry_if_exception_type(SchwabClientError),
     reraise=True,
 )
-def _fetch_yfinance(ticker: str, start: str, end: str) -> pd.DataFrame:
-    """Fetch data from Yahoo Finance. Tries yfinance library first, falls back to direct API."""
-    # Attempt 1: yfinance library
+def _fetch_schwab(ticker: str, start: str, end: str) -> pd.DataFrame:
+    """Fetch data from Schwab Market Data API."""
     try:
-        t = yf.Ticker(ticker)
-        df = t.history(start=start, end=end)
-        if not df.empty:
-            result = pd.DataFrame({"value": df["Close"]})
-            result.index = pd.to_datetime(result.index).tz_localize(None)
-            result.index.name = "date"
-            return result
-    except Exception as e:
-        logger.debug(f"yfinance library failed for '{ticker}': {e}")
-
-    # Attempt 2: Direct Yahoo API (avoids query2 rate limits)
-    try:
-        return _fetch_yahoo_direct(ticker, start, end)
-    except InvalidTickerError:
+        return SchwabClient().get_price_history(ticker, start, end)
+    except SchwabAuthError:
+        raise
+    except SchwabClientError:
         raise
     except Exception as e:
-        raise DataFetchError(f"Yahoo Finance error for '{ticker}': {e}") from e
+        raise DataFetchError(f"Schwab error for '{ticker}': {e}") from e
 
 
 @retry(
@@ -388,8 +340,7 @@ class DataFetcher:
             if source == "fred":
                 df = _fetch_fred(identifier.upper(), start, end)
             else:
-                future = _executor.submit(_fetch_yfinance, identifier, start, end)
-                df = future.result(timeout=30)
+                df = _fetch_schwab(identifier, start, end)
 
             frequency = _infer_frequency(df)
             data_json = _df_to_json(df)
@@ -399,7 +350,7 @@ class DataFetcher:
             meta = _build_meta(df, source, frequency, fetched_at, is_stale=False)
             return df, meta
 
-        except (InvalidTickerError, DataFetchError):
+        except (InvalidTickerError, DataFetchError, SchwabClientError, SchwabAuthError):
             # 3. Fall back to stale cache
             stale = self.cache.get_stale(asset_key)
             if stale is not None:
