@@ -91,7 +91,7 @@ class TestScanEndpoint:
 
 class TestEarningsEndpoint:
     def test_get_earnings(self, client):
-        with patch.object(OptionScanner, "_get_earnings_date", return_value="2026-05-05"):
+        with patch.object(OptionScanner, "get_earnings_date", return_value="2026-05-05"):
             response = client.get("/api/options/earnings/SOFI")
         assert response.status_code == 200
         data = response.json()

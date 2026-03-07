@@ -56,7 +56,7 @@ class OptionScanner:
         avg_volume = underlying.get("totalVolume")
 
         # Earnings date from yfinance (Schwab chains don't include this)
-        earnings_date = self._get_earnings_date(request.ticker)
+        earnings_date = self.get_earnings_date(request.ticker)
 
         # Market context: VIX from Schwab, 52-week data from underlying quote
         vix = self._get_vix(client)
@@ -228,16 +228,17 @@ class OptionScanner:
     # ---- Data fetching ----
 
     def _get_current_price_fallback(self, client: SchwabClient, symbol: str) -> float:
+        last_error = None
         try:
             quote = client.get_quote(symbol)
             price = quote.get("lastPrice")
             if price and price > 0:
                 return float(price)
-        except (SchwabClientError, SchwabAuthError):
-            pass
-        raise OptionScannerError(f"Cannot get current price for '{symbol}'")
+        except (SchwabClientError, SchwabAuthError) as e:
+            last_error = e
+        raise OptionScannerError(f"Cannot get current price for '{symbol}'") from last_error
 
-    def _get_earnings_date(self, symbol: str) -> Optional[str]:
+    def get_earnings_date(self, symbol: str) -> Optional[str]:
         try:
             ticker_obj = yf.Ticker(symbol)
             cal = ticker_obj.calendar

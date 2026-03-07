@@ -31,7 +31,7 @@ def scan_options(
 def get_earnings(ticker: str):
     """Get next earnings date for a ticker."""
     scanner = OptionScanner()
-    earnings_date = scanner._get_earnings_date(ticker)
+    earnings_date = scanner.get_earnings_date(ticker)
     return {"ticker": ticker, "earnings_date": earnings_date}
 
 
@@ -49,7 +49,9 @@ def get_option_chain(
             from_date=expiration,
             to_date=expiration,
         )
-    except (SchwabClientError, SchwabAuthError) as e:
+    except SchwabAuthError:
+        raise
+    except SchwabClientError as e:
         raise OptionScannerError(f"No options available for '{ticker}'") from e
 
     call_map = chain_data.get("callExpDateMap", {})
