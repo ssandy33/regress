@@ -53,10 +53,20 @@ def db_with_tokens(client):
 
 class TestSchwabTokenManager:
     def test_is_configured_false_no_tokens(self, client):
-        """is_configured returns False with no DB entries."""
+        """is_configured returns False with empty test DB."""
+        from app.models.database import get_db
+        from app.main import app
+
+        # Route SessionLocal to the empty test DB
+        override_fn = app.dependency_overrides[get_db]
+        test_db = next(override_fn())
+        mock_session_local = MagicMock(return_value=test_db)
+
         mgr = SchwabTokenManager()
-        # Test DB (via client fixture) has no tokens by default
-        assert not mgr.is_configured()
+        with patch("app.models.database.SessionLocal", mock_session_local):
+            result = mgr.is_configured()
+        assert not result
+        mock_session_local.assert_called_once()
 
     def test_get_access_token_returns_cached(self):
         """get_access_token returns cached token when valid."""
