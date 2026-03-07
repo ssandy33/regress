@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useTheme } from '../../context/ThemeContext';
@@ -334,7 +334,7 @@ export default function HelpPage() {
       <div className="max-w-4xl mx-auto px-6 py-8">
         <div className="mb-6">
           <Link
-            to="/"
+            href="/"
             className="inline-flex items-center gap-1.5 text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

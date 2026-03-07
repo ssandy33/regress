@@ -1,3 +1,7 @@
 node_modules
-dist
+.next
 .git
+e2e
+playwright.config.js
+playwright-report
+test-results

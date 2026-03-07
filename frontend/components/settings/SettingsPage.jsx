@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 import toast from 'react-hot-toast';
 import {
   getSettings, updateSetting, getCacheStats, clearCache, checkFredHealth,
@@ -164,7 +164,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Settings</h1>
           <Link
-            to="/"
+            href="/"
             className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400"
           >
             Back to Analysis

@@ -55,7 +55,7 @@ export default function OptionScannerPage() {
                   Scan the option chain
                 </h2>
                 <p className="text-sm text-slate-400 dark:text-slate-500">
-                  Enter a ticker, select your strategy, and click "Scan Options" to find wheel strategy opportunities.
+                  Enter a ticker, select your strategy, and click &quot;Scan Options&quot; to find wheel strategy opportunities.
                 </p>
               </div>
             </div>

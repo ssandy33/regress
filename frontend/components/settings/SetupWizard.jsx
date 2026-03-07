@@ -120,7 +120,7 @@ export default function SetupWizard({ onComplete }) {
         </div>
 
         <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
-          You're all set!
+          You&apos;re all set!
         </h2>
         <p className="text-slate-500 dark:text-slate-400 mb-6">
           Your FRED API key has been saved. You can now access interest rates, housing indices, and more.
