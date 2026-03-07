@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import Layout from '@/components/layout/Layout';
 import LoadingSkeleton from '@/components/layout/LoadingSkeleton';
@@ -158,20 +158,20 @@ export default function AnalysisPage() {
     }
   }, []);
 
-  const handleRun = useCallback(() => {
+  const handleRun = () => {
     regression.runAnalysis();
-  }, [regression.runAnalysis]);
+  };
 
-  const handleSave = useCallback((name) => {
+  const handleSave = (name) => {
     sessions.save(name, regression.getConfig());
-  }, [sessions.save, regression.getConfig]);
+  };
 
-  const handleLoadSession = useCallback(async (id) => {
+  const handleLoadSession = async (id) => {
     const session = await sessions.load(id);
     if (session?.config) {
       regression.restoreParams(session.config);
     }
-  }, [sessions.load, regression.restoreParams]);
+  };
 
   const [showDifferenced, setShowDifferenced] = useState(false);
 
