@@ -13,30 +13,13 @@ from app.models.schemas import (
 )
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
+from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
 
 
 class OptionScannerError(Exception):
     pass
-
-
-def _to_float(value, default: Optional[float] = 0.0) -> Optional[float]:
-    if value is None or value == "":
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _to_int(value, default: int = 0) -> int:
-    if value is None or value == "":
-        return default
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return default
 
 
 class OptionScanner:
@@ -126,20 +109,20 @@ class OptionScanner:
                     continue
                 contract = contracts[0]  # first contract at this strike
 
-                strike = _to_float(contract.get("strikePrice", strike_str))
-                bid = _to_float(contract.get("bid"))
-                ask = _to_float(contract.get("ask"))
-                mid = _to_float(contract.get("mark")) or round((bid + ask) / 2, 4)
-                oi = _to_int(contract.get("openInterest"))
-                vol = _to_int(contract.get("totalVolume"))
-                vol_raw = _to_float(contract.get("volatility"), None)
+                strike = to_float(contract.get("strikePrice", strike_str))
+                bid = to_float(contract.get("bid"))
+                ask = to_float(contract.get("ask"))
+                mid = to_float(contract.get("mark")) or round((bid + ask) / 2, 4)
+                oi = to_int(contract.get("openInterest"))
+                vol = to_int(contract.get("totalVolume"))
+                vol_raw = to_float(contract.get("volatility"), None)
                 iv = vol_raw / 100.0 if vol_raw else None
 
-                # Native Schwab Greeks
-                delta = _to_float(contract.get("delta"))
-                gamma = _to_float(contract.get("gamma"))
-                theta = _to_float(contract.get("theta"))
-                vega = _to_float(contract.get("vega"))
+                # Native Schwab Greeks — default None to distinguish missing from zero
+                delta = to_float(contract.get("delta"), None)
+                gamma = to_float(contract.get("gamma"), None)
+                theta = to_float(contract.get("theta"), None)
+                vega = to_float(contract.get("vega"), None)
 
                 reasons = self._check_rejection(
                     request, strike, current_price, delta, oi, bid, mid, dte,
@@ -180,7 +163,9 @@ class OptionScanner:
                 compliance = RuleCompliance(
                     passes_10pct_rule=self._passes_10pct_rule(request, strike),
                     passes_dte_range=request.min_dte <= dte <= request.max_dte,
-                    passes_delta_range=request.min_delta <= abs(delta) <= request.max_delta,
+                    passes_delta_range=(
+                        delta is not None and request.min_delta <= abs(delta) <= request.max_delta
+                    ),
                     passes_earnings_check=True,
                     passes_return_target=metrics["return_on_capital_pct"] >= request.min_return_pct,
                 )

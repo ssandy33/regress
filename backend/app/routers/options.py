@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session as DBSession
@@ -9,28 +8,11 @@ from app.models.schemas import OptionScanRequest, OptionScanResponse
 from app.services.options_scanner import OptionScanner, OptionScannerError
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
+from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/options", tags=["options"])
-
-
-def _to_float(value, default: Optional[float] = 0.0) -> Optional[float]:
-    if value is None or value == "":
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _to_int(value, default: int = 0) -> int:
-    if value is None or value == "":
-        return default
-    try:
-        return int(float(value))
-    except (TypeError, ValueError):
-        return default
 
 
 def _get_scanner(db: DBSession = Depends(get_db)) -> OptionScanner:
@@ -100,18 +82,18 @@ def get_option_chain(
                 if not contracts:
                     continue
                 c = contracts[0]
-                vol_raw = _to_float(c.get("volatility"), None)
+                vol_raw = to_float(c.get("volatility"), None)
                 records.append({
-                    "strike": _to_float(c.get("strikePrice")),
-                    "bid": _to_float(c.get("bid")),
-                    "ask": _to_float(c.get("ask")),
-                    "volume": _to_int(c.get("totalVolume")),
-                    "openInterest": _to_int(c.get("openInterest")),
+                    "strike": to_float(c.get("strikePrice")),
+                    "bid": to_float(c.get("bid")),
+                    "ask": to_float(c.get("ask")),
+                    "volume": to_int(c.get("totalVolume")),
+                    "openInterest": to_int(c.get("openInterest")),
                     "impliedVolatility": vol_raw / 100.0 if vol_raw else 0,
-                    "delta": _to_float(c.get("delta")),
-                    "gamma": _to_float(c.get("gamma")),
-                    "theta": _to_float(c.get("theta")),
-                    "vega": _to_float(c.get("vega")),
+                    "delta": to_float(c.get("delta")),
+                    "gamma": to_float(c.get("gamma")),
+                    "theta": to_float(c.get("theta")),
+                    "vega": to_float(c.get("vega")),
                 })
         return sorted(records, key=lambda r: r["strike"])
 
