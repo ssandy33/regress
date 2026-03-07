@@ -124,7 +124,7 @@ def main():
     schwab_parser = subparsers.add_parser("schwab-auth", help="Authorize with Schwab API")
     schwab_parser.add_argument("--app-key", default=None, help="Schwab app key")
     schwab_parser.add_argument("--app-secret", default=None, help="Schwab app secret")
-    schwab_parser.add_argument("--no-browser", action="store_true", help="Do not attempt to open browser")
+
 
     args = parser.parse_args()
     if args.command == "schwab-auth":
