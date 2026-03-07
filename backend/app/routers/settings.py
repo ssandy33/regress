@@ -206,7 +206,8 @@ def refresh_all_cache(db: DBSession = Depends(get_db)):
             fetcher.fetch(identifier, "2000-01-01", now_str)
             results.append({"asset_key": e.asset_key, "status": "refreshed"})
         except Exception as ex:
-            results.append({"asset_key": e.asset_key, "status": "failed", "error": str(ex)})
+            logger.warning("Cache refresh failed for %s: %s", e.asset_key, ex)
+            results.append({"asset_key": e.asset_key, "status": "failed", "error": "Refresh failed"})
 
     return {"results": results}
 
@@ -245,6 +246,7 @@ def refresh_stale_cache(db: DBSession = Depends(get_db)):
             fetcher.fetch(identifier, "2000-01-01", now_str)
             results.append({"asset_key": e.asset_key, "status": "refreshed"})
         except Exception as ex:
-            results.append({"asset_key": e.asset_key, "status": "failed", "error": str(ex)})
+            logger.warning("Stale cache refresh failed for %s: %s", e.asset_key, ex)
+            results.append({"asset_key": e.asset_key, "status": "failed", "error": "Refresh failed"})
 
     return {"results": results}

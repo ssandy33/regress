@@ -36,7 +36,7 @@ def _check_yfinance() -> dict:
         return {"available": resp.status_code == 200, "error": None}
     except Exception as e:
         logger.debug(f"yfinance health check failed: {e}")
-        return {"available": False, "error": str(e)}
+        return {"available": False, "error": "Connection failed"}
 
 
 def _check_fred() -> dict:
@@ -52,7 +52,7 @@ def _check_fred() -> dict:
         return {"available": True, "error": None}
     except Exception as e:
         logger.debug(f"FRED health check failed: {e}")
-        return {"available": False, "error": str(e)}
+        return {"available": False, "error": "Connection failed"}
 
 
 def _check_schwab() -> dict:
@@ -72,7 +72,7 @@ def _check_schwab() -> dict:
         return {"available": resp.status_code == 200, "error": None}
     except Exception as e:
         logger.debug(f"Schwab health check failed: {e}")
-        return {"available": False, "error": str(e)}
+        return {"available": False, "error": "Connection failed"}
 
 
 def _check_zillow() -> dict:
@@ -85,4 +85,4 @@ def _check_zillow() -> dict:
         return {"available": resp.status_code == 200, "error": None}
     except Exception as e:
         logger.debug(f"Zillow health check failed: {e}")
-        return {"available": False, "error": str(e)}
+        return {"available": False, "error": "Connection failed"}

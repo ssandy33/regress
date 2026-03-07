@@ -76,13 +76,16 @@ def list_backups() -> list[dict]:
 
 def restore_backup(filename: str) -> None:
     """Restore a backup by copying it over the current DB. Live swap, no restart."""
-    backup_path = BACKUP_DIR / filename
-    if not backup_path.exists():
-        raise FileNotFoundError(f"Backup '{filename}' not found")
+    # Validate filename before constructing path to prevent path traversal
+    basename = Path(filename).name
+    if basename != filename or ".." in filename or "/" in filename or "\\" in filename:
+        raise ValueError("Invalid backup filename")
 
-    # Prevent path traversal
-    if not str(backup_path.resolve()).startswith(str(BACKUP_DIR.resolve())):
+    backup_path = BACKUP_DIR / basename
+    if not backup_path.resolve().parent == BACKUP_DIR.resolve():
         raise ValueError("Invalid backup path")
+    if not backup_path.exists():
+        raise FileNotFoundError(f"Backup '{basename}' not found")
 
     db_path = _get_db_path()
 
