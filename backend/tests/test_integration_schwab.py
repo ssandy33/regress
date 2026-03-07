@@ -1,8 +1,8 @@
 """Integration tests for Schwab auth API endpoints.
 
-Tests the full request path through the API. Since SchwabTokenManager uses
-SessionLocal directly (not FastAPI DI), we mock at the manager boundary
-for DB state, and mock httpx for external Schwab API calls.
+Tests the full request path through the API. SchwabTokenManager uses
+SessionLocal directly, so we patch it to use the test DB session.
+Only external httpx calls to Schwab API are mocked.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import httpx as _httpx
 import pytest
 
+from app.models.database import AppSetting, get_db
 from app.services.schwab_auth import SchwabTokenManager
 
 
@@ -22,40 +23,64 @@ def reset_singleton():
     SchwabTokenManager._instance = None
 
 
-def _future_iso(days=0, minutes=0):
-    return (datetime.now(timezone.utc) + timedelta(days=days, minutes=minutes)).isoformat()
+@pytest.fixture()
+def test_session_local(client):
+    """Patch SessionLocal so SchwabTokenManager uses the test DB."""
+    from app.main import app
+
+    override_fn = app.dependency_overrides[get_db]
+
+    def patched_session_local():
+        return next(override_fn())
+
+    with patch("app.models.database.SessionLocal", patched_session_local):
+        yield patched_session_local
+
+
+def _insert_tokens(session_local_fn, access_minutes=30, refresh_days=7):
+    """Insert Schwab tokens into the test DB."""
+    db = session_local_fn()
+    now = datetime.now(timezone.utc)
+    tokens = {
+        "schwab_app_key": "test_app_key",
+        "schwab_app_secret": "test_app_secret",
+        "schwab_access_token": "test_access_token_abc123",
+        "schwab_refresh_token": "test_refresh_token_xyz789",
+        "schwab_access_token_expires": (now + timedelta(minutes=access_minutes)).isoformat(),
+        "schwab_refresh_token_expires": (now + timedelta(days=refresh_days)).isoformat(),
+    }
+    for key, value in tokens.items():
+        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if entry:
+            entry.value = value
+        else:
+            db.add(AppSetting(key=key, value=value))
+    db.commit()
 
 
 class TestSettingsEndpointSchwab:
     """GET /api/settings — schwab_configured and schwab_token_expires fields."""
 
-    def test_unconfigured_returns_false(self, client):
-        with patch.object(SchwabTokenManager, "is_configured", return_value=False), \
-             patch.object(SchwabTokenManager, "get_refresh_token_expiry", return_value=None):
-            resp = client.get("/api/settings")
+    def test_unconfigured_returns_false(self, client, test_session_local):
+        resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
         assert data["schwab_configured"] is False
         assert data["schwab_token_expires"] is None
 
-    def test_configured_returns_true_with_expiry(self, client):
-        expiry = _future_iso(days=7)
-        with patch.object(SchwabTokenManager, "is_configured", return_value=True), \
-             patch.object(SchwabTokenManager, "get_refresh_token_expiry", return_value=expiry):
-            resp = client.get("/api/settings")
+    def test_configured_returns_true_with_expiry(self, client, test_session_local):
+        _insert_tokens(test_session_local)
+        resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
         assert data["schwab_configured"] is True
-        assert data["schwab_token_expires"] == expiry
-        # Verify it's a valid ISO datetime in the future
+        assert data["schwab_token_expires"] is not None
         expires_dt = datetime.fromisoformat(data["schwab_token_expires"])
         assert expires_dt > datetime.now(timezone.utc)
 
-    def test_other_settings_still_present(self, client):
+    def test_other_settings_still_present(self, client, test_session_local):
         """Schwab fields don't break existing settings response."""
-        with patch.object(SchwabTokenManager, "is_configured", return_value=False), \
-             patch.object(SchwabTokenManager, "get_refresh_token_expiry", return_value=None):
-            resp = client.get("/api/settings")
+        resp = client.get("/api/settings")
         data = resp.json()
         assert "fred_api_key_set" in data
         assert "cache_ttl_daily_hours" in data
@@ -65,23 +90,21 @@ class TestSettingsEndpointSchwab:
 class TestSchwabHealthEndpoint:
     """GET /api/settings/health/schwab — configured/valid/error fields."""
 
-    def test_unconfigured(self, client):
-        with patch.object(SchwabTokenManager, "is_configured", return_value=False):
-            resp = client.get("/api/settings/health/schwab")
+    def test_unconfigured(self, client, test_session_local):
+        resp = client.get("/api/settings/health/schwab")
         assert resp.status_code == 200
         data = resp.json()
         assert data["configured"] is False
         assert data["valid"] is False
         assert data["error"] is None
 
-    def test_configured_and_valid(self, client):
+    def test_configured_and_valid(self, client, test_session_local):
+        _insert_tokens(test_session_local)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.raise_for_status = MagicMock()
 
-        with patch.object(SchwabTokenManager, "is_configured", return_value=True), \
-             patch.object(SchwabTokenManager, "get_access_token", return_value="test_token"), \
-             patch("httpx.get", return_value=mock_resp):
+        with patch("httpx.get", return_value=mock_resp):
             resp = client.get("/api/settings/health/schwab")
         assert resp.status_code == 200
         data = resp.json()
@@ -89,16 +112,15 @@ class TestSchwabHealthEndpoint:
         assert data["valid"] is True
         assert data["error"] is None
 
-    def test_configured_but_api_returns_401(self, client):
+    def test_configured_but_api_returns_401(self, client, test_session_local):
+        _insert_tokens(test_session_local)
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.raise_for_status.side_effect = _httpx.HTTPStatusError(
             "401", request=MagicMock(), response=mock_resp
         )
 
-        with patch.object(SchwabTokenManager, "is_configured", return_value=True), \
-             patch.object(SchwabTokenManager, "get_access_token", return_value="bad_token"), \
-             patch("httpx.get", return_value=mock_resp):
+        with patch("httpx.get", return_value=mock_resp):
             resp = client.get("/api/settings/health/schwab")
         assert resp.status_code == 200
         data = resp.json()
@@ -106,10 +128,10 @@ class TestSchwabHealthEndpoint:
         assert data["valid"] is False
         assert data["error"] == "HTTP 401"
 
-    def test_configured_but_connection_fails(self, client):
-        with patch.object(SchwabTokenManager, "is_configured", return_value=True), \
-             patch.object(SchwabTokenManager, "get_access_token", return_value="token"), \
-             patch("httpx.get", side_effect=_httpx.ConnectError("refused")):
+    def test_configured_but_connection_fails(self, client, test_session_local):
+        _insert_tokens(test_session_local)
+
+        with patch("httpx.get", side_effect=_httpx.ConnectError("refused")):
             resp = client.get("/api/settings/health/schwab")
         assert resp.status_code == 200
         data = resp.json()
@@ -117,13 +139,12 @@ class TestSchwabHealthEndpoint:
         assert data["valid"] is False
         assert data["error"] == "Connection failed"
 
-    def test_configured_but_token_expired(self, client):
-        """SchwabAuthError during get_access_token returns valid=False."""
-        from app.services.schwab_auth import SchwabAuthError
+    def test_configured_but_token_expired(self, client, test_session_local):
+        """Expired access + expired refresh returns valid=False."""
+        _insert_tokens(test_session_local, access_minutes=-5, refresh_days=-1)
 
-        with patch.object(SchwabTokenManager, "is_configured", return_value=True), \
-             patch.object(SchwabTokenManager, "get_access_token",
-                          side_effect=SchwabAuthError("Refresh token expired")):
+        with patch("app.services.schwab_auth.get_schwab_credentials",
+                    return_value=("test_app_key", "test_app_secret")):
             resp = client.get("/api/settings/health/schwab")
         assert resp.status_code == 200
         data = resp.json()
@@ -132,7 +153,7 @@ class TestSchwabHealthEndpoint:
 
 
 class TestSourcesEndpointSchwab:
-    """GET /api/health/sources — schwab entry in source checks."""
+    """GET /api/health/sources — schwab entry exercises real _check_schwab."""
 
     def _patch_other_sources(self):
         """Patch non-schwab sources to avoid real network calls."""
@@ -142,11 +163,9 @@ class TestSourcesEndpointSchwab:
             patch("app.routers.health._check_zillow", return_value={"available": True, "error": None}),
         )
 
-    def test_unconfigured_shows_unavailable(self, client):
+    def test_unconfigured_shows_unavailable(self, client, test_session_local):
         p1, p2, p3 = self._patch_other_sources()
-        with p1, p2, p3, \
-             patch("app.routers.health._check_schwab",
-                   return_value={"available": False, "error": "Not configured"}):
+        with p1, p2, p3:
             resp = client.get("/api/health/sources")
         assert resp.status_code == 200
         data = resp.json()
@@ -154,11 +173,13 @@ class TestSourcesEndpointSchwab:
         assert data["schwab"]["available"] is False
         assert data["schwab"]["error"] == "Not configured"
 
-    def test_configured_and_available(self, client):
+    def test_configured_and_available(self, client, test_session_local):
+        _insert_tokens(test_session_local)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
         p1, p2, p3 = self._patch_other_sources()
-        with p1, p2, p3, \
-             patch("app.routers.health._check_schwab",
-                   return_value={"available": True, "error": None}):
+        with p1, p2, p3, patch("httpx.get", return_value=mock_resp):
             resp = client.get("/api/health/sources")
         assert resp.status_code == 200
         data = resp.json()
@@ -166,24 +187,30 @@ class TestSourcesEndpointSchwab:
         assert data["schwab"]["error"] is None
         assert data["all_down"] is False
 
-    def test_all_down_includes_schwab(self, client):
-        """all_down is True only when all sources including schwab are down."""
+    def test_all_down_includes_schwab(self, client, test_session_local):
+        """all_down is True when all sources including schwab are down."""
         with patch("app.routers.health._check_yfinance", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_fred", return_value={"available": False, "error": "down"}), \
-             patch("app.routers.health._check_zillow", return_value={"available": False, "error": "down"}), \
-             patch("app.routers.health._check_schwab", return_value={"available": False, "error": "down"}):
+             patch("app.routers.health._check_zillow", return_value={"available": False, "error": "down"}):
             resp = client.get("/api/health/sources")
         assert resp.status_code == 200
         data = resp.json()
+        # schwab is also down (not configured in empty test DB)
+        assert data["schwab"]["available"] is False
         assert data["all_down"] is True
 
-    def test_not_all_down_when_schwab_available(self, client):
+    def test_not_all_down_when_schwab_available(self, client, test_session_local):
         """all_down is False if only schwab is up."""
+        _insert_tokens(test_session_local)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
         with patch("app.routers.health._check_yfinance", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_fred", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_zillow", return_value={"available": False, "error": "down"}), \
-             patch("app.routers.health._check_schwab", return_value={"available": True, "error": None}):
+             patch("httpx.get", return_value=mock_resp):
             resp = client.get("/api/health/sources")
         assert resp.status_code == 200
         data = resp.json()
+        assert data["schwab"]["available"] is True
         assert data["all_down"] is False
