@@ -47,10 +47,10 @@ services:
   frontend:
     build: ./frontend
     # No ports exposed to host — only accessible via Caddy through Docker network
-    volumes:
-      - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+    environment:
+      - HOSTNAME=0.0.0.0
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://127.0.0.1:8080/', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3

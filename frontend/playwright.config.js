@@ -11,7 +11,7 @@ export default defineConfig({
     command: 'npm run dev',
     port: 3000,
     reuseExistingServer: true,
-    timeout: 30000,
+    timeout: 60000,
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },

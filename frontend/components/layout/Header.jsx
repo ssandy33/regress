@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 import { useTheme } from '../../context/ThemeContext';
 
 export default function Header({ sessions, onLoadSession }) {
@@ -6,14 +6,14 @@ export default function Header({ sessions, onLoadSession }) {
 
   return (
     <header className="h-14 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between px-4 shrink-0">
-      <Link to="/" className="text-lg font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">
+      <Link href="/" className="text-lg font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">
         Regression Analysis Tool
       </Link>
 
       <div className="flex items-center gap-3">
         {/* Options scanner link */}
         <Link
-          to="/options"
+          href="/options"
           className="px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium"
         >
           Options
@@ -35,7 +35,7 @@ export default function Header({ sessions, onLoadSession }) {
 
         {/* Settings link */}
         <Link
-          to="/settings"
+          href="/settings"
           className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
           aria-label="Settings"
         >
@@ -47,7 +47,7 @@ export default function Header({ sessions, onLoadSession }) {
 
         {/* Help link */}
         <Link
-          to="/help"
+          href="/help"
           className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
           aria-label="Help"
         >
