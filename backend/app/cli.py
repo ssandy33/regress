@@ -85,6 +85,10 @@ def schwab_auth(args):
         sys.exit(1)
 
     token_data = resp.json()
+    if "access_token" not in token_data or "refresh_token" not in token_data:
+        print(f"Error: Unexpected token response format. Missing required fields.", file=sys.stderr)
+        sys.exit(1)
+
     now = datetime.now(timezone.utc)
     access_expires = now.replace(microsecond=0) + timedelta(
         seconds=token_data.get("expires_in", 1800)

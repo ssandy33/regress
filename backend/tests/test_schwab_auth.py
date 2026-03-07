@@ -55,9 +55,8 @@ class TestSchwabTokenManager:
     def test_is_configured_false_no_tokens(self, client):
         """is_configured returns False with no DB entries."""
         mgr = SchwabTokenManager()
-        # Patch to use the test DB
-        with patch("app.services.schwab_auth.SchwabTokenManager.is_configured", return_value=False):
-            assert not mgr.is_configured()
+        # Test DB (via client fixture) has no tokens by default
+        assert not mgr.is_configured()
 
     def test_get_access_token_returns_cached(self):
         """get_access_token returns cached token when valid."""

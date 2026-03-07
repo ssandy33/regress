@@ -118,8 +118,13 @@ def check_schwab_connection():
         )
         resp.raise_for_status()
         return {"configured": True, "valid": True, "error": None}
+    except httpx.HTTPStatusError as e:
+        return {"configured": True, "valid": False, "error": f"HTTP {e.response.status_code}"}
+    except httpx.RequestError:
+        return {"configured": True, "valid": False, "error": "Connection failed"}
     except Exception as e:
-        return {"configured": True, "valid": False, "error": str(e)}
+        logger.debug("Schwab health check failed: %s", e)
+        return {"configured": True, "valid": False, "error": "Validation failed"}
 
 
 # --- Backups ---
