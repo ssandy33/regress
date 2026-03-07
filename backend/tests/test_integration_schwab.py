@@ -29,12 +29,23 @@ def test_session_local(client):
     from app.main import app
 
     override_fn = app.dependency_overrides[get_db]
+    # Keep track of generators so their finally blocks run on cleanup
+    generators = []
 
     def patched_session_local():
-        return next(override_fn())
+        gen = override_fn()
+        generators.append(gen)
+        return next(gen)
 
     with patch("app.models.database.SessionLocal", patched_session_local):
         yield patched_session_local
+
+    # Run generator cleanup (closes DB sessions)
+    for gen in generators:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
 
 
 def _insert_tokens(session_local_fn, access_minutes=30, refresh_days=7):
@@ -49,13 +60,16 @@ def _insert_tokens(session_local_fn, access_minutes=30, refresh_days=7):
         "schwab_access_token_expires": (now + timedelta(minutes=access_minutes)).isoformat(),
         "schwab_refresh_token_expires": (now + timedelta(days=refresh_days)).isoformat(),
     }
-    for key, value in tokens.items():
-        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if entry:
-            entry.value = value
-        else:
-            db.add(AppSetting(key=key, value=value))
-    db.commit()
+    try:
+        for key, value in tokens.items():
+            entry = db.query(AppSetting).filter(AppSetting.key == key).first()
+            if entry:
+                entry.value = value
+            else:
+                db.add(AppSetting(key=key, value=value))
+        db.commit()
+    finally:
+        db.close()
 
 
 class TestSettingsEndpointSchwab:
