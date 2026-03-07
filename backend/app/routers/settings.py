@@ -35,7 +35,7 @@ def get_settings(db: DBSession = Depends(get_db)):
         cache_ttl_monthly_days=int(_get("cache_ttl_monthly_days", str(settings.cache_ttl_monthly_days))),
         default_date_range_years=int(_get("default_date_range_years", "5")),
         theme=_get("theme", "system"),
-        schwab_connected=schwab_mgr.is_configured(),
+        schwab_configured=schwab_mgr.is_configured(),
         schwab_token_expires=schwab_mgr.get_refresh_token_expiry(),
     )
 

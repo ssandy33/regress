@@ -7,7 +7,7 @@ import argparse
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 
@@ -38,7 +38,7 @@ def schwab_auth(args):
         f"{SCHWAB_AUTHORIZE_URL}"
         f"?response_type=code"
         f"&client_id={app_key}"
-        f"&redirect_uri={SCHWAB_REDIRECT_URI}"
+        f"&redirect_uri={quote(SCHWAB_REDIRECT_URI, safe='')}"
     )
 
     print("\n--- Schwab OAuth Authorization ---\n")

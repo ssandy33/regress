@@ -249,14 +249,14 @@ export default function SettingsPage() {
 
             <div className="flex items-center gap-2 mb-3">
               <span className={`w-2 h-2 rounded-full ${
-                settings?.schwab_connected ? 'bg-green-400' : 'bg-red-400'
+                settings?.schwab_configured ? 'bg-green-400' : 'bg-red-400'
               }`} />
               <span className="text-sm text-slate-700 dark:text-slate-300">
-                {settings?.schwab_connected ? 'Connected' : 'Not connected'}
+                {settings?.schwab_configured ? 'Configured' : 'Not configured'}
               </span>
             </div>
 
-            {settings?.schwab_connected ? (
+            {settings?.schwab_configured ? (
               <div className="space-y-3">
                 {settings.schwab_token_expires && (
                   <p className="text-xs text-slate-500 dark:text-slate-400">

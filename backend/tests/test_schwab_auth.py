@@ -217,14 +217,14 @@ class TestSourceHealthIncludesSchwab:
 
 class TestSettingsIncludesSchwab:
     def test_settings_has_schwab_fields(self, client):
-        """GET /api/settings includes schwab_connected and schwab_token_expires."""
+        """GET /api/settings includes schwab_configured and schwab_token_expires."""
         with patch.object(SchwabTokenManager, "is_configured", return_value=False), \
              patch.object(SchwabTokenManager, "get_refresh_token_expiry", return_value=None):
             resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
-        assert "schwab_connected" in data
-        assert data["schwab_connected"] is False
+        assert "schwab_configured" in data
+        assert data["schwab_configured"] is False
         assert "schwab_token_expires" in data
 
 
