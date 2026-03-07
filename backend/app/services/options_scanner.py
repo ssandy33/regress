@@ -21,6 +21,24 @@ class OptionScannerError(Exception):
     pass
 
 
+def _to_float(value, default: Optional[float] = 0.0) -> Optional[float]:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value, default: int = 0) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 class OptionScanner:
     """Scans option chains for wheel strategy opportunities (CC and CSP)."""
 
@@ -108,19 +126,20 @@ class OptionScanner:
                     continue
                 contract = contracts[0]  # first contract at this strike
 
-                strike = float(contract.get("strikePrice", strike_str))
-                bid = float(contract.get("bid", 0))
-                ask = float(contract.get("ask", 0))
-                mid = float(contract.get("mark", round((bid + ask) / 2, 4)))
-                oi = int(contract.get("openInterest", 0))
-                vol = int(contract.get("totalVolume", 0))
-                iv = float(contract.get("volatility", 0)) / 100.0 if contract.get("volatility") else None
+                strike = _to_float(contract.get("strikePrice", strike_str))
+                bid = _to_float(contract.get("bid"))
+                ask = _to_float(contract.get("ask"))
+                mid = _to_float(contract.get("mark")) or round((bid + ask) / 2, 4)
+                oi = _to_int(contract.get("openInterest"))
+                vol = _to_int(contract.get("totalVolume"))
+                vol_raw = _to_float(contract.get("volatility"), None)
+                iv = vol_raw / 100.0 if vol_raw else None
 
                 # Native Schwab Greeks
-                delta = float(contract.get("delta", 0))
-                gamma = float(contract.get("gamma", 0))
-                theta = float(contract.get("theta", 0))
-                vega = float(contract.get("vega", 0))
+                delta = _to_float(contract.get("delta"))
+                gamma = _to_float(contract.get("gamma"))
+                theta = _to_float(contract.get("theta"))
+                vega = _to_float(contract.get("vega"))
 
                 reasons = self._check_rejection(
                     request, strike, current_price, delta, oi, bid, mid, dte,

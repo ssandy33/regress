@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session as DBSession
@@ -12,6 +13,24 @@ from app.services.schwab_auth import SchwabAuthError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/options", tags=["options"])
+
+
+def _to_float(value, default: Optional[float] = 0.0) -> Optional[float]:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value, default: int = 0) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _get_scanner(db: DBSession = Depends(get_db)) -> OptionScanner:
@@ -51,8 +70,8 @@ def get_option_chain(
         )
     except SchwabAuthError:
         raise
-    except SchwabClientError as e:
-        raise OptionScannerError(f"No options available for '{ticker}'") from e
+    except SchwabClientError:
+        raise  # preserve fetch failures as-is
 
     call_map = chain_data.get("callExpDateMap", {})
     put_map = chain_data.get("putExpDateMap", {})
@@ -81,17 +100,18 @@ def get_option_chain(
                 if not contracts:
                     continue
                 c = contracts[0]
+                vol_raw = _to_float(c.get("volatility"), None)
                 records.append({
-                    "strike": float(c.get("strikePrice", 0)),
-                    "bid": float(c.get("bid", 0)),
-                    "ask": float(c.get("ask", 0)),
-                    "volume": int(c.get("totalVolume", 0)),
-                    "openInterest": int(c.get("openInterest", 0)),
-                    "impliedVolatility": float(c.get("volatility", 0)) / 100.0 if c.get("volatility") else 0,
-                    "delta": float(c.get("delta", 0)),
-                    "gamma": float(c.get("gamma", 0)),
-                    "theta": float(c.get("theta", 0)),
-                    "vega": float(c.get("vega", 0)),
+                    "strike": _to_float(c.get("strikePrice")),
+                    "bid": _to_float(c.get("bid")),
+                    "ask": _to_float(c.get("ask")),
+                    "volume": _to_int(c.get("totalVolume")),
+                    "openInterest": _to_int(c.get("openInterest")),
+                    "impliedVolatility": vol_raw / 100.0 if vol_raw else 0,
+                    "delta": _to_float(c.get("delta")),
+                    "gamma": _to_float(c.get("gamma")),
+                    "theta": _to_float(c.get("theta")),
+                    "vega": _to_float(c.get("vega")),
                 })
         return sorted(records, key=lambda r: r["strike"])
 
