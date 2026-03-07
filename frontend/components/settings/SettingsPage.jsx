@@ -3,7 +3,7 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 import {
   getSettings, updateSetting, getCacheStats, clearCache, checkFredHealth,
-  checkSourceHealth, getBackups, restoreBackup, getCacheFreshness,
+  checkSchwabHealth, checkSourceHealth, getBackups, restoreBackup, getCacheFreshness,
   refreshAllCache, refreshStaleCache,
 } from '../../api/client';
 import { formatNumber } from '../../utils/formatters';
@@ -31,6 +31,8 @@ export default function SettingsPage() {
   const [freshness, setFreshness] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [restoring, setRestoring] = useState(null);
+  const [schwabStatus, setSchwabStatus] = useState(null);
+  const [schwabTesting, setSchwabTesting] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -235,6 +237,72 @@ export default function SettingsPage() {
                   fred.stlouisfed.org
                 </a>
               </p>
+            )}
+          </section>
+
+          {/* Schwab API */}
+          <section className="bg-slate-50 dark:bg-slate-800 rounded-xl p-6 border border-slate-200 dark:border-slate-700">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-1">Schwab API</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+              OAuth 2.0 connection for Schwab market data.
+            </p>
+
+            <div className="flex items-center gap-2 mb-3">
+              <span className={`w-2 h-2 rounded-full ${
+                settings?.schwab_configured ? 'bg-green-400' : 'bg-red-400'
+              }`} />
+              <span className="text-sm text-slate-700 dark:text-slate-300">
+                {settings?.schwab_configured ? 'Configured' : 'Not configured'}
+              </span>
+            </div>
+
+            {settings?.schwab_configured ? (
+              <div className="space-y-3">
+                {settings.schwab_token_expires && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Refresh token expires: {new Date(settings.schwab_token_expires).toLocaleString()}
+                  </p>
+                )}
+                <button
+                  onClick={async () => {
+                    setSchwabTesting(true);
+                    try {
+                      const result = await checkSchwabHealth();
+                      setSchwabStatus(result);
+                      if (result.valid) {
+                        toast.success('Schwab connection is working');
+                      } else {
+                        toast.error(result.error || 'Schwab connection test failed');
+                      }
+                    } catch {
+                      toast.error('Failed to test Schwab connection');
+                    } finally {
+                      setSchwabTesting(false);
+                    }
+                  }}
+                  disabled={schwabTesting}
+                  className="px-4 py-2 text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-600 disabled:opacity-50"
+                >
+                  {schwabTesting ? 'Testing...' : 'Test Connection'}
+                </button>
+                {schwabStatus && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className={`w-2 h-2 rounded-full ${schwabStatus.valid ? 'bg-green-400' : 'bg-red-400'}`} />
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {schwabStatus.valid ? 'Connection verified' : schwabStatus.error || 'Verification failed'}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-white dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 p-4">
+                <p className="text-sm text-slate-600 dark:text-slate-300 mb-2">
+                  To connect, run the authorization CLI command:
+                </p>
+                <code className="block text-xs bg-slate-100 dark:bg-slate-800 px-3 py-2 rounded text-slate-800 dark:text-slate-200">
+                  cd backend && python -m app.cli schwab-auth
+                </code>
+              </div>
             )}
           </section>
 

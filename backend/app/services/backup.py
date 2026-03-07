@@ -76,13 +76,14 @@ def list_backups() -> list[dict]:
 
 def restore_backup(filename: str) -> None:
     """Restore a backup by copying it over the current DB. Live swap, no restart."""
-    backup_path = BACKUP_DIR / filename
-    if not backup_path.exists():
-        raise FileNotFoundError(f"Backup '{filename}' not found")
+    ensure_backup_dir()
 
-    # Prevent path traversal
-    if not str(backup_path.resolve()).startswith(str(BACKUP_DIR.resolve())):
-        raise ValueError("Invalid backup path")
+    # Only allow restoring files that exist in our known backup listing.
+    # This avoids any user-controlled data in path expressions.
+    known_backups = {b.name: b for b in BACKUP_DIR.glob("regression_tool_*.db")}
+    backup_path = known_backups.get(filename)
+    if backup_path is None:
+        raise FileNotFoundError(f"Backup not found")
 
     db_path = _get_db_path()
 
@@ -92,4 +93,4 @@ def restore_backup(filename: str) -> None:
     engine.dispose()
     shutil.copy2(str(backup_path), str(db_path))
     init_db()
-    logger.info(f"Restored from backup: {filename}")
+    logger.info("Restored from backup: %s", backup_path.name)

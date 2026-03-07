@@ -194,6 +194,8 @@ class SettingsResponse(BaseModel):
     cache_ttl_monthly_days: int
     default_date_range_years: int
     theme: str
+    schwab_configured: bool = False
+    schwab_token_expires: Optional[str] = None
 
 
 class CacheStatsResponse(BaseModel):
