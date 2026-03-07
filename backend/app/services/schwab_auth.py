@@ -78,6 +78,12 @@ class SchwabTokenManager:
         except Exception:
             return None
 
+    def invalidate_token(self):
+        """Clear cached access token to force refresh on next call."""
+        with self._lock:
+            self._cached_access_token = None
+            self._cached_access_token_expires = None
+
     def get_access_token(self) -> str:
         """Return a valid access token, refreshing if needed."""
         with self._lock:

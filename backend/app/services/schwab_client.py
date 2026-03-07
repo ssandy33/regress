@@ -64,6 +64,7 @@ class SchwabClient:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
+                SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
             raise SchwabClientError(f"Schwab quote API error ({e.response.status_code})") from e
         except httpx.RequestError as e:
@@ -94,8 +95,8 @@ class SchwabClient:
             DataFrame with DatetimeIndex named "date" and "value" column (close prices).
         """
         symbol = to_schwab_symbol(ticker)
-        start_ms = int(pd.Timestamp(start).timestamp() * 1000)
-        end_ms = int(pd.Timestamp(end).timestamp() * 1000)
+        start_ms = int(pd.Timestamp(start, tz="America/New_York").timestamp() * 1000)
+        end_ms = int(pd.Timestamp(end, tz="America/New_York").timestamp() * 1000)
 
         url = f"{self.BASE_URL}/pricehistory"
         params = {
@@ -116,6 +117,7 @@ class SchwabClient:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
+                SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
             raise SchwabClientError(
                 f"Schwab price history error ({e.response.status_code}) for '{ticker}'"

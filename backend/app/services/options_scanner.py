@@ -379,8 +379,8 @@ class OptionScanner:
                 vix_price = getattr(fi, "last_price", None) or getattr(fi, "previous_close", None)
                 if vix_price and vix_price > 0:
                     vix = round(float(vix_price), 2)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"VIX yfinance fallback failed: {e}")
 
         # Try Schwab for ticker's 52-week data
         try:

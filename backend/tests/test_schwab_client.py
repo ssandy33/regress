@@ -121,6 +121,35 @@ class TestGetQuote:
             client.get_quote("AAPL")
 
 
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_quote_network_error_raises_client_error(self, mock_get, mock_tm_cls):
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_get.side_effect = httpx.RequestError("Connection refused")
+
+        client = SchwabClient()
+        with pytest.raises(SchwabClientError, match="request failed"):
+            client.get_quote("AAPL")
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_quote_401_invalidates_token(self, mock_get, mock_tm_cls):
+        mock_tm = mock_tm_cls.return_value
+        mock_tm.get_access_token.return_value = "bad-token"
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 401
+        mock_get.return_value = mock_resp
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "401", request=MagicMock(), response=mock_resp
+        )
+
+        client = SchwabClient()
+        with pytest.raises(SchwabAuthError):
+            client.get_quote("AAPL")
+
+        mock_tm.invalidate_token.assert_called_once()
+
+
 class TestGetPriceHistory:
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
@@ -197,3 +226,31 @@ class TestGetPriceHistory:
         # Verify the symbol was mapped
         call_kwargs = mock_get.call_args.kwargs
         assert call_kwargs["params"]["symbol"] == "$SPX.X"
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_price_history_network_error_raises_client_error(self, mock_get, mock_tm_cls):
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_get.side_effect = httpx.RequestError("Connection refused")
+
+        client = SchwabClient()
+        with pytest.raises(SchwabClientError, match="request failed"):
+            client.get_price_history("AAPL", "2024-01-01", "2024-01-03")
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_price_history_401_invalidates_token(self, mock_get, mock_tm_cls):
+        mock_tm = mock_tm_cls.return_value
+        mock_tm.get_access_token.return_value = "bad-token"
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 401
+        mock_get.return_value = mock_resp
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "401", request=MagicMock(), response=mock_resp
+        )
+
+        client = SchwabClient()
+        with pytest.raises(SchwabAuthError):
+            client.get_price_history("AAPL", "2024-01-01", "2024-01-03")
+
+        mock_tm.invalidate_token.assert_called_once()

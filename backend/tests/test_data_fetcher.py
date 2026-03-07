@@ -120,6 +120,20 @@ class TestDataFetcherFallbackToStale:
         assert meta.is_stale
         assert len(df) > 0
 
+    @patch("app.services.data_fetcher._fetch_schwab")
+    def test_auth_error_uses_stale_cache(self, mock_fetch_schwab):
+        """When Schwab auth fails but stale cache exists, return stale data."""
+        from app.services.schwab_auth import SchwabAuthError
+        cache = _make_mock_cache(has_fresh=False, has_stale=True)
+        fetcher = DataFetcher(cache)
+
+        mock_fetch_schwab.side_effect = SchwabAuthError("Token expired")
+
+        df, meta = fetcher.fetch("AAPL", "2024-01-01", "2024-01-10")
+
+        assert meta.is_stale
+        assert len(df) > 0
+
 
 class TestDataFetcherNoFallback:
     @patch("app.services.data_fetcher._fetch_schwab")

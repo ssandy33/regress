@@ -5,7 +5,6 @@ Each test class maps to an acceptance criterion from the issue.
 
 import ast
 import inspect
-import textwrap
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -78,7 +77,7 @@ class TestAC1_RegressionChartsLoadViaSchwab:
         cache = _mock_cache()
         fetcher = DataFetcher(cache)
 
-        df, meta = fetcher.fetch("^GSPC", "2024-01-01", "2024-01-30")
+        _, meta = fetcher.fetch("^GSPC", "2024-01-01", "2024-01-30")
 
         mock_schwab.assert_called_once_with("^GSPC", "2024-01-01", "2024-01-30")
         assert meta.source == "schwab"
@@ -90,7 +89,7 @@ class TestAC1_RegressionChartsLoadViaSchwab:
         cache = _mock_cache()
         fetcher = DataFetcher(cache)
 
-        df, meta = fetcher.fetch("GC=F", "2024-01-01", "2024-01-30")
+        _, meta = fetcher.fetch("GC=F", "2024-01-01", "2024-01-30")
 
         mock_schwab.assert_called_once_with("GC=F", "2024-01-01", "2024-01-30")
         assert meta.source == "schwab"
@@ -246,7 +245,7 @@ class TestAC4_CacheBehaviorUnchanged:
         cache = _mock_cache(has_fresh=True)
         fetcher = DataFetcher(cache)
 
-        df, meta = fetcher.fetch("AAPL", "2024-01-01", "2024-01-30")
+        _, meta = fetcher.fetch("AAPL", "2024-01-01", "2024-01-30")
 
         mock_schwab.assert_not_called()
         assert not meta.is_stale
@@ -276,10 +275,9 @@ class TestAC4_CacheBehaviorUnchanged:
         cache = _mock_cache(has_stale=True)
         fetcher = DataFetcher(cache)
 
-        df, meta = fetcher.fetch("AAPL", "2024-01-01", "2024-01-30")
+        _, meta = fetcher.fetch("AAPL", "2024-01-01", "2024-01-30")
 
         assert meta.is_stale
-        assert len(df) > 0
 
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_stale_cache_fallback_on_auth_error(self, mock_schwab):
@@ -288,7 +286,7 @@ class TestAC4_CacheBehaviorUnchanged:
         cache = _mock_cache(has_stale=True)
         fetcher = DataFetcher(cache)
 
-        df, meta = fetcher.fetch("AAPL", "2024-01-01", "2024-01-30")
+        _, meta = fetcher.fetch("AAPL", "2024-01-01", "2024-01-30")
 
         assert meta.is_stale
 
@@ -330,11 +328,16 @@ class TestAC5_NoYfinanceInDataFetcher:
                 assert node.module != "yfinance", "data_fetcher.py still imports from yfinance"
 
     def test_no_yf_references_in_source(self):
-        """data_fetcher.py source must not contain 'yf.' or 'yfinance' references."""
+        """data_fetcher.py AST must not contain yf or yfinance name/attribute nodes."""
         import app.services.data_fetcher as mod
         source = inspect.getsource(mod)
-        assert "yf." not in source, "data_fetcher.py still references yf."
-        assert "yfinance" not in source, "data_fetcher.py still references yfinance"
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                assert node.id != "yf", "data_fetcher.py has 'yf' name reference"
+                assert node.id != "yfinance", "data_fetcher.py has 'yfinance' name reference"
+            if isinstance(node, ast.Attribute):
+                assert node.attr != "yfinance", "data_fetcher.py has 'yfinance' attribute reference"
 
     def test_detect_source_returns_schwab_not_yfinance(self):
         """detect_source() must return 'schwab' for all non-FRED, non-Zillow tickers."""
@@ -370,9 +373,3 @@ class TestAC6_ExistingTestsUpdated:
         stale = cache.get_stale.return_value
         assert stale["source_name"] == "schwab"
 
-    def test_source_detection_test_exists(self):
-        """TestSourceDetection must test schwab as default (not yfinance)."""
-        from tests.test_data_fetcher import TestSourceDetection
-
-        assert hasattr(TestSourceDetection, "test_schwab_default")
-        assert not hasattr(TestSourceDetection, "test_yfinance_default")

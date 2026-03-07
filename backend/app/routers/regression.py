@@ -49,7 +49,7 @@ def linear_regression(
     result["data_meta"] = meta
 
     # Fetch earnings dates for yfinance tickers
-    if detect_source(req.asset) == "yfinance":
+    if detect_source(req.asset) in ("yfinance", "schwab"):
         try:
             import yfinance as yf
             ticker = yf.Ticker(req.asset)
