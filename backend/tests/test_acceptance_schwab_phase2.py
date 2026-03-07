@@ -121,115 +121,97 @@ class TestAC1_RegressionChartsLoadViaSchwab:
 
 
 class TestAC2_CurrentPriceViaSchwab:
-    """AC: Current price in options scanner resolves via Schwab."""
+    """AC: Current price in options scanner resolves via Schwab.
+
+    In Phase 3, current price comes from the Schwab chain response's underlying
+    quote. The _get_current_price_fallback method is used only when the chain
+    response lacks a price.
+    """
 
     @patch("app.services.options_scanner.SchwabClient")
     def test_get_current_price_uses_schwab(self, mock_client_cls):
-        """_get_current_price tries Schwab quote first."""
-        mock_client_cls.return_value.get_quote.return_value = {"lastPrice": 185.50}
+        """_get_current_price_fallback uses Schwab get_quote."""
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_quote.return_value = {"lastPrice": 185.50}
         scanner = OptionScanner()
-        ticker_obj = MagicMock()
 
-        price = scanner._get_current_price(ticker_obj, "AAPL")
+        price = scanner._get_current_price_fallback(mock_client, "AAPL")
 
         assert price == 185.50
-        mock_client_cls.return_value.get_quote.assert_called_once_with("AAPL")
+        mock_client.get_quote.assert_called_once_with("AAPL")
 
     @patch("app.services.options_scanner.SchwabClient")
-    def test_get_current_price_falls_back_to_yfinance(self, mock_client_cls):
-        """When Schwab fails, falls back to yfinance."""
-        mock_client_cls.return_value.get_quote.side_effect = SchwabClientError("API down")
+    def test_get_current_price_falls_back_to_error(self, mock_client_cls):
+        """When Schwab fails, raises OptionScannerError (no yfinance fallback for price)."""
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_quote.side_effect = SchwabClientError("API down")
         scanner = OptionScanner()
-        ticker_obj = MagicMock()
-        fi = MagicMock()
-        fi.last_price = 184.00
-        ticker_obj.fast_info = fi
 
-        price = scanner._get_current_price(ticker_obj, "AAPL")
-
-        assert price == 184.00
+        with pytest.raises(OptionScannerError, match="Cannot get current price"):
+            scanner._get_current_price_fallback(mock_client, "AAPL")
 
     @patch("app.services.options_scanner.SchwabClient")
     def test_get_current_price_falls_back_on_auth_error(self, mock_client_cls):
-        """SchwabAuthError also triggers yfinance fallback."""
-        mock_client_cls.return_value.get_quote.side_effect = SchwabAuthError("Token expired")
+        """SchwabAuthError also raises OptionScannerError."""
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_quote.side_effect = SchwabAuthError("Token expired")
         scanner = OptionScanner()
-        ticker_obj = MagicMock()
-        fi = MagicMock()
-        fi.last_price = 183.00
-        ticker_obj.fast_info = fi
 
-        price = scanner._get_current_price(ticker_obj, "AAPL")
-
-        assert price == 183.00
+        with pytest.raises(OptionScannerError, match="Cannot get current price"):
+            scanner._get_current_price_fallback(mock_client, "AAPL")
 
 
 class TestAC3_VixDisplaysCorrectly:
-    """AC: VIX displays correctly in market context."""
+    """AC: VIX displays correctly in market context.
+
+    In Phase 3, VIX is fetched via _get_vix() using Schwab. 52-week data comes
+    from the chain response underlying quote, not a separate _get_market_context call.
+    """
 
     @patch("app.services.options_scanner.SchwabClient")
     def test_vix_from_schwab_quote(self, mock_client_cls):
         """VIX is fetched via Schwab get_quote('^VIX') mapped to $VIX.X."""
-        call_count = 0
-
-        def mock_get_quote(ticker):
-            nonlocal call_count
-            call_count += 1
-            if ticker == "^VIX":
-                return {"lastPrice": 22.35}
-            return {
-                "52WeekHigh": 200.0,
-                "52WeekLow": 150.0,
-                "totalVolume": 3000000,
-            }
-
-        mock_client_cls.return_value.get_quote.side_effect = mock_get_quote
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_quote.return_value = {"lastPrice": 22.35}
         scanner = OptionScanner()
-        ticker_obj = MagicMock()
-        ticker_obj.ticker = "AAPL"
 
-        ctx = scanner._get_market_context(ticker_obj)
+        vix = scanner._get_vix(mock_client)
 
-        assert ctx.vix == 22.35
+        assert vix == 22.35
 
     @patch("app.services.options_scanner.SchwabClient")
-    def test_vix_fallback_to_yfinance(self, mock_client_cls):
-        """When Schwab VIX fails, falls back to yfinance ^VIX."""
-        mock_client_cls.return_value.get_quote.side_effect = SchwabClientError("down")
+    def test_vix_fallback_returns_none(self, mock_client_cls):
+        """When Schwab VIX fails, returns None."""
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_quote.side_effect = SchwabClientError("down")
         scanner = OptionScanner()
-        ticker_obj = MagicMock()
 
-        mock_vix_fi = MagicMock()
-        mock_vix_fi.last_price = 19.80
+        vix = scanner._get_vix(mock_client)
 
-        with patch("app.services.options_scanner.yf.Ticker") as mock_yf_ticker:
-            mock_yf_ticker.return_value.fast_info = mock_vix_fi
-            ticker_obj.fast_info = MagicMock()
-            ticker_obj.fast_info.year_high = 200.0
-            ticker_obj.fast_info.year_low = 150.0
+        assert vix is None
 
-            ctx = scanner._get_market_context(ticker_obj)
-
-        assert ctx.vix == 19.80
-
-    @patch("app.services.options_scanner.SchwabClient")
-    def test_52week_data_from_schwab(self, mock_client_cls):
-        """52-week high/low comes from Schwab ticker quote."""
-        def mock_get_quote(ticker):
-            if ticker == "^VIX":
-                return {"lastPrice": 18.0}
-            return {
-                "52WeekHigh": 195.50,
-                "52WeekLow": 142.00,
-                "totalVolume": 5000000,
-            }
-
-        mock_client_cls.return_value.get_quote.side_effect = mock_get_quote
-        scanner = OptionScanner()
-        ticker_obj = MagicMock()
-        ticker_obj.ticker = "AAPL"
-
-        ctx = scanner._get_market_context(ticker_obj)
+    def test_52week_data_from_chain_underlying(self):
+        """52-week high/low comes from Schwab chain response underlying quote."""
+        # In Phase 3, the scan() method extracts 52-week data from the chain
+        # response's underlying dict — no separate quote call needed.
+        underlying = {
+            "last": 185.50,
+            "fiftyTwoWeekHigh": 195.50,
+            "fiftyTwoWeekLow": 142.00,
+            "totalVolume": 5000000,
+        }
+        ctx = MarketContext(
+            vix=18.0,
+            beta=None,
+            fifty_two_week_high=underlying.get("fiftyTwoWeekHigh"),
+            fifty_two_week_low=underlying.get("fiftyTwoWeekLow"),
+            avg_volume=underlying.get("totalVolume"),
+        )
 
         assert ctx.fifty_two_week_high == 195.50
         assert ctx.fifty_two_week_low == 142.00

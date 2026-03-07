@@ -83,6 +83,69 @@ class SchwabClient:
         retry=retry_if_exception_type(SchwabClientError),
         reraise=True,
     )
+    def get_option_chain(
+        self,
+        ticker: str,
+        contract_type: str = "ALL",
+        from_date: str | None = None,
+        to_date: str | None = None,
+        strike_count: int | None = None,
+    ) -> dict:
+        """Fetch option chain from Schwab /marketdata/v1/chains.
+
+        Args:
+            ticker: equity symbol (e.g. "AAPL")
+            contract_type: CALL, PUT, or ALL
+            from_date: start of DTE range (YYYY-MM-DD)
+            to_date: end of DTE range (YYYY-MM-DD)
+            strike_count: number of strikes above/below ATM (optional)
+
+        Returns:
+            Raw Schwab chains response dict with keys like symbol, underlyingPrice,
+            callExpDateMap, putExpDateMap.
+        """
+        symbol = to_schwab_symbol(ticker)
+        url = f"{self.BASE_URL}/chains"
+        params = {
+            "symbol": symbol,
+            "contractType": contract_type,
+            "includeUnderlyingQuote": "true",
+        }
+        if from_date:
+            params["fromDate"] = from_date
+        if to_date:
+            params["toDate"] = to_date
+        if strike_count:
+            params["strikeCount"] = strike_count
+
+        try:
+            resp = httpx.get(
+                url,
+                params=params,
+                headers=self._headers(),
+                timeout=30,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                SchwabTokenManager().invalidate_token()
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+            raise SchwabClientError(f"Schwab chains API error ({e.response.status_code})") from e
+        except httpx.RequestError as e:
+            raise SchwabClientError(f"Schwab chains request failed: {e}") from e
+
+        data = resp.json()
+        if data.get("status") == "FAILED" or not (data.get("callExpDateMap") or data.get("putExpDateMap")):
+            raise SchwabClientError(f"No option chain data returned for '{ticker}'")
+
+        return data
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        retry=retry_if_exception_type(SchwabClientError),
+        reraise=True,
+    )
     def get_price_history(self, ticker: str, start: str, end: str) -> pd.DataFrame:
         """Fetch daily price history for a ticker.
 

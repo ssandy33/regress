@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from app.services.options_scanner import OptionScanner, OptionScannerError
 from app.models.schemas import MarketContext, RuleCompliance, StrikeRecommendation
@@ -91,11 +91,8 @@ class TestScanEndpoint:
 
 class TestEarningsEndpoint:
     def test_get_earnings(self, client):
-        mock_ticker = MagicMock()
-        mock_ticker.calendar = {"Earnings Date": ["2026-05-05"]}
-        with patch("app.routers.options.yf.Ticker", return_value=mock_ticker):
-            with patch.object(OptionScanner, "_get_earnings_date", return_value="2026-05-05"):
-                response = client.get("/api/options/earnings/SOFI")
+        with patch.object(OptionScanner, "_get_earnings_date", return_value="2026-05-05"):
+            response = client.get("/api/options/earnings/SOFI")
         assert response.status_code == 200
         data = response.json()
         assert data["ticker"] == "SOFI"
