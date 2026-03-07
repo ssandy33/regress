@@ -126,6 +126,11 @@ export async function checkFredHealth() {
   return data;
 }
 
+export async function checkSchwabHealth() {
+  const { data } = await api.get('/api/settings/health/schwab');
+  return data;
+}
+
 // --- Health ---
 
 export async function checkSourceHealth() {

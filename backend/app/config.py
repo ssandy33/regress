@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     fred_api_key: str = ""
+    schwab_app_key: str = ""
+    schwab_app_secret: str = ""
     database_url: str = "sqlite:///./regression_tool.db"
     cache_ttl_daily_hours: int = 24
     cache_ttl_monthly_days: int = 7
@@ -30,3 +32,26 @@ def get_fred_api_key() -> str:
     except Exception:
         pass
     return ""
+
+
+def get_schwab_credentials() -> tuple[str, str]:
+    """Get Schwab app key and secret, checking DB settings as fallback."""
+    app_key = settings.schwab_app_key
+    app_secret = settings.schwab_app_secret
+    if app_key and app_secret:
+        return app_key, app_secret
+    try:
+        from app.models.database import SessionLocal, AppSetting
+        db = SessionLocal()
+        try:
+            key_entry = db.query(AppSetting).filter(AppSetting.key == "schwab_app_key").first()
+            secret_entry = db.query(AppSetting).filter(AppSetting.key == "schwab_app_secret").first()
+            if key_entry:
+                app_key = key_entry.value
+            if secret_entry:
+                app_secret = secret_entry.value
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return app_key, app_secret

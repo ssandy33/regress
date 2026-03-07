@@ -19,6 +19,7 @@ from app.services.backup import create_backup
 from app.services.cache import CacheService
 from app.services.data_fetcher import DataFetcher, DataFetchError, InvalidTickerError, DataAlignmentError
 from app.services.options_scanner import OptionScannerError
+from app.services.schwab_auth import SchwabAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,11 @@ async def data_alignment_error_handler(request: Request, exc: DataAlignmentError
 @app.exception_handler(OptionScannerError)
 async def option_scanner_error_handler(request: Request, exc: OptionScannerError):
     return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+
+@app.exception_handler(SchwabAuthError)
+async def schwab_auth_error_handler(request: Request, exc: SchwabAuthError):
+    return JSONResponse(status_code=401, content={"detail": str(exc)})
 
 
 @app.exception_handler(ValueError)

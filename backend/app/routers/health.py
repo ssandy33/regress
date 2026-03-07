@@ -17,6 +17,7 @@ def check_sources():
         "yfinance": _check_yfinance(),
         "fred": _check_fred(),
         "zillow": _check_zillow(),
+        "schwab": _check_schwab(),
     }
     results["all_down"] = all(
         not v["available"] for k, v in results.items() if k != "all_down"
@@ -51,6 +52,26 @@ def _check_fred() -> dict:
         return {"available": True, "error": None}
     except Exception as e:
         logger.debug(f"FRED health check failed: {e}")
+        return {"available": False, "error": str(e)}
+
+
+def _check_schwab() -> dict:
+    """Check Schwab API by testing market data endpoint."""
+    try:
+        from app.services.schwab_auth import SchwabTokenManager
+        mgr = SchwabTokenManager()
+        if not mgr.is_configured():
+            return {"available": False, "error": "Not configured"}
+        import httpx
+        token = mgr.get_access_token()
+        resp = httpx.get(
+            "https://api.schwabapi.com/marketdata/v1/markets?markets=equity",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        return {"available": resp.status_code == 200, "error": None}
+    except Exception as e:
+        logger.debug(f"Schwab health check failed: {e}")
         return {"available": False, "error": str(e)}
 
 

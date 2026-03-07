@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session as DBSession
 from sqlalchemy import func, text
 
 from app.config import settings, get_fred_api_key
+from app.services.schwab_auth import SchwabTokenManager
 from app.models.database import AppSetting, CacheEntry, get_db
 from app.models.schemas import CacheStatsResponse, SettingUpdate, SettingsResponse
 from app.services.backup import create_backup, list_backups, restore_backup
@@ -27,12 +28,15 @@ def get_settings(db: DBSession = Depends(get_db)):
         entry = db.query(AppSetting).filter(AppSetting.key == key).first()
         return entry.value if entry else default
 
+    schwab_mgr = SchwabTokenManager()
     return SettingsResponse(
         fred_api_key_set=bool(fred_key),
         cache_ttl_daily_hours=int(_get("cache_ttl_daily_hours", str(settings.cache_ttl_daily_hours))),
         cache_ttl_monthly_days=int(_get("cache_ttl_monthly_days", str(settings.cache_ttl_monthly_days))),
         default_date_range_years=int(_get("default_date_range_years", "5")),
         theme=_get("theme", "system"),
+        schwab_connected=schwab_mgr.is_configured(),
+        schwab_token_expires=schwab_mgr.get_refresh_token_expiry(),
     )
 
 
@@ -95,6 +99,27 @@ def check_fred_key():
         return {"configured": True, "valid": True}
     except Exception:
         return {"configured": True, "valid": False}
+
+
+@router.get("/health/schwab")
+def check_schwab_connection():
+    """Check if Schwab API is configured and token is valid."""
+    schwab_mgr = SchwabTokenManager()
+    if not schwab_mgr.is_configured():
+        return {"configured": False, "valid": False, "error": None}
+
+    try:
+        import httpx
+        token = schwab_mgr.get_access_token()
+        resp = httpx.get(
+            "https://api.schwabapi.com/marketdata/v1/markets?markets=equity",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return {"configured": True, "valid": True, "error": None}
+    except Exception as e:
+        return {"configured": True, "valid": False, "error": str(e)}
 
 
 # --- Backups ---
