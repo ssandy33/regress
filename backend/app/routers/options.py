@@ -66,6 +66,11 @@ def get_option_chain(
         raise OptionScannerError(f"No options available for '{ticker}'")
 
     target_exp = expiration or all_exps[0]
+    if expiration and expiration not in all_exps:
+        raise OptionScannerError(
+            f"Expiration '{expiration}' not found for '{ticker}'. "
+            f"Available: {', '.join(all_exps[:5])}{'...' if len(all_exps) > 5 else ''}"
+        )
 
     def _map_to_records(exp_date_map: dict, target: str) -> list[dict]:
         records = []
@@ -88,7 +93,7 @@ def get_option_chain(
                     "theta": float(c.get("theta", 0)),
                     "vega": float(c.get("vega", 0)),
                 })
-        return records
+        return sorted(records, key=lambda r: r["strike"])
 
     return {
         "ticker": ticker,

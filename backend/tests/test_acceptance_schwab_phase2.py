@@ -210,12 +210,12 @@ class TestAC3_VixDisplaysCorrectly:
             beta=None,
             fifty_two_week_high=underlying.get("fiftyTwoWeekHigh"),
             fifty_two_week_low=underlying.get("fiftyTwoWeekLow"),
-            avg_volume=underlying.get("totalVolume"),
+            daily_volume=underlying.get("totalVolume"),
         )
 
         assert ctx.fifty_two_week_high == 195.50
         assert ctx.fifty_two_week_low == 142.00
-        assert ctx.avg_volume == 5000000
+        assert ctx.daily_volume == 5000000
 
 
 class TestAC4_CacheBehaviorUnchanged:

@@ -53,7 +53,7 @@ class OptionScanner:
 
         fifty_two_week_high = underlying.get("fiftyTwoWeekHigh")
         fifty_two_week_low = underlying.get("fiftyTwoWeekLow")
-        avg_volume = underlying.get("totalVolume")
+        daily_volume = underlying.get("totalVolume")
 
         # Earnings date from yfinance (Schwab chains don't include this)
         earnings_date = self.get_earnings_date(request.ticker)
@@ -65,7 +65,7 @@ class OptionScanner:
             beta=None,
             fifty_two_week_high=fifty_two_week_high,
             fifty_two_week_low=fifty_two_week_low,
-            avg_volume=avg_volume,
+            daily_volume=daily_volume,
         )
 
         # Parse the expiration date maps
@@ -90,24 +90,18 @@ class OptionScanner:
         candidates = []
         rejected = []
 
-        earnings_dt = (
-            datetime.strptime(earnings_date, "%Y-%m-%d").date()
-            if earnings_date
-            else None
-        )
+        valid_exps = set(self._get_valid_expirations(
+            exp_date_map, request.min_dte, request.max_dte,
+            earnings_date, request.exclude_earnings_dte,
+        ))
 
         for exp_key, strikes_map in exp_date_map.items():
-            # exp_key format: "2026-04-17:30" (date:dte)
             exp_str = exp_key.split(":")[0]
+            if exp_str not in valid_exps:
+                continue
+
             exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
             dte = (exp_date - today).days
-
-            if dte < request.min_dte or dte > request.max_dte:
-                continue
-
-            # Earnings buffer filter
-            if earnings_dt and abs((exp_date - earnings_dt).days) <= request.exclude_earnings_dte:
-                continue
 
             for strike_str, contracts in strikes_map.items():
                 if not contracts:
@@ -234,13 +228,14 @@ class OptionScanner:
             price = quote.get("lastPrice")
             if price and price > 0:
                 return float(price)
+            logger.warning("Quote for '%s' returned invalid price: %s", symbol, price)
         except (SchwabClientError, SchwabAuthError) as e:
             last_error = e
         raise OptionScannerError(f"Cannot get current price for '{symbol}'") from last_error
 
     def get_earnings_date(self, symbol: str) -> Optional[str]:
+        ticker_obj = yf.Ticker(symbol)
         try:
-            ticker_obj = yf.Ticker(symbol)
             cal = ticker_obj.calendar
             if cal is not None:
                 if hasattr(cal, "get"):
@@ -253,7 +248,6 @@ class OptionScanner:
             pass
 
         try:
-            ticker_obj = yf.Ticker(symbol)
             ed = ticker_obj.get_earnings_dates(limit=4)
             if ed is not None and not ed.empty:
                 future = ed.index[ed.index >= datetime.now()]
