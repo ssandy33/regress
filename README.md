@@ -37,9 +37,13 @@ A full-stack application for financial data analysis with linear, multi-factor, 
 git clone <repo-url> regression_tool
 cd regression_tool
 
-# Set up your FRED API key
+# Set up environment variables
 cp backend/.env.example backend/.env
-# Edit backend/.env and add your key
+# Edit backend/.env and add your keys:
+#   FRED_API_KEY        — required for economic data (https://fred.stlouisfed.org/docs/api/api_key.html)
+#   SCHWAB_APP_KEY      — required for market data (register at https://developer.schwab.com)
+#   SCHWAB_APP_SECRET   — required for market data
+#   ALPHA_VANTAGE_API_KEY — optional, for earnings calendar (https://www.alphavantage.co/support/#api-key)
 
 # Build and run
 docker-compose up --build
@@ -168,9 +172,10 @@ graph TB
     end
 
     DB[("SQLite<br/><i>cache, sessions,<br/>app_settings</i>")]
-    Schwab2["Schwab API"]
+    Schwab["Schwab API"]
     FRED["FRED API"]
     Zillow["Zillow Research"]
+    AV["Alpha Vantage"]
 
     RR --> RS
     RR --> DF
@@ -184,7 +189,7 @@ graph TB
     HR --> FRED
 
     DF --> CS
-    DF --> Schwab2
+    DF --> Schwab
     DF --> FRED
     DF --> Zillow
     CS --> DB

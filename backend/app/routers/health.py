@@ -37,7 +37,17 @@ def _check_alpha_vantage() -> dict:
             params={"function": "EARNINGS_CALENDAR", "symbol": "AAPL", "horizon": "3month", "apikey": api_key},
             timeout=10,
         )
-        return {"available": resp.status_code == 200, "error": None}
+        if resp.status_code != 200:
+            return {"available": False, "error": f"HTTP {resp.status_code}"}
+        # Alpha Vantage returns HTTP 200 with JSON error body on failures
+        try:
+            body = resp.json()
+            error_msg = body.get("Error Message") or body.get("Note") or body.get("Information")
+            if error_msg:
+                return {"available": False, "error": error_msg}
+        except ValueError:
+            pass  # Not JSON — likely valid CSV response
+        return {"available": True, "error": None}
     except Exception as e:
         logger.debug("Alpha Vantage health check failed: %s", e)
         return {"available": False, "error": "Connection failed"}

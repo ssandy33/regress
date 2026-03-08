@@ -4,8 +4,6 @@ Maps directly to acceptance criteria from issue #8.
 """
 
 import ast
-import inspect
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -22,7 +20,9 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent
 @pytest.fixture(autouse=True)
 def _clear_av_cache():
     clear_cache()
-    yield
+    with patch("app.services.alpha_vantage_client._read_db_cache", return_value=None), \
+         patch("app.services.alpha_vantage_client._write_db_cache"):
+        yield
     clear_cache()
 
 
@@ -49,7 +49,7 @@ class TestAC1_EarningsDatesResolveViaAlphaVantage:
 
         assert result == future
         mock_get.assert_called_once()
-        args, kwargs = mock_get.call_args
+        _, kwargs = mock_get.call_args
         assert kwargs["params"]["function"] == "EARNINGS_CALENDAR"
         assert kwargs["params"]["symbol"] == "AAPL"
 
@@ -219,7 +219,7 @@ class TestAC5_NoYfinanceImportsInAnyFile:
                     if node.module and "yfinance" in node.module:
                         violations.append(f"{py_file.relative_to(BACKEND_ROOT)}: from {node.module}")
 
-        assert violations == [], f"yfinance imports found:\n" + "\n".join(violations)
+        assert violations == [], "yfinance imports found:\n" + "\n".join(violations)
 
     def test_no_yf_name_references_in_source(self):
         """No 'yf.' usage pattern in any source file."""
@@ -234,7 +234,7 @@ class TestAC5_NoYfinanceImportsInAnyFile:
                 if isinstance(node, ast.Name) and node.id == "yf":
                     violations.append(f"{py_file.relative_to(BACKEND_ROOT)}: 'yf' name reference")
 
-        assert violations == [], f"yf references found:\n" + "\n".join(violations)
+        assert violations == [], "yf references found:\n" + "\n".join(violations)
 
 
 class TestAC6_EnvExampleDocumentsAllVars:
