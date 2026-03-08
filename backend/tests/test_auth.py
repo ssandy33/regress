@@ -449,20 +449,20 @@ class TestRouteProtection:
         assert resp.status_code == 401
 
     def test_protected_route_allows_anonymous_when_auth_disabled(self):
-        """A protected endpoint allows access when auth env vars are not set."""
-        from app.main import app
+        """A protected endpoint allows anonymous access when auth is not configured."""
+        app = _make_app()
         client = TestClient(app)
 
         with patch("app.auth.settings") as mock_settings:
             _mock_no_auth(mock_settings)
-            resp = client.get("/api/assets/search", params={"q": "AAPL"})
+            resp = client.get("/protected")
 
-        # Should not be 401 — auth is disabled
-        assert resp.status_code != 401
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"
 
     def test_protected_route_allows_anonymous_when_partially_configured(self):
-        """A protected endpoint allows access when auth is only partially configured."""
-        from app.main import app
+        """A protected endpoint allows anonymous access when auth is partially configured."""
+        app = _make_app()
         client = TestClient(app)
 
         with patch("app.auth.settings") as mock_settings:
@@ -470,7 +470,7 @@ class TestRouteProtection:
             mock_settings.github_id = ""
             mock_settings.github_secret = ""
             mock_settings.allowed_users = ""
-            resp = client.get("/api/assets/search", params={"q": "AAPL"})
+            resp = client.get("/protected")
 
-        # Should not be 401 — partial config = unconfigured
-        assert resp.status_code != 401
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"

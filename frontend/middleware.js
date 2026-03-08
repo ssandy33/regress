@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
  * When unconfigured or partially configured, all routes are public.
  */
 
-const authSecret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+const authSecret = process.env.NEXTAUTH_SECRET;
 const githubId = process.env.GITHUB_ID;
 const githubSecret = process.env.GITHUB_SECRET;
 
@@ -27,17 +27,19 @@ async function middleware(request) {
     return NextResponse.next();
   }
 
-  // Dynamically import auth only when fully configured
+  // Use the Auth.js middleware wrapper pattern — await auth() without a
+  // request argument cannot read cookies in middleware context.
   const { auth } = await import("@/auth");
-  const session = await auth();
+  const wrapped = auth((req) => {
+    if (!req.auth?.user) {
+      const signInUrl = new URL("/auth/signin", req.url);
+      signInUrl.searchParams.set("callbackUrl", req.url);
+      return NextResponse.redirect(signInUrl);
+    }
+    return NextResponse.next();
+  });
 
-  if (!session?.user) {
-    const signInUrl = new URL("/auth/signin", request.url);
-    signInUrl.searchParams.set("callbackUrl", request.url);
-    return NextResponse.redirect(signInUrl);
-  }
-
-  return NextResponse.next();
+  return wrapped(request);
 }
 
 export { middleware };
