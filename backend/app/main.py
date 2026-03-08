@@ -53,7 +53,11 @@ def _pre_cache_common_assets():
 async def lifespan(app: FastAPI):
     init_db()
 
-    # Create startup backup
+    # Security checks first — must run before backup to avoid
+    # snapshotting plaintext tokens and to enforce fail-closed
+    _run_security_checks()
+
+    # Create startup backup (now tokens are encrypted if key is set)
     try:
         backup_name = create_backup()
         if backup_name:
@@ -62,6 +66,62 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Startup backup failed: {e}")
 
     yield
+
+
+def _run_security_checks():
+    """Run encryption and file-permission checks at startup.
+
+    Fail-closed: raises EncryptionKeyMissing if Schwab tokens exist in DB
+    but SCHWAB_ENCRYPTION_KEY is not set.
+    """
+    from app.services.encryption import (
+        EncryptionKeyMissing,
+        check_db_file_permissions,
+        get_encryption_key,
+        migrate_plaintext_tokens,
+        schwab_tokens_exist,
+    )
+
+    enc_key = get_encryption_key()
+    if not enc_key:
+        # Fail closed: refuse to start if Schwab tokens exist without key.
+        # DB errors intentionally propagate — better to fail than silently
+        # run with unencrypted tokens.
+        db = SessionLocal()
+        try:
+            tokens_found = schwab_tokens_exist(db)
+        finally:
+            db.close()
+        if tokens_found:
+            raise EncryptionKeyMissing(
+                "SCHWAB_ENCRYPTION_KEY env var is required when Schwab "
+                "tokens exist in the database. Set this env var or remove "
+                "existing tokens to start the application."
+            )
+
+        logger.warning(
+            "SCHWAB_ENCRYPTION_KEY not set — Schwab tokens will be stored in "
+            "plaintext. Set this env var for production deployments."
+        )
+    else:
+        # Migrate any existing plaintext tokens
+        try:
+            db = SessionLocal()
+            try:
+                migrated = migrate_plaintext_tokens(db)
+                if migrated:
+                    logger.info("Encrypted %d plaintext Schwab tokens on startup", migrated)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Plaintext token migration failed: %s", e)
+
+    # Check DB file permissions
+    db_url = app_settings.database_url
+    if db_url.startswith("sqlite:///"):
+        db_path = os.path.abspath(db_url.replace("sqlite:///", ""))
+        for warning in check_db_file_permissions(db_path):
+            logger.warning(warning)
 
 
 app = FastAPI(

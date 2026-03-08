@@ -11,6 +11,9 @@ from datetime import datetime, timedelta, timezone
 import httpx
 
 from app.config import get_schwab_credentials
+from app.services.encryption import (
+    ENCRYPTED_SETTING_KEYS, decrypt_value, encrypt_value, get_encryption_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +54,11 @@ class SchwabTokenManager:
     def is_configured(self) -> bool:
         """Check if Schwab tokens exist in DB."""
         try:
-            from app.models.database import SessionLocal, AppSetting
+            from app.models.database import SessionLocal
             db = SessionLocal()
             try:
-                token = db.query(AppSetting).filter(
-                    AppSetting.key == "schwab_access_token"
-                ).first()
-                return token is not None and bool(token.value)
+                value = _read_setting(db, "schwab_access_token")
+                return value is not None and bool(value)
             finally:
                 db.close()
         except Exception:
@@ -102,17 +103,15 @@ class SchwabTokenManager:
             from app.models.database import SessionLocal, AppSetting
             db = SessionLocal()
             try:
-                access_entry = db.query(AppSetting).filter(
-                    AppSetting.key == "schwab_access_token"
-                ).first()
+                access_value = _read_setting(db, "schwab_access_token")
                 expires_entry = db.query(AppSetting).filter(
                     AppSetting.key == "schwab_access_token_expires"
                 ).first()
 
-                if access_entry and expires_entry:
+                if access_value and expires_entry:
                     expires_dt = datetime.fromisoformat(expires_entry.value)
                     if (expires_dt - now).total_seconds() > ACCESS_TOKEN_REFRESH_BUFFER_SECONDS:
-                        self._cached_access_token = access_entry.value
+                        self._cached_access_token = access_value
                         self._cached_access_token_expires = expires_dt
                         return self._cached_access_token
 
@@ -126,14 +125,12 @@ class SchwabTokenManager:
         """Exchange refresh token for new access + refresh tokens."""
         from app.models.database import AppSetting
 
-        refresh_entry = db.query(AppSetting).filter(
-            AppSetting.key == "schwab_refresh_token"
-        ).first()
+        refresh_value = _read_setting(db, "schwab_refresh_token")
         refresh_expires_entry = db.query(AppSetting).filter(
             AppSetting.key == "schwab_refresh_token_expires"
         ).first()
 
-        if not refresh_entry or not refresh_entry.value:
+        if not refresh_value:
             raise SchwabAuthError(
                 "No Schwab refresh token found. "
                 "Run 'python -m app.cli schwab-auth' to authorize."
@@ -142,10 +139,19 @@ class SchwabTokenManager:
         # Check if refresh token itself is expired
         if refresh_expires_entry and refresh_expires_entry.value:
             refresh_expires = datetime.fromisoformat(refresh_expires_entry.value)
-            if refresh_expires <= datetime.now(timezone.utc):
+            now_utc = datetime.now(timezone.utc)
+            if refresh_expires <= now_utc:
                 raise SchwabAuthError(
                     "Schwab refresh token has expired. "
                     "Run 'python -m app.cli schwab-auth' to re-authorize."
+                )
+            # Warn if refresh token expires within 48 hours
+            hours_remaining = (refresh_expires - now_utc).total_seconds() / 3600
+            if hours_remaining <= 48:
+                logger.warning(
+                    "Schwab refresh token expires in %.1f hours — "
+                    "re-authorization needed soon",
+                    hours_remaining,
                 )
 
         app_key, app_secret = get_schwab_credentials()
@@ -160,7 +166,7 @@ class SchwabTokenManager:
                 SCHWAB_TOKEN_URL,
                 data={
                     "grant_type": "refresh_token",
-                    "refresh_token": refresh_entry.value,
+                    "refresh_token": refresh_value,
                 },
                 auth=(app_key, app_secret),
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -199,14 +205,37 @@ class SchwabTokenManager:
         logger.info("Schwab tokens refreshed, access expires %s", access_expires.isoformat())
 
 
-def _upsert_setting(db, key: str, value: str):
-    """Insert or update an AppSetting row."""
+def _read_setting(db, key: str) -> str | None:
+    """Read an AppSetting value, decrypting if needed."""
+    from cryptography.fernet import InvalidToken
     from app.models.database import AppSetting
     entry = db.query(AppSetting).filter(AppSetting.key == key).first()
+    if not entry or not entry.value:
+        return None
+    if key in ENCRYPTED_SETTING_KEYS and get_encryption_key():
+        try:
+            return decrypt_value(entry.value)
+        except InvalidToken:
+            # Only fall back for legacy unprefixed (plaintext) rows.
+            # If the value has the ENC: prefix, the key is wrong — fail fast.
+            if not entry.value.startswith("ENC:"):
+                logger.warning("Failed to decrypt %s — returning raw value", key)
+                return entry.value
+            raise
+    return entry.value
+
+
+def _upsert_setting(db, key: str, value: str):
+    """Insert or update an AppSetting row, encrypting sensitive keys."""
+    from app.models.database import AppSetting
+    store_value = value
+    if key in ENCRYPTED_SETTING_KEYS and get_encryption_key():
+        store_value = encrypt_value(value)
+    entry = db.query(AppSetting).filter(AppSetting.key == key).first()
     if entry:
-        entry.value = value
+        entry.value = store_value
     else:
-        db.add(AppSetting(key=key, value=value))
+        db.add(AppSetting(key=key, value=store_value))
 
 
 def get_schwab_token_manager() -> SchwabTokenManager:

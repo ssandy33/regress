@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     schwab_app_key: str = ""
     schwab_app_secret: str = ""
     alpha_vantage_api_key: str = ""
+    schwab_encryption_key: str = ""
     nextauth_secret: Optional[str] = None
     allowed_users: str = ""
     dev_auth_bypass: bool = False
@@ -48,14 +49,16 @@ def get_schwab_credentials() -> tuple[str, str]:
         return app_key, app_secret
     try:
         from app.models.database import SessionLocal, AppSetting
+        from app.services.encryption import decrypt_value, get_encryption_key
         db = SessionLocal()
         try:
             key_entry = db.query(AppSetting).filter(AppSetting.key == "schwab_app_key").first()
             secret_entry = db.query(AppSetting).filter(AppSetting.key == "schwab_app_secret").first()
+            enc_key = get_encryption_key()
             if key_entry:
-                app_key = key_entry.value
+                app_key = decrypt_value(key_entry.value) if enc_key else key_entry.value
             if secret_entry:
-                app_secret = secret_entry.value
+                app_secret = decrypt_value(secret_entry.value) if enc_key else secret_entry.value
         finally:
             db.close()
     except Exception:
