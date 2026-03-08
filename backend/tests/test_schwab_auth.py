@@ -215,7 +215,7 @@ class TestSourceHealthIncludesSchwab:
     def test_sources_includes_schwab(self, client):
         """GET /api/health/sources includes schwab key."""
         with patch("app.routers.health._check_schwab", return_value={"available": False, "error": "Not configured"}), \
-             patch("app.routers.health._check_yfinance", return_value={"available": True, "error": None}), \
+             patch("app.routers.health._check_alpha_vantage", return_value={"available": True, "error": None}), \
              patch("app.routers.health._check_fred", return_value={"available": False, "error": "No key"}), \
              patch("app.routers.health._check_zillow", return_value={"available": True, "error": None}):
             resp = client.get("/api/health/sources")

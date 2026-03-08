@@ -38,7 +38,7 @@ def get_historical_data(
     end: str = Query(..., description="End date YYYY-MM-DD"),
     fetcher: DataFetcher = Depends(_get_fetcher),
 ):
-    """Fetch historical data for a ticker. Auto-detects source (FRED or yfinance)."""
+    """Fetch historical data for a ticker. Auto-detects source (FRED or Schwab)."""
     df, meta = fetcher.fetch(ticker, start, end)
 
     data = [

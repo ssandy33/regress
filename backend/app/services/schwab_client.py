@@ -30,7 +30,7 @@ class SchwabClientError(Exception):
 
 
 def to_schwab_symbol(ticker: str) -> str:
-    """Map yfinance-style symbols to Schwab equivalents. Passthrough for regular tickers."""
+    """Map common symbol formats to Schwab equivalents. Passthrough for regular tickers."""
     return SCHWAB_SYMBOL_MAP.get(ticker, ticker)
 
 
@@ -150,7 +150,7 @@ class SchwabClient:
         """Fetch daily price history for a ticker.
 
         Args:
-            ticker: yfinance-style symbol (e.g. "AAPL", "^GSPC", "GC=F")
+            ticker: symbol (e.g. "AAPL", "^GSPC", "GC=F")
             start: start date string (e.g. "2024-01-01")
             end: end date string (e.g. "2024-06-01")
 

@@ -2,8 +2,6 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-import yfinance as yf
-
 from app.models.schemas import (
     MarketContext,
     OptionScanRequest,
@@ -13,6 +11,7 @@ from app.models.schemas import (
 )
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
+from app.services.alpha_vantage_client import get_next_earnings_date
 from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
@@ -56,8 +55,8 @@ class OptionScanner:
         fifty_two_week_low = underlying.get("fiftyTwoWeekLow")
         daily_volume = underlying.get("totalVolume")
 
-        # Earnings date from yfinance (Schwab chains don't include this)
-        earnings_date = self.get_earnings_date(request.ticker)
+        # Earnings date from Alpha Vantage (Schwab chains don't include this)
+        earnings_date = get_next_earnings_date(request.ticker)
 
         # Market context: VIX from Schwab, 52-week data from underlying quote
         vix = self._get_vix(client)
@@ -236,31 +235,6 @@ class OptionScanner:
         except (SchwabClientError, SchwabAuthError) as e:
             last_error = e
         raise OptionScannerError(f"Cannot get current price for '{symbol}'") from last_error
-
-    def get_earnings_date(self, symbol: str) -> Optional[str]:
-        ticker_obj = yf.Ticker(symbol)
-        try:
-            cal = ticker_obj.calendar
-            if cal is not None:
-                if hasattr(cal, "get"):
-                    ed = cal.get("Earnings Date")
-                    if ed and len(ed) > 0:
-                        return ed[0].strftime("%Y-%m-%d") if hasattr(ed[0], "strftime") else str(ed[0])
-                elif hasattr(cal, "iloc"):
-                    return cal.iloc[0, 0].strftime("%Y-%m-%d")
-        except Exception:
-            pass
-
-        try:
-            ed = ticker_obj.get_earnings_dates(limit=4)
-            if ed is not None and not ed.empty:
-                future = ed.index[ed.index >= datetime.now()]
-                if len(future) > 0:
-                    return future[0].strftime("%Y-%m-%d")
-        except Exception:
-            pass
-
-        return None
 
     def _get_vix(self, client: SchwabClient) -> Optional[float]:
         try:

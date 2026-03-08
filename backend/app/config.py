@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     schwab_app_key: str = ""
     schwab_app_secret: str = ""
+    alpha_vantage_api_key: str = ""
     database_url: str = "sqlite:///./regression_tool.db"
     cache_ttl_daily_hours: int = 24
     cache_ttl_monthly_days: int = 7

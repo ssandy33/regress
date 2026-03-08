@@ -304,9 +304,9 @@ class TestNormalization:
 class TestScanWithSchwabChain:
     """Integration-style tests for scan() using mocked Schwab chain responses."""
 
+    @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
-    @patch("app.services.options_scanner.yf")
-    def test_covered_call_scan_returns_results(self, mock_yf, mock_client_cls, scanner, cc_request):
+    def test_covered_call_scan_returns_results(self, mock_client_cls, _mock_earnings, scanner, cc_request):
         dte = 30
         exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
 
@@ -328,8 +328,6 @@ class TestScanWithSchwabChain:
         mock_client.get_option_chain.return_value = chain_resp
         mock_client.get_quote.return_value = {"lastPrice": 18.5}
 
-        mock_yf.Ticker.return_value.calendar = None
-
         result = scanner.scan(cc_request)
 
         assert result["ticker"] == "TEST"
@@ -343,9 +341,9 @@ class TestScanWithSchwabChain:
         assert rec.delta == -0.20
         assert rec.gamma == 0.03
 
+    @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
-    @patch("app.services.options_scanner.yf")
-    def test_csp_scan_returns_results(self, mock_yf, mock_client_cls, scanner, csp_request):
+    def test_csp_scan_returns_results(self, mock_client_cls, _mock_earnings, scanner, csp_request):
         dte = 30
         exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
 
@@ -367,8 +365,6 @@ class TestScanWithSchwabChain:
         mock_client.get_option_chain.return_value = chain_resp
         mock_client.get_quote.return_value = {"lastPrice": 18.5}
 
-        mock_yf.Ticker.return_value.calendar = None
-
         result = scanner.scan(csp_request)
 
         assert result["ticker"] == "TEST"
@@ -379,9 +375,9 @@ class TestScanWithSchwabChain:
         assert rec.greeks_source == "market"
         assert rec.delta == -0.25
 
+    @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
-    @patch("app.services.options_scanner.yf")
-    def test_scan_no_chains_returns_empty(self, mock_yf, mock_client_cls, scanner, cc_request):
+    def test_scan_no_chains_returns_empty(self, mock_client_cls, _mock_earnings, scanner, cc_request):
         chain_resp = {
             "symbol": "TEST",
             "status": "SUCCESS",
@@ -395,15 +391,13 @@ class TestScanWithSchwabChain:
         mock_client.get_option_chain.return_value = chain_resp
         mock_client.get_quote.return_value = {"lastPrice": 18.5}
 
-        mock_yf.Ticker.return_value.calendar = None
-
         result = scanner.scan(cc_request)
 
         assert result["recommendations"] == []
 
+    @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
-    @patch("app.services.options_scanner.yf")
-    def test_greeks_source_always_market(self, mock_yf, mock_client_cls, scanner, cc_request):
+    def test_greeks_source_always_market(self, mock_client_cls, _mock_earnings, scanner, cc_request):
         """Verify greeks_source is always 'market' — no 'calculated' or 'unavailable'."""
         dte = 30
         exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
@@ -424,8 +418,6 @@ class TestScanWithSchwabChain:
         mock_client_cls.return_value = mock_client
         mock_client.get_option_chain.return_value = chain_resp
         mock_client.get_quote.return_value = {"lastPrice": 18.5}
-
-        mock_yf.Ticker.return_value.calendar = None
 
         result = scanner.scan(cc_request)
 

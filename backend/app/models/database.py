@@ -11,11 +11,11 @@ class Base(DeclarativeBase):
 class CacheEntry(Base):
     __tablename__ = "cache"
 
-    asset_key = Column(String, primary_key=True)  # e.g. "yfinance:AAPL", "fred:DGS10"
+    asset_key = Column(String, primary_key=True)  # e.g. "schwab:AAPL", "fred:DGS10"
     data = Column(Text, nullable=False)  # JSON-serialized DataFrame
     fetched_at = Column(String, nullable=False)  # ISO datetime
     source_frequency = Column(String, nullable=False)  # daily / monthly / quarterly
-    source_name = Column(String, nullable=False)  # yfinance / fred / zillow
+    source_name = Column(String, nullable=False)  # schwab / fred / zillow
 
 
 class Session(Base):

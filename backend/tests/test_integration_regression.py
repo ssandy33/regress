@@ -3,8 +3,7 @@ from unittest.mock import patch
 
 class TestLinearRegression:
     def test_linear_success(self, client, mock_fetcher):
-        with patch("yfinance.Ticker") as mock_ticker:
-            mock_ticker.return_value.get_earnings_dates.return_value = None
+        with patch("app.services.alpha_vantage_client.get_next_earnings_date", return_value=None):
             response = client.post("/api/regression/linear", json={
                 "asset": "AAPL",
                 "start_date": "2023-01-01",

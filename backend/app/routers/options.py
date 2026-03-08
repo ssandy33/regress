@@ -31,8 +31,8 @@ def scan_options(
 @router.get("/earnings/{ticker}")
 def get_earnings(ticker: str):
     """Get next earnings date for a ticker."""
-    scanner = OptionScanner()
-    earnings_date = scanner.get_earnings_date(ticker)
+    from app.services.alpha_vantage_client import get_next_earnings_date
+    earnings_date = get_next_earnings_date(ticker)
     return {"ticker": ticker, "earnings_date": earnings_date}
 
 
