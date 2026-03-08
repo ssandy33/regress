@@ -106,7 +106,23 @@ def check_schwab_connection():
     """Check if Schwab API is configured and token is valid."""
     schwab_mgr = SchwabTokenManager()
     if not schwab_mgr.is_configured():
-        return {"configured": False, "valid": False, "error": None}
+        return {"configured": False, "valid": False, "error": None, "token_expiry": None}
+
+    # Build token expiry info
+    token_expiry = None
+    expiry_str = schwab_mgr.get_refresh_token_expiry()
+    if expiry_str:
+        try:
+            expires = datetime.fromisoformat(expiry_str)
+            hours_remaining = (expires - datetime.now(timezone.utc)).total_seconds() / 3600
+            token_expiry = {
+                "refresh_token_expires": expiry_str,
+                "hours_remaining": round(hours_remaining, 1),
+                "warning": hours_remaining <= 48,
+                "expired": hours_remaining <= 0,
+            }
+        except (ValueError, TypeError):
+            pass
 
     try:
         import httpx
@@ -117,14 +133,14 @@ def check_schwab_connection():
             timeout=10,
         )
         resp.raise_for_status()
-        return {"configured": True, "valid": True, "error": None}
+        return {"configured": True, "valid": True, "error": None, "token_expiry": token_expiry}
     except httpx.HTTPStatusError as e:
-        return {"configured": True, "valid": False, "error": f"HTTP {e.response.status_code}"}
+        return {"configured": True, "valid": False, "error": f"HTTP {e.response.status_code}", "token_expiry": token_expiry}
     except httpx.RequestError:
-        return {"configured": True, "valid": False, "error": "Connection failed"}
+        return {"configured": True, "valid": False, "error": "Connection failed", "token_expiry": token_expiry}
     except Exception as e:
         logger.debug("Schwab health check failed: %s", e)
-        return {"configured": True, "valid": False, "error": "Validation failed"}
+        return {"configured": True, "valid": False, "error": "Validation failed", "token_expiry": token_expiry}
 
 
 # --- Backups ---

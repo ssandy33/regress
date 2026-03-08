@@ -116,6 +116,14 @@ def schwab_auth(args):
     print("\nThe server will automatically refresh the access token before it expires.")
     print("You will need to re-authorize when the refresh token expires (7 days).")
 
+    from app.services.encryption import get_encryption_key
+    if not get_encryption_key():
+        print("\nWarning: SCHWAB_ENCRYPTION_KEY not set — tokens stored in plaintext.")
+        print("Set this env var for production deployments.")
+        print("Generate a key: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"")
+    else:
+        print("\nTokens encrypted at rest with SCHWAB_ENCRYPTION_KEY.")
+
 
 def main():
     parser = argparse.ArgumentParser(prog="app.cli", description="Regression Tool CLI")

@@ -61,7 +61,44 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Startup backup failed: {e}")
 
+    # Security startup checks
+    _run_security_checks()
+
     yield
+
+
+def _run_security_checks():
+    """Run encryption and file-permission checks at startup."""
+    from app.services.encryption import (
+        check_db_file_permissions, get_encryption_key, migrate_plaintext_tokens,
+    )
+
+    # Check encryption key
+    enc_key = get_encryption_key()
+    if not enc_key:
+        logger.warning(
+            "SCHWAB_ENCRYPTION_KEY not set — Schwab tokens will be stored in "
+            "plaintext. Set this env var for production deployments."
+        )
+    else:
+        # Migrate any existing plaintext tokens
+        try:
+            db = SessionLocal()
+            try:
+                migrated = migrate_plaintext_tokens(db)
+                if migrated:
+                    logger.info("Encrypted %d plaintext Schwab tokens on startup", migrated)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Plaintext token migration failed: %s", e)
+
+    # Check DB file permissions
+    db_url = app_settings.database_url
+    if db_url.startswith("sqlite:///"):
+        db_path = db_url.replace("sqlite:///", "")
+        for warning in check_db_file_permissions(db_path):
+            logger.warning(warning)
 
 
 app = FastAPI(
