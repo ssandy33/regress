@@ -1,8 +1,32 @@
 import axios from 'axios';
+import { getSession as getAuthSession } from 'next-auth/react';
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || '',
   timeout: 30000,
+});
+
+// Cache the access token to avoid per-request session lookups
+let _cachedToken = null;
+let _tokenExpiresAt = 0;
+const TOKEN_CACHE_MS = 5 * 60 * 1000; // refresh cached token every 5 min
+
+export function clearAuthCache() {
+  _cachedToken = null;
+  _tokenExpiresAt = 0;
+}
+
+api.interceptors.request.use(async (config) => {
+  const now = Date.now();
+  if (!_cachedToken || now >= _tokenExpiresAt) {
+    const session = await getAuthSession();
+    _cachedToken = session?.accessToken || null;
+    _tokenExpiresAt = now + TOKEN_CACHE_MS;
+  }
+  if (_cachedToken) {
+    config.headers.Authorization = `Bearer ${_cachedToken}`;
+  }
+  return config;
 });
 
 // --- Assets ---

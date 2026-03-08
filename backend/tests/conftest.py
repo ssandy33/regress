@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from unittest.mock import patch
 
+from app.auth import get_current_user
 from app.models.database import Base, get_db
 from app.models.schemas import DataMeta, DateRange
 from app.services.data_fetcher import DataFetcher
@@ -61,6 +62,8 @@ def client():
 
     from app.main import app
     app.dependency_overrides[get_db] = override_get_db
+    # Bypass auth for integration tests — auth logic is tested separately
+    app.dependency_overrides[get_current_user] = lambda: {"sub": "test", "username": "testuser"}
     with patch("app.main.init_db"), patch("app.main.create_backup", return_value=""):
         with TestClient(app) as c:
             yield c

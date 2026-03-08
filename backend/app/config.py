@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -6,6 +8,9 @@ class Settings(BaseSettings):
     schwab_app_key: str = ""
     schwab_app_secret: str = ""
     alpha_vantage_api_key: str = ""
+    nextauth_secret: Optional[str] = None
+    allowed_users: str = ""
+    dev_auth_bypass: bool = False
     database_url: str = "sqlite:///./regression_tool.db"
     cache_ttl_daily_hours: int = 24
     cache_ttl_monthly_days: int = 7
