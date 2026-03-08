@@ -1,3 +1,6 @@
+const backendOrigin =
+  process.env.INTERNAL_API_ORIGIN ?? 'http://localhost:8000';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -14,7 +17,7 @@ const nextConfig = {
         // All other API routes — proxy to FastAPI backend
         {
           source: '/api/:path*',
-          destination: 'http://localhost:8000/api/:path*',
+          destination: `${backendOrigin}/api/:path*`,
         },
       ],
     };
