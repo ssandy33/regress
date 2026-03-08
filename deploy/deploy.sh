@@ -122,6 +122,23 @@ if [ "$ENABLE_AUTH" = "y" ]; then
     echo ""
 fi
 
+echo ""
+read -p "Enable GitHub OAuth authentication? (y/n): " ENABLE_OAUTH
+NEXTAUTH_SECRET=""
+GITHUB_ID=""
+GITHUB_SECRET=""
+NEXTAUTH_URL=""
+ALLOWED_USERS=""
+if [ "$ENABLE_OAUTH" = "y" ]; then
+    read -p "  GitHub OAuth Client ID: " GITHUB_ID
+    read -sp "  GitHub OAuth Client Secret: " GITHUB_SECRET
+    echo ""
+    read -p "  Allowed GitHub usernames (comma-separated, or leave empty for any): " ALLOWED_USERS
+    NEXTAUTH_SECRET=$(openssl rand -base64 32)
+    NEXTAUTH_URL="https://${DOMAIN}"
+    echo "  NEXTAUTH_SECRET auto-generated."
+fi
+
 # --------------------------------------------------
 # 8. Create .env file
 # --------------------------------------------------
@@ -131,11 +148,20 @@ DOMAIN=${DOMAIN}
 FRED_API_KEY=${FRED_API_KEY}
 BASIC_AUTH_USER=${BASIC_AUTH_USER}
 BASIC_AUTH_PASS=${BASIC_AUTH_PASS}
+NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+GITHUB_ID=${GITHUB_ID}
+GITHUB_SECRET=${GITHUB_SECRET}
+NEXTAUTH_URL=${NEXTAUTH_URL}
+ALLOWED_USERS=${ALLOWED_USERS}
 EOF
 
 # Also create backend/.env
 cat > "$APP_DIR/backend/.env" <<EOF
 FRED_API_KEY=${FRED_API_KEY}
+NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+GITHUB_ID=${GITHUB_ID}
+GITHUB_SECRET=${GITHUB_SECRET}
+ALLOWED_USERS=${ALLOWED_USERS}
 EOF
 
 chmod 600 "$APP_DIR/.env"

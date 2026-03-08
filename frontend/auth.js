@@ -9,6 +9,7 @@ const allowedUsers = process.env.ALLOWED_USERS
   : [];
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  trustHost: true,
   providers: [
     GitHub({
       clientId: process.env.GITHUB_ID,
