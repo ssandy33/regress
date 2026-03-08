@@ -216,8 +216,12 @@ def _read_setting(db, key: str) -> str | None:
         try:
             return decrypt_value(entry.value)
         except InvalidToken:
-            logger.warning("Failed to decrypt %s — returning raw value", key)
-            return entry.value
+            # Only fall back for legacy unprefixed (plaintext) rows.
+            # If the value has the ENC: prefix, the key is wrong — fail fast.
+            if not entry.value.startswith("ENC:"):
+                logger.warning("Failed to decrypt %s — returning raw value", key)
+                return entry.value
+            raise
     return entry.value
 
 
