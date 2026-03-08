@@ -6,11 +6,25 @@ const api = axios.create({
   timeout: 30000,
 });
 
-// Attach session token to all API requests
+// Cache the access token to avoid per-request session lookups
+let _cachedToken = null;
+let _tokenExpiresAt = 0;
+const TOKEN_CACHE_MS = 5 * 60 * 1000; // refresh cached token every 5 min
+
+export function clearAuthCache() {
+  _cachedToken = null;
+  _tokenExpiresAt = 0;
+}
+
 api.interceptors.request.use(async (config) => {
-  const session = await getAuthSession();
-  if (session?.accessToken) {
-    config.headers.Authorization = `Bearer ${session.accessToken}`;
+  const now = Date.now();
+  if (!_cachedToken || now >= _tokenExpiresAt) {
+    const session = await getAuthSession();
+    _cachedToken = session?.accessToken || null;
+    _tokenExpiresAt = now + TOKEN_CACHE_MS;
+  }
+  if (_cachedToken) {
+    config.headers.Authorization = `Bearer ${_cachedToken}`;
   }
   return config;
 });

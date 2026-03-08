@@ -3,7 +3,9 @@ import GitHub from "next-auth/providers/github";
 import { SignJWT } from "jose";
 
 const allowedUsers = process.env.ALLOWED_USERS
-  ? process.env.ALLOWED_USERS.split(",").map((u) => u.trim().toLowerCase())
+  ? process.env.ALLOWED_USERS.split(",")
+      .map((u) => u.trim().toLowerCase())
+      .filter(Boolean)
   : [];
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
