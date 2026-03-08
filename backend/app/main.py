@@ -68,14 +68,39 @@ async def lifespan(app: FastAPI):
 
 
 def _run_security_checks():
-    """Run encryption and file-permission checks at startup."""
+    """Run encryption and file-permission checks at startup.
+
+    Fail-closed: raises EncryptionKeyMissing if Schwab tokens exist in DB
+    but SCHWAB_ENCRYPTION_KEY is not set.
+    """
     from app.services.encryption import (
-        check_db_file_permissions, get_encryption_key, migrate_plaintext_tokens,
+        EncryptionKeyMissing,
+        check_db_file_permissions,
+        get_encryption_key,
+        migrate_plaintext_tokens,
+        schwab_tokens_exist,
     )
 
-    # Check encryption key
     enc_key = get_encryption_key()
     if not enc_key:
+        # Fail closed: refuse to start if Schwab tokens exist without key
+        try:
+            db = SessionLocal()
+            try:
+                tokens_found = schwab_tokens_exist(db)
+            finally:
+                db.close()
+            if tokens_found:
+                raise EncryptionKeyMissing(
+                    "SCHWAB_ENCRYPTION_KEY env var is required when Schwab "
+                    "tokens exist in the database. Set this env var or remove "
+                    "existing tokens to start the application."
+                )
+        except EncryptionKeyMissing:
+            raise
+        except Exception as e:
+            logger.warning("Could not check for existing Schwab tokens: %s", e)
+
         logger.warning(
             "SCHWAB_ENCRYPTION_KEY not set — Schwab tokens will be stored in "
             "plaintext. Set this env var for production deployments."

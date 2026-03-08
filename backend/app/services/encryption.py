@@ -100,6 +100,16 @@ def migrate_plaintext_tokens(db) -> int:
     return migrated
 
 
+def schwab_tokens_exist(db) -> bool:
+    """Check if any sensitive Schwab tokens are stored in the DB."""
+    from app.models.database import AppSetting
+    for key in ENCRYPTED_SETTING_KEYS:
+        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if entry and entry.value:
+            return True
+    return False
+
+
 def check_db_file_permissions(db_path: str) -> list[str]:
     """Check DB file permissions and return warning messages."""
     import os

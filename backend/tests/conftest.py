@@ -64,7 +64,9 @@ def client():
     app.dependency_overrides[get_db] = override_get_db
     # Bypass auth for integration tests — auth logic is tested separately
     app.dependency_overrides[get_current_user] = lambda: {"sub": "test", "username": "testuser"}
-    with patch("app.main.init_db"), patch("app.main.create_backup", return_value=""):
+    with patch("app.main.init_db"), \
+         patch("app.main.create_backup", return_value=""), \
+         patch("app.main._run_security_checks"):
         with TestClient(app) as c:
             yield c
     app.dependency_overrides.clear()
