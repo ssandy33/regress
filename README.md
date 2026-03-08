@@ -1,6 +1,6 @@
 # Financial Regression Analysis Tool
 
-A full-stack application for financial data analysis with linear, multi-factor, rolling, and comparison regression models. Fetches data from yfinance, FRED, and Zillow, caches it locally, and presents interactive Plotly charts with statistical summaries.
+A full-stack application for financial data analysis with linear, multi-factor, rolling, and comparison regression models. Fetches data from Schwab, FRED, Zillow, and Alpha Vantage, caches it locally, and presents interactive Plotly charts with statistical summaries.
 
 ![Screenshot placeholder](docs/screenshot.png)
 
@@ -25,7 +25,10 @@ A full-stack application for financial data analysis with linear, multi-factor, 
   - Node.js 20+
 - **FRED API Key** (free) — [Get one here](https://fred.stlouisfed.org/docs/api/api_key.html)
   - Required for interest rates, housing indices, and economic data
-  - Stock/index data works without it via yfinance
+- **Schwab API credentials** — Required for stock/index/commodity data and options scanning
+- **Alpha Vantage API Key** (free, optional) — [Get one here](https://www.alphavantage.co/support/#api-key)
+  - Used for earnings calendar data (25 requests/day on free tier)
+  - Options scanner works without it but won't exclude earnings-adjacent expirations
 
 ## Quick Start (Docker)
 
@@ -34,9 +37,13 @@ A full-stack application for financial data analysis with linear, multi-factor, 
 git clone <repo-url> regression_tool
 cd regression_tool
 
-# Set up your FRED API key
+# Set up environment variables
 cp backend/.env.example backend/.env
-# Edit backend/.env and add your key
+# Edit backend/.env and add your keys:
+#   FRED_API_KEY        — required for economic data (https://fred.stlouisfed.org/docs/api/api_key.html)
+#   SCHWAB_APP_KEY      — required for market data (register at https://developer.schwab.com)
+#   SCHWAB_APP_SECRET   — required for market data
+#   ALPHA_VANTAGE_API_KEY — optional, for earnings calendar (https://www.alphavantage.co/support/#api-key)
 
 # Build and run
 docker-compose up --build
@@ -91,17 +98,20 @@ pytest tests/ -v
 graph TB
     User["Analyst"]
     App["Regression Analysis Tool<br/><i>FastAPI + React</i>"]
-    Yahoo["Yahoo Finance<br/><i>Stocks, indices, commodities</i>"]
+    Schwab["Schwab API<br/><i>Stocks, indices, options</i>"]
     FRED["FRED API<br/><i>Rates, housing, economic data</i>"]
     Zillow["Zillow Research<br/><i>ZHVI home values by zip</i>"]
+    AV["Alpha Vantage<br/><i>Earnings calendar</i>"]
 
     User -->|"HTTPS"| App
-    App -->|"HTTPS"| Yahoo
+    App -->|"HTTPS + OAuth"| Schwab
     App -->|"HTTPS + API key"| FRED
     App -->|"HTTPS (CSV)"| Zillow
+    App -->|"HTTPS + API key"| AV
 
     style App fill:#438DD5,color:#fff
-    style Yahoo fill:#999,color:#fff
+    style Schwab fill:#999,color:#fff
+    style AV fill:#999,color:#fff
     style FRED fill:#999,color:#fff
     style Zillow fill:#999,color:#fff
 ```
@@ -118,21 +128,24 @@ graph TB
         DB[("SQLite<br/><i>Cache, sessions, settings</i>")]
     end
 
-    Yahoo["Yahoo Finance"]
+    Schwab["Schwab API"]
     FRED["FRED API"]
     Zillow["Zillow Research"]
+    AV["Alpha Vantage"]
 
     User -->|"HTTPS"| Frontend
     Frontend -->|"HTTP/JSON"| Backend
     Backend -->|"SQLAlchemy"| DB
-    Backend -->|"yfinance + direct API"| Yahoo
+    Backend -->|"OAuth + httpx"| Schwab
     Backend -->|"fredapi (throttled)"| FRED
     Backend -->|"CSV download"| Zillow
+    Backend -->|"REST API"| AV
 
     style Frontend fill:#438DD5,color:#fff
     style Backend fill:#438DD5,color:#fff
     style DB fill:#438DD5,color:#fff
-    style Yahoo fill:#999,color:#fff
+    style Schwab fill:#999,color:#fff
+    style AV fill:#999,color:#fff
     style FRED fill:#999,color:#fff
     style Zillow fill:#999,color:#fff
 ```
@@ -151,7 +164,7 @@ graph TB
     end
 
     subgraph Services
-        DF["Data Fetcher<br/><i>Source detection, retry,<br/>dual Yahoo endpoints,<br/>FRED throttle</i>"]
+        DF["Data Fetcher<br/><i>Source detection, retry,<br/>Schwab + FRED throttle</i>"]
         RS["Regression Service<br/><i>OLS, ADF stationarity,<br/>VIF, Durbin-Watson</i>"]
         CS["Cache Service<br/><i>Frequency-aware TTL,<br/>fresh/stale retrieval</i>"]
         BS["Backup Service<br/><i>SQLite backup/restore</i>"]
@@ -159,9 +172,10 @@ graph TB
     end
 
     DB[("SQLite<br/><i>cache, sessions,<br/>app_settings</i>")]
-    Yahoo["Yahoo Finance"]
+    Schwab["Schwab API"]
     FRED["FRED API"]
     Zillow["Zillow Research"]
+    AV["Alpha Vantage"]
 
     RR --> RS
     RR --> DF
@@ -171,11 +185,11 @@ graph TB
     SR --> DB
     STR --> CS
     STR --> BS
-    HR --> Yahoo
+    HR --> AV
     HR --> FRED
 
     DF --> CS
-    DF --> Yahoo
+    DF --> Schwab
     DF --> FRED
     DF --> Zillow
     CS --> DB
@@ -193,7 +207,8 @@ graph TB
     style BS fill:#1168BD,color:#fff
     style TR fill:#1168BD,color:#fff
     style DB fill:#438DD5,color:#fff
-    style Yahoo fill:#999,color:#fff
+    style Schwab fill:#999,color:#fff
+    style AV fill:#999,color:#fff
     style FRED fill:#999,color:#fff
     style Zillow fill:#999,color:#fff
 ```
@@ -267,9 +282,9 @@ graph TB
 | **Cache-first fetching** | All data checks SQLite cache before calling external APIs |
 | **Frequency-aware TTL** | Daily data cached 24h, monthly/quarterly cached 7 days |
 | **Stale fallback** | If API fails after retries, serves stale cache with `is_stale` flag |
-| **Dual Yahoo endpoints** | yfinance library (query2) with direct API (query1) fallback |
+| **Schwab market data** | OAuth-authenticated access to Schwab API for quotes and options |
 | **FRED throttle** | Thread-safe 500ms minimum interval between calls |
-| **Exponential backoff** | 3 attempts with 2-10s waits (Yahoo) and 1-4s waits (FRED) |
+| **Exponential backoff** | 3 attempts with 2-10s waits (Schwab) and 1-4s waits (FRED) |
 | **Stationarity checks** | ADF test + auto-differencing for non-stationary series |
 
 ### Project Structure
@@ -287,7 +302,7 @@ regression_tool/
 │   │   │   ├── sessions.py     # CRUD for saved sessions
 │   │   │   └── settings.py     # App settings, cache management
 │   │   ├── services/
-│   │   │   ├── data_fetcher.py # yfinance/FRED/Zillow with cache + retry
+│   │   │   ├── data_fetcher.py # Schwab/FRED/Zillow with cache + retry
 │   │   │   ├── regression.py   # Regression computation engines
 │   │   │   └── cache.py        # SQLite cache with freshness rules
 │   │   ├── models/
@@ -335,7 +350,7 @@ When the backend is running, interactive API docs are available at:
 
 ## Tech Stack
 
-**Backend**: Python 3.12, FastAPI, SQLAlchemy, SQLite, yfinance, fredapi, statsmodels, scipy, pandas, tenacity
+**Backend**: Python 3.12, FastAPI, SQLAlchemy, SQLite, httpx, fredapi, statsmodels, scipy, pandas, tenacity
 
 **Frontend**: React 18, Vite, Tailwind CSS, Plotly.js, Axios, React Router, react-datepicker, react-hot-toast
 

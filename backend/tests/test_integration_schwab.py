@@ -172,7 +172,7 @@ class TestSourcesEndpointSchwab:
     def _patch_other_sources(self):
         """Patch non-schwab sources to avoid real network calls."""
         return (
-            patch("app.routers.health._check_yfinance", return_value={"available": True, "error": None}),
+            patch("app.routers.health._check_alpha_vantage", return_value={"available": True, "error": None}),
             patch("app.routers.health._check_fred", return_value={"available": True, "error": None}),
             patch("app.routers.health._check_zillow", return_value={"available": True, "error": None}),
         )
@@ -203,7 +203,7 @@ class TestSourcesEndpointSchwab:
 
     def test_all_down_includes_schwab(self, client, test_session_local):
         """all_down is True when all sources including schwab are down."""
-        with patch("app.routers.health._check_yfinance", return_value={"available": False, "error": "down"}), \
+        with patch("app.routers.health._check_alpha_vantage", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_fred", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_zillow", return_value={"available": False, "error": "down"}):
             resp = client.get("/api/health/sources")
@@ -219,7 +219,7 @@ class TestSourcesEndpointSchwab:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
-        with patch("app.routers.health._check_yfinance", return_value={"available": False, "error": "down"}), \
+        with patch("app.routers.health._check_alpha_vantage", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_fred", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_zillow", return_value={"available": False, "error": "down"}), \
              patch("httpx.get", return_value=mock_resp):
