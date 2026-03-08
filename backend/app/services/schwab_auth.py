@@ -207,12 +207,17 @@ class SchwabTokenManager:
 
 def _read_setting(db, key: str) -> str | None:
     """Read an AppSetting value, decrypting if needed."""
+    from cryptography.fernet import InvalidToken
     from app.models.database import AppSetting
     entry = db.query(AppSetting).filter(AppSetting.key == key).first()
     if not entry or not entry.value:
         return None
     if key in ENCRYPTED_SETTING_KEYS and get_encryption_key():
-        return decrypt_value(entry.value)
+        try:
+            return decrypt_value(entry.value)
+        except InvalidToken:
+            logger.warning("Failed to decrypt %s — returning raw value", key)
+            return entry.value
     return entry.value
 
 

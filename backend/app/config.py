@@ -49,9 +49,7 @@ def get_schwab_credentials() -> tuple[str, str]:
         return app_key, app_secret
     try:
         from app.models.database import SessionLocal, AppSetting
-        from app.services.encryption import (
-            ENCRYPTED_SETTING_KEYS, decrypt_value, get_encryption_key,
-        )
+        from app.services.encryption import decrypt_value, get_encryption_key
         db = SessionLocal()
         try:
             key_entry = db.query(AppSetting).filter(AppSetting.key == "schwab_app_key").first()

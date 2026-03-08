@@ -121,7 +121,7 @@ def _run_security_checks():
     # Check DB file permissions
     db_url = app_settings.database_url
     if db_url.startswith("sqlite:///"):
-        db_path = db_url.replace("sqlite:///", "")
+        db_path = os.path.abspath(db_url.replace("sqlite:///", ""))
         for warning in check_db_file_permissions(db_path):
             logger.warning(warning)
 

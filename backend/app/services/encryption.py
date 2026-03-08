@@ -74,7 +74,7 @@ def is_encrypted(value: str, key: str | None = None) -> bool:
         f = Fernet(k.encode() if isinstance(k, str) else k)
         f.decrypt(value.encode())
         return True
-    except (InvalidToken, Exception):
+    except InvalidToken:
         return False
 
 
