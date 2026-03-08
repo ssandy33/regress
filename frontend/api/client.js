@@ -1,8 +1,18 @@
 import axios from 'axios';
+import { getSession as getAuthSession } from 'next-auth/react';
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || '',
   timeout: 30000,
+});
+
+// Attach session token to all API requests
+api.interceptors.request.use(async (config) => {
+  const session = await getAuthSession();
+  if (session?.accessToken) {
+    config.headers.Authorization = `Bearer ${session.accessToken}`;
+  }
+  return config;
 });
 
 // --- Assets ---

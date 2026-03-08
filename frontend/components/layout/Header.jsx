@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { useTheme } from '../../context/ThemeContext';
+import UserMenu from './UserMenu';
 
 export default function Header({ sessions, onLoadSession }) {
   const { dark, toggle } = useTheme();
@@ -11,6 +12,7 @@ export default function Header({ sessions, onLoadSession }) {
       </Link>
 
       <div className="flex items-center gap-3">
+        <UserMenu />
         {/* Options scanner link */}
         <Link
           href="/options"

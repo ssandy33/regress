@@ -8,10 +8,11 @@ import certifi
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.auth import get_current_user
 from app.config import settings as app_settings
 from app.models.database import init_db, SessionLocal
 from app.routers import assets, data, health, options, regression, sessions, settings
@@ -77,17 +78,17 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in app_settings.cors_origins.split(",") if o.strip()],
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
-# Include routers
-app.include_router(assets.router)
-app.include_router(data.router)
-app.include_router(regression.router)
-app.include_router(sessions.router)
-app.include_router(settings.router)
+# Include routers — health is public, all others require authentication
 app.include_router(health.router)
-app.include_router(options.router)
+app.include_router(assets.router, dependencies=[Depends(get_current_user)])
+app.include_router(data.router, dependencies=[Depends(get_current_user)])
+app.include_router(regression.router, dependencies=[Depends(get_current_user)])
+app.include_router(sessions.router, dependencies=[Depends(get_current_user)])
+app.include_router(settings.router, dependencies=[Depends(get_current_user)])
+app.include_router(options.router, dependencies=[Depends(get_current_user)])
 
 
 # --- Exception handlers ---
