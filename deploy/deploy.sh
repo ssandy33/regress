@@ -155,7 +155,7 @@ NEXTAUTH_URL=${NEXTAUTH_URL}
 ALLOWED_USERS=${ALLOWED_USERS}
 EOF
 
-# Also create backend/.env
+# Also create backend/.env (no NEXTAUTH_URL — only needed by frontend)
 cat > "$APP_DIR/backend/.env" <<EOF
 FRED_API_KEY=${FRED_API_KEY}
 NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
