@@ -130,13 +130,25 @@ GITHUB_SECRET=""
 NEXTAUTH_URL=""
 ALLOWED_USERS=""
 if [ "$ENABLE_OAUTH" = "y" ]; then
-    read -p "  GitHub OAuth Client ID: " GITHUB_ID
-    read -sp "  GitHub OAuth Client Secret: " GITHUB_SECRET
+    # Reuse existing NEXTAUTH_SECRET if present (avoids invalidating sessions on redeploy)
+    if [ -f "$APP_DIR/.env" ]; then
+        NEXTAUTH_SECRET="$(sed -n 's/^NEXTAUTH_SECRET=//p' "$APP_DIR/.env" | head -n1)"
+    fi
+    read -rp "  GitHub OAuth Client ID: " GITHUB_ID
+    read -rsp "  GitHub OAuth Client Secret: " GITHUB_SECRET
     echo ""
+    if [ -z "$GITHUB_ID" ] || [ -z "$GITHUB_SECRET" ]; then
+        echo "ERROR: GitHub OAuth Client ID and Client Secret are required when OAuth is enabled."
+        exit 1
+    fi
     read -p "  Allowed GitHub usernames (comma-separated, or leave empty for any): " ALLOWED_USERS
-    NEXTAUTH_SECRET=$(openssl rand -base64 32)
+    if [ -z "$NEXTAUTH_SECRET" ]; then
+        NEXTAUTH_SECRET=$(openssl rand -base64 32)
+        echo "  NEXTAUTH_SECRET auto-generated."
+    else
+        echo "  Reusing existing NEXTAUTH_SECRET."
+    fi
     NEXTAUTH_URL="https://${DOMAIN}"
-    echo "  NEXTAUTH_SECRET auto-generated."
 fi
 
 # --------------------------------------------------

@@ -21,7 +21,7 @@ import { test, expect } from '@playwright/test';
  * Returns true if visiting / results in a redirect to /auth/signin.
  */
 async function isAuthEnforced(page) {
-  const response = await page.goto('/', { waitUntil: 'commit' });
+  await page.goto('/', { waitUntil: 'commit' });
   return page.url().includes('/auth/signin');
 }
 
