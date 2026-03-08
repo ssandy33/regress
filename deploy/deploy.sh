@@ -122,6 +122,35 @@ if [ "$ENABLE_AUTH" = "y" ]; then
     echo ""
 fi
 
+echo ""
+read -p "Enable GitHub OAuth authentication? (y/n): " ENABLE_OAUTH
+NEXTAUTH_SECRET=""
+GITHUB_ID=""
+GITHUB_SECRET=""
+NEXTAUTH_URL=""
+ALLOWED_USERS=""
+if [ "$ENABLE_OAUTH" = "y" ]; then
+    # Reuse existing NEXTAUTH_SECRET if present (avoids invalidating sessions on redeploy)
+    if [ -f "$APP_DIR/.env" ]; then
+        NEXTAUTH_SECRET="$(sed -n 's/^NEXTAUTH_SECRET=//p' "$APP_DIR/.env" | head -n1)"
+    fi
+    read -rp "  GitHub OAuth Client ID: " GITHUB_ID
+    read -rsp "  GitHub OAuth Client Secret: " GITHUB_SECRET
+    echo ""
+    if [ -z "$GITHUB_ID" ] || [ -z "$GITHUB_SECRET" ]; then
+        echo "ERROR: GitHub OAuth Client ID and Client Secret are required when OAuth is enabled."
+        exit 1
+    fi
+    read -p "  Allowed GitHub usernames (comma-separated, or leave empty for any): " ALLOWED_USERS
+    if [ -z "$NEXTAUTH_SECRET" ]; then
+        NEXTAUTH_SECRET=$(openssl rand -base64 32)
+        echo "  NEXTAUTH_SECRET auto-generated."
+    else
+        echo "  Reusing existing NEXTAUTH_SECRET."
+    fi
+    NEXTAUTH_URL="https://${DOMAIN}"
+fi
+
 # --------------------------------------------------
 # 8. Create .env file
 # --------------------------------------------------
@@ -131,11 +160,20 @@ DOMAIN=${DOMAIN}
 FRED_API_KEY=${FRED_API_KEY}
 BASIC_AUTH_USER=${BASIC_AUTH_USER}
 BASIC_AUTH_PASS=${BASIC_AUTH_PASS}
+NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+GITHUB_ID=${GITHUB_ID}
+GITHUB_SECRET=${GITHUB_SECRET}
+NEXTAUTH_URL=${NEXTAUTH_URL}
+ALLOWED_USERS=${ALLOWED_USERS}
 EOF
 
-# Also create backend/.env
+# Also create backend/.env (no NEXTAUTH_URL — only needed by frontend)
 cat > "$APP_DIR/backend/.env" <<EOF
 FRED_API_KEY=${FRED_API_KEY}
+NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+GITHUB_ID=${GITHUB_ID}
+GITHUB_SECRET=${GITHUB_SECRET}
+ALLOWED_USERS=${ALLOWED_USERS}
 EOF
 
 chmod 600 "$APP_DIR/.env"
