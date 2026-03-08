@@ -53,6 +53,7 @@ services:
     # No ports exposed to host — only accessible via Caddy through Docker network
     environment:
       - HOSTNAME=0.0.0.0
+      - INTERNAL_API_ORIGIN=http://backend:8000
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - GITHUB_ID=${GITHUB_ID:-}
       - GITHUB_SECRET=${GITHUB_SECRET:-}
