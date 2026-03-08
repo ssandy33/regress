@@ -10,12 +10,30 @@ logger = logging.getLogger(__name__)
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
+_auth_warning_logged = False
+
 
 def _get_allowed_users() -> list[str]:
     """Parse ALLOWED_USERS into a lowercase list, filtering blanks."""
     if not settings.allowed_users:
         return []
     return [u for u in (u.strip().lower() for u in settings.allowed_users.split(",")) if u]
+
+
+def is_auth_configured() -> bool:
+    """Return True only when all three auth env vars are set.
+
+    Requires NEXTAUTH_SECRET, GITHUB_ID, and GITHUB_SECRET.
+    Partial configuration is treated as unconfigured.
+    """
+    return bool(settings.nextauth_secret and settings.github_id and settings.github_secret)
+
+
+def _is_partially_configured() -> bool:
+    """Return True when some but not all auth env vars are set."""
+    vals = [settings.nextauth_secret, settings.github_id, settings.github_secret]
+    present = sum(1 for v in vals if v)
+    return 0 < present < 3
 
 
 async def get_current_user(
@@ -26,16 +44,23 @@ async def get_current_user(
     Returns a dict with user info (sub, username).
     Raises 401 if the token is missing, expired, or invalid.
 
-    Fail-closed: requires NEXTAUTH_SECRET unless DEV_AUTH_BYPASS=true.
+    Auth is opt-in: requires all three env vars (NEXTAUTH_SECRET, GITHUB_ID,
+    GITHUB_SECRET). Partial configuration is treated as unconfigured with a
+    warning logged.
     """
-    if not settings.nextauth_secret:
-        if settings.dev_auth_bypass:
-            return {"sub": "anonymous", "username": "anonymous"}
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication not configured",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    global _auth_warning_logged
+    if not is_auth_configured():
+        if not _auth_warning_logged:
+            if _is_partially_configured():
+                logger.warning(
+                    "Auth partially configured — all three env vars "
+                    "(NEXTAUTH_SECRET, GITHUB_ID, GITHUB_SECRET) are required. "
+                    "Running without auth."
+                )
+            else:
+                logger.info("Auth env vars not set — auth disabled, allowing anonymous access")
+            _auth_warning_logged = True
+        return {"sub": "anonymous", "username": "anonymous"}
 
     if credentials is None:
         raise HTTPException(

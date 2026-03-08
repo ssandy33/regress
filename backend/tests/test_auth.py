@@ -1,5 +1,14 @@
-"""Tests for the authentication dependency."""
+"""Tests for the authentication dependency.
 
+Covers all acceptance criteria from issue #20:
+- AC1: App works out of the box with no auth env vars set
+- AC2: Setting all 3 auth env vars enables full auth
+- AC3: Partially configured auth vars treated as unconfigured (log warning)
+- AC4: ALLOWED_USERS still restricts access when auth is enabled
+- AC5: No DEV_AUTH_BYPASS flag needed
+"""
+
+import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -8,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.auth import get_current_user
+from app.auth import get_current_user, is_auth_configured, _is_partially_configured
 
 SECRET = "test-secret-key-for-unit-tests"
 
@@ -40,34 +49,97 @@ def _valid_payload(**overrides):
     return base
 
 
-class TestGetCurrentUser:
-    """Test the get_current_user FastAPI dependency."""
+def _mock_no_auth(mock_settings):
+    """Configure mock for no auth env vars set."""
+    mock_settings.nextauth_secret = None
+    mock_settings.github_id = ""
+    mock_settings.github_secret = ""
 
-    def test_fails_closed_when_secret_not_configured(self):
-        """When NEXTAUTH_SECRET is None and dev_auth_bypass is off, return 401."""
+
+def _mock_full_auth(mock_settings, allowed_users=""):
+    """Configure mock for all 3 auth env vars set."""
+    mock_settings.nextauth_secret = SECRET
+    mock_settings.github_id = "gh-client-id"
+    mock_settings.github_secret = "gh-client-secret"
+    mock_settings.allowed_users = allowed_users
+
+
+# ---------------------------------------------------------------------------
+# AC1: App works out of the box with no auth env vars set
+# ---------------------------------------------------------------------------
+
+
+class TestAC1NoAuthEnvVars:
+    """AC1: App works out of the box with no auth env vars set."""
+
+    def test_anonymous_access_when_no_env_vars(self):
+        """Protected routes allow anonymous access when no auth env vars are set."""
         app = _make_app()
         client = TestClient(app)
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = None
-            mock_settings.dev_auth_bypass = False
-            resp = client.get("/protected")
-
-        assert resp.status_code == 401
-        assert "not configured" in resp.json()["detail"].lower()
-
-    def test_returns_anonymous_when_dev_bypass_enabled(self):
-        """When dev_auth_bypass is True and secret is None, allow anonymous."""
-        app = _make_app()
-        client = TestClient(app)
-
-        with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = None
-            mock_settings.dev_auth_bypass = True
+            _mock_no_auth(mock_settings)
             resp = client.get("/protected")
 
         assert resp.status_code == 200
         assert resp.json()["user"]["username"] == "anonymous"
+        assert resp.json()["user"]["sub"] == "anonymous"
+
+    def test_anonymous_access_without_bearer_token(self):
+        """No Authorization header needed when auth is unconfigured."""
+        app = _make_app()
+        client = TestClient(app)
+
+        with patch("app.auth.settings") as mock_settings:
+            _mock_no_auth(mock_settings)
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+
+    def test_is_auth_configured_false_when_nothing_set(self):
+        """is_auth_configured() returns False when no auth env vars are set."""
+        with patch("app.auth.settings") as mock_settings:
+            _mock_no_auth(mock_settings)
+            assert is_auth_configured() is False
+
+    def test_is_auth_configured_false_for_empty_strings(self):
+        """is_auth_configured() returns False for empty strings."""
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = ""
+            mock_settings.github_id = ""
+            mock_settings.github_secret = ""
+            assert is_auth_configured() is False
+
+    def test_logs_info_when_unconfigured(self, caplog):
+        """Logs an info message when auth is not configured."""
+        import app.auth
+        app.auth._auth_warning_logged = False
+
+        app_ = _make_app()
+        client = TestClient(app_)
+
+        with patch("app.auth.settings") as mock_settings:
+            _mock_no_auth(mock_settings)
+            with caplog.at_level(logging.INFO, logger="app.auth"):
+                client.get("/protected")
+
+        assert any("auth disabled" in r.message.lower() for r in caplog.records)
+        app.auth._auth_warning_logged = False  # reset for other tests
+
+
+# ---------------------------------------------------------------------------
+# AC2: Setting all 3 auth env vars enables full auth
+# ---------------------------------------------------------------------------
+
+
+class TestAC2FullAuthEnabled:
+    """AC2: Setting NEXTAUTH_SECRET + GITHUB_ID + GITHUB_SECRET enables full auth."""
+
+    def test_is_auth_configured_true_when_all_set(self):
+        """is_auth_configured() returns True when all 3 vars are set."""
+        with patch("app.auth.settings") as mock_settings:
+            _mock_full_auth(mock_settings)
+            assert is_auth_configured() is True
 
     def test_returns_401_when_no_token_provided(self):
         """When auth is configured but no token is sent, return 401."""
@@ -75,7 +147,7 @@ class TestGetCurrentUser:
         client = TestClient(app)
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
+            _mock_full_auth(mock_settings)
             resp = client.get("/protected")
 
         assert resp.status_code == 401
@@ -88,8 +160,7 @@ class TestGetCurrentUser:
         token = _make_token(_valid_payload())
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
-            mock_settings.allowed_users = ""
+            _mock_full_auth(mock_settings)
             resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 200
@@ -106,7 +177,7 @@ class TestGetCurrentUser:
         ))
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
+            _mock_full_auth(mock_settings)
             resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 401
@@ -119,7 +190,7 @@ class TestGetCurrentUser:
         token = _make_token(_valid_payload(), secret="wrong-secret")
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
+            _mock_full_auth(mock_settings)
             resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 401
@@ -131,7 +202,7 @@ class TestGetCurrentUser:
         client = TestClient(app)
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
+            _mock_full_auth(mock_settings)
             resp = client.get("/protected", headers={"Authorization": "Bearer not-a-jwt"})
 
         assert resp.status_code == 401
@@ -143,12 +214,123 @@ class TestGetCurrentUser:
         token = _make_token(_valid_payload(username=""))
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
-            mock_settings.allowed_users = ""
+            _mock_full_auth(mock_settings)
             resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 401
         assert "missing username" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# AC3: Partially configured auth vars treated as unconfigured
+# ---------------------------------------------------------------------------
+
+
+class TestAC3PartialConfig:
+    """AC3: Partially configured auth vars are treated as unconfigured."""
+
+    def test_only_secret_set_treated_as_unconfigured(self):
+        """When only NEXTAUTH_SECRET is set, auth is NOT enforced."""
+        app = _make_app()
+        client = TestClient(app)
+
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = SECRET
+            mock_settings.github_id = ""
+            mock_settings.github_secret = ""
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"
+
+    def test_only_github_id_set_treated_as_unconfigured(self):
+        """When only GITHUB_ID is set, auth is NOT enforced."""
+        app = _make_app()
+        client = TestClient(app)
+
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = None
+            mock_settings.github_id = "some-client-id"
+            mock_settings.github_secret = ""
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"
+
+    def test_secret_and_github_id_without_github_secret(self):
+        """When GITHUB_SECRET is missing, auth is NOT enforced."""
+        app = _make_app()
+        client = TestClient(app)
+
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = SECRET
+            mock_settings.github_id = "some-client-id"
+            mock_settings.github_secret = ""
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"
+
+    def test_is_partially_configured_detects_partial(self):
+        """_is_partially_configured() returns True for 1 or 2 vars set."""
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = SECRET
+            mock_settings.github_id = ""
+            mock_settings.github_secret = ""
+            assert _is_partially_configured() is True
+
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = SECRET
+            mock_settings.github_id = "id"
+            mock_settings.github_secret = ""
+            assert _is_partially_configured() is True
+
+    def test_is_partially_configured_false_when_none_set(self):
+        """_is_partially_configured() returns False when nothing is set."""
+        with patch("app.auth.settings") as mock_settings:
+            _mock_no_auth(mock_settings)
+            assert _is_partially_configured() is False
+
+    def test_is_partially_configured_false_when_all_set(self):
+        """_is_partially_configured() returns False when all 3 are set."""
+        with patch("app.auth.settings") as mock_settings:
+            _mock_full_auth(mock_settings)
+            assert _is_partially_configured() is False
+
+    def test_is_auth_configured_false_for_partial(self):
+        """is_auth_configured() returns False for partial configuration."""
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = SECRET
+            mock_settings.github_id = ""
+            mock_settings.github_secret = ""
+            assert is_auth_configured() is False
+
+    def test_logs_warning_for_partial_config(self, caplog):
+        """A warning is logged when auth is partially configured."""
+        import app.auth
+        app.auth._auth_warning_logged = False
+
+        app_ = _make_app()
+        client = TestClient(app_)
+
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = SECRET
+            mock_settings.github_id = ""
+            mock_settings.github_secret = ""
+            with caplog.at_level(logging.WARNING, logger="app.auth"):
+                client.get("/protected")
+
+        assert any("partially configured" in r.message.lower() for r in caplog.records)
+        app.auth._auth_warning_logged = False  # reset for other tests
+
+
+# ---------------------------------------------------------------------------
+# AC4: ALLOWED_USERS still restricts access when auth is enabled
+# ---------------------------------------------------------------------------
+
+
+class TestAC4AllowedUsers:
+    """AC4: ALLOWED_USERS still restricts access when auth is enabled."""
 
     def test_rejects_user_not_in_allowlist(self):
         """A valid token for a user not in ALLOWED_USERS is rejected with 403."""
@@ -157,8 +339,7 @@ class TestGetCurrentUser:
         token = _make_token(_valid_payload(username="outsider"))
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
-            mock_settings.allowed_users = "alice,bob"
+            _mock_full_auth(mock_settings, allowed_users="alice,bob")
             resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 403
@@ -171,12 +352,23 @@ class TestGetCurrentUser:
         token = _make_token(_valid_payload(username="Alice"))
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
-            mock_settings.allowed_users = "alice,bob"
+            _mock_full_auth(mock_settings, allowed_users="alice,bob")
             resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 200
         assert resp.json()["user"]["username"] == "Alice"
+
+    def test_case_insensitive_allowlist(self):
+        """Allowlist matching is case-insensitive."""
+        app = _make_app()
+        client = TestClient(app)
+        token = _make_token(_valid_payload(username="BOB"))
+
+        with patch("app.auth.settings") as mock_settings:
+            _mock_full_auth(mock_settings, allowed_users="alice,bob")
+            resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
+
+        assert resp.status_code == 200
 
     def test_empty_allowlist_allows_any_user(self):
         """When ALLOWED_USERS is empty, any authenticated user is allowed."""
@@ -185,15 +377,53 @@ class TestGetCurrentUser:
         token = _make_token(_valid_payload(username="anyone"))
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
-            mock_settings.allowed_users = ""
+            _mock_full_auth(mock_settings, allowed_users="")
             resp = client.get("/protected", headers={"Authorization": f"Bearer {token}"})
 
         assert resp.status_code == 200
 
 
+# ---------------------------------------------------------------------------
+# AC5: No DEV_AUTH_BYPASS flag needed
+# ---------------------------------------------------------------------------
+
+
+class TestAC5NoDevBypass:
+    """AC5: DEV_AUTH_BYPASS is removed — not needed when unconfigured = open."""
+
+    def test_no_dev_auth_bypass_in_settings(self):
+        """The Settings class no longer has a dev_auth_bypass field."""
+        from app.config import Settings
+        assert "dev_auth_bypass" not in Settings.model_fields
+
+    def test_no_dev_auth_bypass_in_env_example(self):
+        """DEV_AUTH_BYPASS is not referenced in .env.example."""
+        import pathlib
+        env_example = pathlib.Path(__file__).resolve().parents[2] / ".env.example"
+        if env_example.exists():
+            content = env_example.read_text()
+            assert "DEV_AUTH_BYPASS" not in content
+
+    def test_anonymous_without_bypass_flag(self):
+        """Anonymous access works without any bypass flag when auth is unconfigured."""
+        app = _make_app()
+        client = TestClient(app)
+
+        with patch("app.auth.settings") as mock_settings:
+            _mock_no_auth(mock_settings)
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"
+
+
+# ---------------------------------------------------------------------------
+# Route protection integration tests
+# ---------------------------------------------------------------------------
+
+
 class TestRouteProtection:
-    """Verify health is public and protected routes require auth."""
+    """Verify health is public and protected routes require auth when configured."""
 
     def test_health_check_is_public(self):
         """The /api/health endpoint works without auth."""
@@ -201,19 +431,46 @@ class TestRouteProtection:
         client = TestClient(app)
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
+            _mock_full_auth(mock_settings)
             resp = client.get("/api/health")
 
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
 
-    def test_protected_route_returns_401(self):
-        """A protected endpoint (e.g. /api/assets/search) returns 401 without auth."""
+    def test_protected_route_returns_401_when_auth_enabled(self):
+        """A protected endpoint returns 401 without auth when all vars are set."""
         from app.main import app
         client = TestClient(app)
 
         with patch("app.auth.settings") as mock_settings:
-            mock_settings.nextauth_secret = SECRET
+            _mock_full_auth(mock_settings)
             resp = client.get("/api/assets/search", params={"q": "AAPL"})
 
         assert resp.status_code == 401
+
+    def test_protected_route_allows_anonymous_when_auth_disabled(self):
+        """A protected endpoint allows anonymous access when auth is not configured."""
+        app = _make_app()
+        client = TestClient(app)
+
+        with patch("app.auth.settings") as mock_settings:
+            _mock_no_auth(mock_settings)
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"
+
+    def test_protected_route_allows_anonymous_when_partially_configured(self):
+        """A protected endpoint allows anonymous access when auth is partially configured."""
+        app = _make_app()
+        client = TestClient(app)
+
+        with patch("app.auth.settings") as mock_settings:
+            mock_settings.nextauth_secret = SECRET
+            mock_settings.github_id = ""
+            mock_settings.github_secret = ""
+            mock_settings.allowed_users = ""
+            resp = client.get("/protected")
+
+        assert resp.status_code == 200
+        assert resp.json()["user"]["username"] == "anonymous"

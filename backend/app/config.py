@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     schwab_encryption_key: str = ""
     nextauth_secret: Optional[str] = None
     allowed_users: str = ""
-    dev_auth_bypass: bool = False
+    github_id: str = ""
+    github_secret: str = ""
     database_url: str = "sqlite:///./regression_tool.db"
     cache_ttl_daily_hours: int = 24
     cache_ttl_monthly_days: int = 7
