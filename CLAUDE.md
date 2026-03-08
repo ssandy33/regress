@@ -16,3 +16,8 @@
 - Sanitize user input at system boundaries; trust internal code.
 - No unused imports, variables, or dead code.
 - Keep PRs focused — one issue per PR.
+
+## Architecture Diagrams
+
+- Stored as Mermaid in `docs/architecture/` — version controlled, GitHub renders natively.
+- When a PR changes service routing, container topology, or deployment config, update the relevant diagram in the same PR.
