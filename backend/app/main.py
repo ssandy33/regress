@@ -53,16 +53,17 @@ def _pre_cache_common_assets():
 async def lifespan(app: FastAPI):
     init_db()
 
-    # Create startup backup
+    # Security checks first — must run before backup to avoid
+    # snapshotting plaintext tokens and to enforce fail-closed
+    _run_security_checks()
+
+    # Create startup backup (now tokens are encrypted if key is set)
     try:
         backup_name = create_backup()
         if backup_name:
             logger.info(f"Startup backup created: {backup_name}")
     except Exception as e:
         logger.warning(f"Startup backup failed: {e}")
-
-    # Security startup checks
-    _run_security_checks()
 
     yield
 
@@ -83,23 +84,20 @@ def _run_security_checks():
 
     enc_key = get_encryption_key()
     if not enc_key:
-        # Fail closed: refuse to start if Schwab tokens exist without key
+        # Fail closed: refuse to start if Schwab tokens exist without key.
+        # DB errors intentionally propagate — better to fail than silently
+        # run with unencrypted tokens.
+        db = SessionLocal()
         try:
-            db = SessionLocal()
-            try:
-                tokens_found = schwab_tokens_exist(db)
-            finally:
-                db.close()
-            if tokens_found:
-                raise EncryptionKeyMissing(
-                    "SCHWAB_ENCRYPTION_KEY env var is required when Schwab "
-                    "tokens exist in the database. Set this env var or remove "
-                    "existing tokens to start the application."
-                )
-        except EncryptionKeyMissing:
-            raise
-        except Exception as e:
-            logger.warning("Could not check for existing Schwab tokens: %s", e)
+            tokens_found = schwab_tokens_exist(db)
+        finally:
+            db.close()
+        if tokens_found:
+            raise EncryptionKeyMissing(
+                "SCHWAB_ENCRYPTION_KEY env var is required when Schwab "
+                "tokens exist in the database. Set this env var or remove "
+                "existing tokens to start the application."
+            )
 
         logger.warning(
             "SCHWAB_ENCRYPTION_KEY not set — Schwab tokens will be stored in "

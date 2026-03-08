@@ -12,6 +12,10 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Prefix prepended to all encrypted values for unambiguous detection.
+# Prevents double-encryption if the key is rotated or mistyped.
+ENCRYPTED_PREFIX = "ENC:"
+
 # Keys that must be encrypted at rest
 ENCRYPTED_SETTING_KEYS = frozenset({
     "schwab_access_token",
@@ -49,33 +53,27 @@ def _get_fernet(key: str | None = None) -> Fernet:
 
 
 def encrypt_value(plaintext: str, key: str | None = None) -> str:
-    """Encrypt a plaintext string, returning a base64-encoded Fernet token."""
+    """Encrypt a plaintext string, returning a prefixed Fernet token."""
     f = _get_fernet(key)
-    return f.encrypt(plaintext.encode()).decode()
+    return ENCRYPTED_PREFIX + f.encrypt(plaintext.encode()).decode()
 
 
 def decrypt_value(ciphertext: str, key: str | None = None) -> str:
-    """Decrypt a Fernet token back to plaintext."""
+    """Decrypt a prefixed Fernet token back to plaintext."""
     f = _get_fernet(key)
-    return f.decrypt(ciphertext.encode()).decode()
+    raw = ciphertext.removeprefix(ENCRYPTED_PREFIX)
+    return f.decrypt(raw.encode()).decode()
 
 
 def is_encrypted(value: str, key: str | None = None) -> bool:
-    """Check whether a value is already Fernet-encrypted with the current key.
+    """Check whether a value carries the encryption prefix.
 
-    Attempts decryption — if it succeeds, the value is encrypted.
+    Uses a deterministic prefix check — does not attempt decryption.
+    Safe against key rotation: a mismatched key won't cause double-encryption.
     """
     if not value:
         return False
-    try:
-        k = key or get_encryption_key()
-        if not k:
-            return False
-        f = Fernet(k.encode() if isinstance(k, str) else k)
-        f.decrypt(value.encode())
-        return True
-    except InvalidToken:
-        return False
+    return value.startswith(ENCRYPTED_PREFIX)
 
 
 def migrate_plaintext_tokens(db) -> int:
