@@ -42,6 +42,7 @@ class TestAC1_EarningsDatesResolveViaAlphaVantage:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = csv_text
+        mock_resp.headers = {"content-type": "text/csv"}
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
@@ -68,6 +69,7 @@ class TestAC1_EarningsDatesResolveViaAlphaVantage:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = csv_text
+        mock_resp.headers = {"content-type": "text/csv"}
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 

@@ -32,8 +32,8 @@ def get_alpha_vantage_api_key() -> str:
                 return entry.value
         finally:
             db.close()
-    except (ImportError, SQLAlchemyError) as e:
-        logger.error("Failed to read alpha_vantage_api_key from DB: %s", e)
+    except (ImportError, SQLAlchemyError):
+        logger.exception("Failed to read alpha_vantage_api_key from DB")
     return ""
 
 
@@ -134,7 +134,7 @@ def get_next_earnings_date(symbol: str) -> Optional[str]:
             except ValueError:
                 pass
 
-        today = datetime.now().date()
+        today = datetime.now(timezone.utc).date()
         reader = csv.DictReader(io.StringIO(resp.text))
 
         # Validate CSV header contains expected field
