@@ -42,8 +42,17 @@ class OptionScanner:
                 from_date=from_date,
                 to_date=to_date,
             )
-        except (SchwabClientError, SchwabAuthError) as e:
-            raise OptionScannerError(f"Failed to fetch option chain for '{request.ticker}': {e}") from e
+        except SchwabAuthError as e:
+            logger.error("Schwab auth error scanning '%s': %s", request.ticker, e)
+            raise OptionScannerError(
+                "Options scanning is unavailable. Please contact your administrator "
+                "to configure the Schwab API connection."
+            ) from e
+        except SchwabClientError as e:
+            logger.error("Schwab client error scanning '%s': %s", request.ticker, e)
+            raise OptionScannerError(
+                f"Failed to fetch option chain for '{request.ticker}'. Please try again later."
+            ) from e
 
         # Extract underlying price from chain response
         underlying = chain_data.get("underlying", {})

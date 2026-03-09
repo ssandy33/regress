@@ -15,6 +15,8 @@ export default function ChainFilters({
   earningsBuffer, setEarningsBuffer,
   onScan, loading,
   onReset,
+  schwabAvailable = true,
+  schwabLoading = false,
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -216,8 +218,9 @@ export default function ChainFilters({
       <div className="p-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
         <button
           onClick={onScan}
-          disabled={loading}
-          className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+          disabled={loading || (!schwabLoading && !schwabAvailable)}
+          title={!schwabLoading && !schwabAvailable ? 'Schwab API is not configured. Visit Settings to connect.' : undefined}
+          className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
         >
           {loading ? (
             <>
