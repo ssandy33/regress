@@ -432,7 +432,7 @@ class OptionScanner:
         distances = [c.distance_from_price_pct for c in candidates]
         liquidity = [c.open_interest + c.volume for c in candidates]
         dte_inv = [1 / c.dte if c.dte > 0 else 0 for c in candidates]
-        delta_cons = [1 - abs(c.delta) for c in candidates]
+        delta_cons = [1 - abs(c.delta) if c.delta is not None else 0.5 for c in candidates]
 
         scores = []
         for i in range(len(candidates)):

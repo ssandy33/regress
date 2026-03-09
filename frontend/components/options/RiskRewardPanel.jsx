@@ -48,7 +48,7 @@ function ComparisonCard({ strike, strategy, allStrikes }) {
         <MetricRow label="Return" value={`${strike.return_on_capital_pct.toFixed(2)}%`} highlight />
         <MetricRow label="Annualized" value={`${strike.annualized_return_pct.toFixed(1)}%`} />
         <MetricRow label="Distance" value={`${strike.distance_from_price_pct.toFixed(1)}%`} />
-        <MetricRow label="Delta" value={strike.delta.toFixed(2)} />
+        <MetricRow label="Delta" value={strike.delta?.toFixed(2) ?? 'N/A'} />
         <MetricRow label="50% Target" value={`$${strike.fifty_pct_profit_target.toFixed(2)}`} />
         {strike.breakeven != null && (
           <MetricRow label="Breakeven" value={`$${strike.breakeven.toFixed(2)}`} />
@@ -110,7 +110,7 @@ function getHighlights(strike, allStrikes) {
   if (strike.dte > 45) {
     highlights.push({ type: 'warn', text: 'Longer DTE' });
   }
-  if (Math.abs(strike.delta) > 0.30) {
+  if (strike.delta != null && Math.abs(strike.delta) > 0.30) {
     highlights.push({ type: 'warn', text: 'Higher delta risk' });
   }
   if (strike.return_on_capital_pct < 1.0) {
