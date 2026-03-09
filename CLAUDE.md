@@ -16,3 +16,7 @@
 - Sanitize user input at system boundaries; trust internal code.
 - No unused imports, variables, or dead code.
 - Keep PRs focused — one issue per PR.
+
+## Issue Management
+
+- When creating an issue, determine its priority (critical, high, medium, low) and add a comment explaining the rationale for the chosen priority level.
