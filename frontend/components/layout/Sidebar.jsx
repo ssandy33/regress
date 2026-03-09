@@ -3,11 +3,10 @@ import AssetSelector from '../controls/AssetSelector';
 import ComparePicker from '../controls/ComparePicker';
 import DateRangePicker from '../controls/DateRangePicker';
 import RealEstateSelector from '../controls/RealEstateSelector';
-import RegressionMode from '../controls/RegressionMode';
 import WindowSizeSlider from '../controls/WindowSizeSlider';
 
 export default function Sidebar({
-  mode, setMode,
+  mode,
   asset, setAsset,
   dependents, setDependents,
   compareAssets, setCompareAssets,
@@ -54,9 +53,6 @@ export default function Sidebar({
       </div>
 
       <div className="p-4 space-y-5 flex-1">
-        {/* Regression Mode */}
-        <RegressionMode mode={mode} setMode={setMode} />
-
         {/* Asset Selection — depends on mode and sidebar tab */}
         {mode === 'compare' ? (
           <ComparePicker assets={compareAssets} onChange={setCompareAssets} />

@@ -1,4 +1,5 @@
 import Header from './Header';
+import ModeBar from '../controls/ModeBar';
 import Sidebar from './Sidebar';
 
 export default function Layout({
@@ -15,10 +16,10 @@ export default function Layout({
         sessions={sessions.sessions}
         onLoadSession={onLoadSession}
       />
+      <ModeBar mode={regression.mode} setMode={regression.setMode} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
           mode={regression.mode}
-          setMode={regression.setMode}
           asset={regression.asset}
           setAsset={regression.setAsset}
           dependents={regression.dependents}
