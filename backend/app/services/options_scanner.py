@@ -12,6 +12,7 @@ from app.models.schemas import (
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
 from app.services.alpha_vantage_client import get_next_earnings_date
+from app.services.greeks import calculate_greeks
 from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
@@ -127,10 +128,33 @@ class OptionScanner:
                 iv = vol_raw / 100.0 if vol_raw else None
 
                 # Native Schwab Greeks — default None to distinguish missing from zero
+                # Schwab uses -999.0 as a sentinel for "not available"
                 delta = to_float(contract.get("delta"), None)
                 gamma = to_float(contract.get("gamma"), None)
                 theta = to_float(contract.get("theta"), None)
                 vega = to_float(contract.get("vega"), None)
+                delta = None if delta is not None and abs(delta) >= 999 else delta
+                gamma = None if gamma is not None and abs(gamma) >= 999 else gamma
+                theta = None if theta is not None and abs(theta) >= 999 else theta
+                vega = None if vega is not None and abs(vega) >= 999 else vega
+
+                # Fallback: calculate Greeks via Black-Scholes when market data is unavailable
+                greeks_source = "market"
+                flags = []
+                if delta is None and iv and current_price > 0:
+                    calc = calculate_greeks(
+                        spot=current_price,
+                        strike=strike,
+                        dte=dte,
+                        iv=iv,
+                        contract_type=contract_type,
+                    )
+                    delta = calc["delta"]
+                    gamma = gamma if gamma is not None else calc["gamma"]
+                    theta = theta if theta is not None else calc["theta"]
+                    vega = vega if vega is not None else calc["vega"]
+                    greeks_source = "calculated"
+                    flags.append("calculated_greeks")
 
                 reasons = self._check_rejection(
                     request, strike, current_price, delta, oi, bid, mid, dte,
@@ -203,8 +227,8 @@ class OptionScanner:
                     breakeven=metrics.get("breakeven"),
                     fifty_pct_profit_target=metrics["fifty_pct_profit_target"],
                     rule_compliance=compliance,
-                    greeks_source="market",
-                    flags=[],
+                    greeks_source=greeks_source,
+                    flags=flags,
                 ))
 
         ranked = self._rank_strikes(candidates)
