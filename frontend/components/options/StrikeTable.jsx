@@ -78,7 +78,7 @@ export default function StrikeTable({ recommendations, selectedStrikes, onToggle
                     <td className="px-3 py-2 text-right text-xs text-slate-500 dark:text-slate-400">
                       {s.bid.toFixed(2)}/{s.ask.toFixed(2)}
                     </td>
-                    <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{s.delta.toFixed(2)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{s.delta?.toFixed(2) ?? 'N/A'}</td>
                     <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{s.open_interest.toLocaleString()}</td>
                     <td className="px-3 py-2 text-right font-medium text-slate-900 dark:text-white">${s.total_premium.toFixed(2)}</td>
                     <td className="px-3 py-2 text-right font-medium text-blue-600 dark:text-blue-400">{s.return_on_capital_pct.toFixed(2)}%</td>
@@ -132,7 +132,7 @@ function ExpandedDetails({ strike }) {
           )}
         </h4>
         <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
-          <div>Delta: {strike.delta.toFixed(3)}</div>
+          <div>Delta: {strike.delta?.toFixed(3) ?? 'N/A'}</div>
           <div>Gamma: {strike.gamma?.toFixed(4) ?? 'N/A'}</div>
           <div>Theta: {strike.theta?.toFixed(4) ?? 'N/A'}</div>
           <div>Vega: {strike.vega?.toFixed(4) ?? 'N/A'}</div>

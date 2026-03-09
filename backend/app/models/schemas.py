@@ -223,7 +223,7 @@ class StrikeRecommendation(BaseModel):
     bid: float
     ask: float
     mid: float
-    delta: float
+    delta: Optional[float] = None
     gamma: Optional[float] = None
     theta: Optional[float] = None
     vega: Optional[float] = None

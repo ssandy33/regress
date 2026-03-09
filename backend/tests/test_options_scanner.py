@@ -397,8 +397,8 @@ class TestScanWithSchwabChain:
 
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
-    def test_greeks_source_always_market(self, mock_client_cls, _mock_earnings, scanner, cc_request):
-        """Verify greeks_source is always 'market' — no 'calculated' or 'unavailable'."""
+    def test_greeks_source_market_when_available(self, mock_client_cls, _mock_earnings, scanner, cc_request):
+        """Verify greeks_source is 'market' when Schwab provides valid Greeks."""
         dte = 30
         exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
 
@@ -424,6 +424,48 @@ class TestScanWithSchwabChain:
         for rec in result["recommendations"]:
             assert rec.greeks_source == "market"
             assert "missing_greeks" not in rec.flags
+
+    @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
+    @patch("app.services.options_scanner.SchwabClient")
+    def test_schwab_sentinel_greeks_uses_calculated_fallback(self, mock_client_cls, _mock_earnings, scanner, csp_request):
+        """Schwab -999 sentinel triggers Black-Scholes fallback for Greeks."""
+        dte = 30
+        exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
+
+        contract = _make_schwab_contract(
+            strike=13.0, bid=0.35, ask=0.45, mark=0.40,
+            delta=-999.0, gamma=-999.0, theta=-999.0, vega=-999.0,
+            oi=200, volume=50, volatility=40.0, dte=dte,
+        )
+        chain_resp = _make_schwab_chain_response(
+            underlying_price=14.0,
+            contracts=[contract],
+            contract_type="put",
+            exp_date=exp_date,
+            dte=dte,
+        )
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.return_value = chain_resp
+        mock_client.get_quote.return_value = {"lastPrice": 14.0}
+
+        result = scanner.scan(csp_request)
+
+        # Should not be rejected for delta_out_of_range
+        rejected_reasons = [r.rejection_reasons for r in result["rejected"]]
+        for reasons in rejected_reasons:
+            assert not any("delta_out_of_range" in r for r in reasons), \
+                "Sentinel -999 delta should not trigger delta_out_of_range rejection"
+
+        # If strike passed filters, it should have calculated Greeks
+        for rec in result["recommendations"]:
+            assert rec.greeks_source == "calculated"
+            assert "calculated_greeks" in rec.flags
+            assert rec.delta is not None
+            assert rec.gamma is not None
+            assert rec.theta is not None
+            assert rec.vega is not None
 
     @patch("app.services.options_scanner.SchwabClient")
     def test_schwab_error_raises_scanner_error(self, mock_client_cls, scanner, cc_request):
