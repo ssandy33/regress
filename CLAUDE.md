@@ -3,6 +3,7 @@
 ## Testing Requirements
 
 - Every issue must have automated test coverage for all its acceptance criteria before the PR is merged.
+- Tests must be written as part of the implementation, not as a separate follow-up step.
 - If an AC is a manual/infrastructure step (e.g., "create an OAuth app"), document it in the test file as a skipped test or comment explaining why it's not automatable.
 - Backend tests: `backend/tests/` using pytest (in-memory SQLite via conftest fixtures).
 - Frontend tests: `frontend/e2e/` using Playwright for integration/e2e flows.
