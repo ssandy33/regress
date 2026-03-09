@@ -176,7 +176,11 @@ async def option_scanner_error_handler(request: Request, exc: OptionScannerError
 
 @app.exception_handler(SchwabAuthError)
 async def schwab_auth_error_handler(request: Request, exc: SchwabAuthError):
-    return JSONResponse(status_code=401, content={"detail": str(exc)})
+    logger.error("Schwab auth error: %s", exc)
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "Schwab API authentication is not configured. Please contact your administrator."},
+    )
 
 
 @app.exception_handler(ValueError)

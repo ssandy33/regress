@@ -436,6 +436,25 @@ class TestScanWithSchwabChain:
         with pytest.raises(OptionScannerError, match="Failed to fetch option chain"):
             scanner.scan(cc_request)
 
+    @patch("app.services.options_scanner.SchwabClient")
+    def test_schwab_auth_error_returns_sanitized_message(self, mock_client_cls, scanner, cc_request):
+        """No token configured error must not leak internal details (issue #41)."""
+        from app.services.schwab_auth import SchwabAuthError
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.side_effect = SchwabAuthError(
+            "No Schwab refresh token found. Run 'python -m app.cli schwab-auth' to authorize."
+        )
+
+        with pytest.raises(OptionScannerError, match="Options scanning is unavailable") as exc_info:
+            scanner.scan(cc_request)
+
+        error_msg = str(exc_info.value)
+        assert "refresh token" not in error_msg
+        assert "python -m app.cli" not in error_msg
+        assert "contact your administrator" in error_msg
+
 
 class TestExpirationFiltering:
     def test_dte_range_filter(self, scanner):

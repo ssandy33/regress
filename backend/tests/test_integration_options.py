@@ -89,6 +89,48 @@ class TestScanEndpoint:
         assert response.status_code == 400
 
 
+    def test_scan_schwab_auth_error_returns_sanitized_message(self, client):
+        """Schwab auth errors must not leak internal details (issue #41)."""
+        with patch.object(
+            OptionScanner, "scan",
+            side_effect=OptionScannerError(
+                "Options scanning is unavailable. Please contact your administrator "
+                "to configure the Schwab API connection."
+            ),
+        ):
+            response = client.post("/api/options/scan", json={
+                "ticker": "F",
+                "strategy": "covered_call",
+                "cost_basis": 12.0,
+            })
+        assert response.status_code == 404
+        detail = response.json()["detail"]
+        assert "contact your administrator" in detail
+        assert "refresh token" not in detail
+        assert "python -m app.cli" not in detail
+
+    def test_schwab_auth_error_global_handler_sanitized(self, client):
+        """Global SchwabAuthError handler must not leak internal details (issue #41)."""
+        from app.services.schwab_auth import SchwabAuthError
+
+        with patch.object(
+            OptionScanner, "scan",
+            side_effect=SchwabAuthError(
+                "No Schwab refresh token found. Run 'python -m app.cli schwab-auth' to authorize."
+            ),
+        ):
+            response = client.post("/api/options/scan", json={
+                "ticker": "F",
+                "strategy": "covered_call",
+                "cost_basis": 12.0,
+            })
+        assert response.status_code == 401
+        detail = response.json()["detail"]
+        assert "refresh token" not in detail
+        assert "python -m app.cli" not in detail
+        assert "administrator" in detail
+
+
 class TestEarningsEndpoint:
     def test_get_earnings(self, client):
         with patch("app.services.alpha_vantage_client.get_next_earnings_date", return_value="2026-05-05"):
