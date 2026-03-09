@@ -1,4 +1,5 @@
 import { useOptionScanner } from '../../hooks/useOptionScanner';
+import { useSchwabStatus } from '../../hooks/useSchwabStatus';
 import ChainFilters from './ChainFilters';
 import StrikeTable from './StrikeTable';
 import RiskRewardPanel from './RiskRewardPanel';
@@ -8,6 +9,7 @@ import LoadingSkeleton from '../layout/LoadingSkeleton';
 export default function OptionScannerPage() {
   const scanner = useOptionScanner();
   const { result, loading, error } = scanner;
+  const schwab = useSchwabStatus();
 
   return (
     <div className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900">
@@ -30,9 +32,39 @@ export default function OptionScannerPage() {
           onScan={scanner.runScan}
           loading={loading}
           onReset={scanner.reset}
+          schwabAvailable={schwab.isAvailable}
+          schwabLoading={schwab.loading}
         />
 
         <main className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* Schwab API Status Banner */}
+          {!schwab.loading && !schwab.isAvailable && (
+            <div
+              data-testid="schwab-status-banner"
+              className="flex items-center gap-3 px-4 py-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200"
+              role="alert"
+            >
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" data-testid="schwab-status-dot" />
+              <span className="text-sm font-medium">
+                Schwab API: Not Connected
+              </span>
+              <span className="text-sm text-amber-600 dark:text-amber-400">
+                &mdash; Options scanning requires a configured Schwab API connection. Visit Settings to set up your credentials.
+              </span>
+            </div>
+          )}
+          {!schwab.loading && schwab.isAvailable && (
+            <div
+              data-testid="schwab-status-banner"
+              className="flex items-center gap-3 px-4 py-3 rounded-lg border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-200"
+              role="status"
+            >
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" data-testid="schwab-status-dot" />
+              <span className="text-sm font-medium">
+                Schwab API: Connected
+              </span>
+            </div>
+          )}
           {loading ? (
             <LoadingSkeleton />
           ) : error && !result ? (
