@@ -437,6 +437,25 @@ class TestScanWithSchwabChain:
             scanner.scan(cc_request)
 
     @patch("app.services.options_scanner.SchwabClient")
+    def test_schwab_client_error_does_not_leak_internals(self, mock_client_cls, scanner, cc_request):
+        """Transport/HTTP errors must not expose raw details to the user."""
+        from app.services.schwab_client import SchwabClientError
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.side_effect = SchwabClientError(
+            "HTTP 500: Internal Server Error at https://api.schwabapi.com/marketdata/v1/chains"
+        )
+
+        with pytest.raises(OptionScannerError, match="Please try again later") as exc_info:
+            scanner.scan(cc_request)
+
+        error_msg = str(exc_info.value)
+        assert "HTTP 500" not in error_msg
+        assert "schwabapi.com" not in error_msg
+        assert "Internal Server Error" not in error_msg
+
+    @patch("app.services.options_scanner.SchwabClient")
     def test_schwab_auth_error_returns_sanitized_message(self, mock_client_cls, scanner, cc_request):
         """No token configured error must not leak internal details (issue #41)."""
         from app.services.schwab_auth import SchwabAuthError
