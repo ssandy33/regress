@@ -108,6 +108,23 @@ test.describe('Options page Schwab API status indicator', () => {
     await expect(scanBtn).toHaveAttribute('title', 'Schwab API is not configured. Visit Settings to connect.');
   });
 
+  test('shows not-connected banner when API call fails', async ({ page }) => {
+    // Mock network failure
+    await page.route('**/api/settings/health/schwab', (route) =>
+      route.abort('failed')
+    );
+
+    await page.goto('/options');
+    await page.waitForLoadState('networkidle');
+
+    const banner = page.getByTestId('schwab-status-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('Schwab API: Not Connected');
+
+    const scanBtn = page.getByRole('button', { name: 'Scan Options' });
+    await expect(scanBtn).toBeDisabled();
+  });
+
   test('does not leak internal error details in the banner', async ({ page }) => {
     await page.route('**/api/settings/health/schwab', (route) =>
       route.fulfill({
