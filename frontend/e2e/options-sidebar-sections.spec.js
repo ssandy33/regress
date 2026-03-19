@@ -1,6 +1,12 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Options sidebar section grouping', () => {
+  test.skip('light and dark mode styling is correct', async () => {
+    // Manual verification required: section headers, dividers, and input styling
+    // should be visually correct in both light and dark themes.
+    // Run `npm run dev` and toggle system theme to verify.
+  });
+
   test.beforeEach(async ({ page }) => {
     // Mock endpoints so the page loads without real backends
     await page.route('**/api/settings/health/schwab', (route) =>
