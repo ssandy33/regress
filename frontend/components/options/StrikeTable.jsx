@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-export default function StrikeTable({ recommendations, selectedStrikes, onToggleSelection }) {
+export default function StrikeTable({ recommendations, selectedStrikes, onToggleSelection, hasCapital = false }) {
   const [sortField, setSortField] = useState('rank');
   const [sortDir, setSortDir] = useState('asc');
   const [expandedRow, setExpandedRow] = useState(null);
@@ -29,7 +29,7 @@ export default function StrikeTable({ recommendations, selectedStrikes, onToggle
   }
 
   return (
-    <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+    <div data-testid="strike-table" className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
@@ -46,6 +46,12 @@ export default function StrikeTable({ recommendations, selectedStrikes, onToggle
               <SortHeader field="return_on_capital_pct" label="Return%" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
               <SortHeader field="annualized_return_pct" label="Ann.%" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
               <SortHeader field="distance_from_price_pct" label="Dist.%" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              {hasCapital && (
+                <>
+                  <SortHeader field="contracts" label="Contracts" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                  <SortHeader field="maxIncome" label="Max Income" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+                </>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
@@ -54,20 +60,27 @@ export default function StrikeTable({ recommendations, selectedStrikes, onToggle
               const isSelected = selectedStrikes.some((sel) => `${sel.strike}-${sel.expiration}` === key);
               const isExpanded = expandedRow === key;
               const allPass = s.rule_compliance && Object.values(s.rule_compliance).every(Boolean);
+              const unaffordable = hasCapital && s.isAffordable === false;
 
               return (
                 <RowGroup key={key}>
                   <tr
-                    className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                    className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer transition-colors ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : ''} ${unaffordable ? 'opacity-50' : ''}`}
                     onClick={() => setExpandedRow(isExpanded ? null : key)}
                   >
                     <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => onToggleSelection(s)}
-                        className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
-                      />
+                      {unaffordable ? (
+                        <svg className="w-4 h-4 text-slate-400 dark:text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-label="Unaffordable">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
+                      ) : (
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => onToggleSelection(s)}
+                          className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+                        />
+                      )}
                     </td>
                     <td className="px-3 py-2 text-slate-500 dark:text-slate-400">{s.rank}</td>
                     <td className={`px-3 py-2 text-right font-medium ${allPass ? 'text-green-700 dark:text-green-400' : 'text-yellow-700 dark:text-yellow-400'}`}>
@@ -84,10 +97,20 @@ export default function StrikeTable({ recommendations, selectedStrikes, onToggle
                     <td className="px-3 py-2 text-right font-medium text-blue-600 dark:text-blue-400">{s.return_on_capital_pct.toFixed(2)}%</td>
                     <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{s.annualized_return_pct.toFixed(1)}%</td>
                     <td className="px-3 py-2 text-right text-slate-700 dark:text-slate-300">{s.distance_from_price_pct.toFixed(1)}%</td>
+                    {hasCapital && (
+                      <>
+                        <td className="px-3 py-2 text-right font-medium text-slate-700 dark:text-slate-300">
+                          {s.contracts ?? '-'}
+                        </td>
+                        <td className="px-3 py-2 text-right font-medium text-green-600 dark:text-green-400">
+                          {s.maxIncome != null ? `$${s.maxIncome.toFixed(2)}` : '-'}
+                        </td>
+                      </>
+                    )}
                   </tr>
                   {isExpanded && (
                     <tr>
-                      <td colSpan={12} className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50">
+                      <td colSpan={hasCapital ? 14 : 12} className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50">
                         <ExpandedDetails strike={s} />
                       </td>
                     </tr>

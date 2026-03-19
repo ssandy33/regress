@@ -1,6 +1,43 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import toast from 'react-hot-toast';
 import { scanOptions } from '../api/client';
+
+function computeCapitalFields(recommendations, strategy, capitalAvailable, currentPrice) {
+  const capital = parseFloat(capitalAvailable);
+  if (!capital || capital <= 0) return { enriched: recommendations, utilization: null };
+
+  const enriched = recommendations.map((rec) => {
+    const collateral = strategy === 'covered_call'
+      ? currentPrice * 100
+      : rec.strike * 100;
+    const contracts = Math.floor(capital / collateral);
+    const maxIncome = contracts * rec.total_premium;
+    return { ...rec, contracts, maxIncome, isAffordable: contracts > 0 };
+  });
+
+  const affordable = enriched.filter((r) => r.isAffordable);
+  if (affordable.length === 0) {
+    return { enriched, utilization: { noAffordable: true, capital } };
+  }
+
+  const best = affordable.reduce((a, b) => b.maxIncome > a.maxIncome ? b : a);
+  const deployed = best.contracts * (strategy === 'covered_call' ? currentPrice * 100 : best.strike * 100);
+  const idle = capital - deployed;
+
+  return {
+    enriched,
+    utilization: {
+      noAffordable: false,
+      capital,
+      bestStrike: best.strike,
+      bestExpiration: best.expiration,
+      contracts: best.contracts,
+      maxIncome: best.maxIncome,
+      idle,
+      deploymentPct: (deployed / capital) * 100,
+    },
+  };
+}
 
 export function useOptionScanner() {
   const [result, setResult] = useState(null);
@@ -21,6 +58,11 @@ export function useOptionScanner() {
   const [earningsBuffer, setEarningsBuffer] = useState(5);
 
   const [selectedStrikes, setSelectedStrikes] = useState([]);
+
+  const capitalData = useMemo(() => {
+    if (!result || !capitalAvailable) return { enriched: result?.recommendations || [], utilization: null };
+    return computeCapitalFields(result.recommendations, strategy, capitalAvailable, result.current_price);
+  }, [result, capitalAvailable, strategy]);
 
   const runScan = useCallback(async () => {
     if (!ticker.trim()) {
@@ -116,5 +158,6 @@ export function useOptionScanner() {
     selectedStrikes, toggleStrikeSelection,
     result, loading, error,
     runScan, reset,
+    capitalData,
   };
 }

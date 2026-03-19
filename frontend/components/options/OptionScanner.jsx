@@ -8,7 +8,7 @@ import LoadingSkeleton from '../layout/LoadingSkeleton';
 
 export default function OptionScannerPage() {
   const scanner = useOptionScanner();
-  const { result, loading, error } = scanner;
+  const { result, loading, error, capitalData } = scanner;
   const schwab = useSchwabStatus();
 
   return (
@@ -122,11 +122,76 @@ export default function OptionScannerPage() {
                 </div>
               </div>
 
+              {/* Budget Alert Banner */}
+              {capitalData.utilization?.noAffordable && (
+                <div
+                  data-testid="budget-alert-banner"
+                  className="flex items-start gap-3 px-4 py-3 rounded-lg border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200"
+                  role="alert"
+                >
+                  <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.072 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <div>
+                    <p className="text-sm font-medium">Insufficient capital</p>
+                    <p className="text-xs mt-1 text-red-600 dark:text-red-400">
+                      Your ${capitalData.utilization.capital.toLocaleString()} budget cannot cover any of the {result.recommendations.length} available strikes.
+                      {result.strategy === 'cash_secured_put'
+                        ? ` The lowest strike requires $${(Math.min(...result.recommendations.map(r => r.strike)) * 100).toLocaleString()} in collateral.`
+                        : ` Each contract requires $${(result.current_price * 100).toLocaleString()} in collateral.`}
+                      {' '}Try lowering your strike targets or increasing capital.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Capital Utilization Card */}
+              {capitalData.utilization && !capitalData.utilization.noAffordable && (
+                <div
+                  data-testid="capital-utilization-card"
+                  className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4"
+                >
+                  <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-3">Capital Deployment</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Best Strike</div>
+                      <div className="font-medium text-slate-900 dark:text-white">${capitalData.utilization.bestStrike.toFixed(2)}</div>
+                      <div className="text-xs text-slate-400 dark:text-slate-500">{capitalData.utilization.bestExpiration}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Contracts</div>
+                      <div className="font-medium text-slate-900 dark:text-white">{capitalData.utilization.contracts}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Max Income</div>
+                      <div className="font-medium text-green-600 dark:text-green-400">${capitalData.utilization.maxIncome.toFixed(2)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">Idle Capital</div>
+                      <div className="font-medium text-slate-900 dark:text-white">${capitalData.utilization.idle.toFixed(2)}</div>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
+                      <span>Deployment</span>
+                      <span>{capitalData.utilization.deploymentPct.toFixed(0)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 dark:bg-blue-500 h-2 rounded-full transition-all"
+                        style={{ width: `${Math.min(capitalData.utilization.deploymentPct, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Strike Table */}
               <StrikeTable
-                recommendations={result.recommendations}
+                recommendations={capitalData.enriched}
                 selectedStrikes={scanner.selectedStrikes}
                 onToggleSelection={scanner.toggleStrikeSelection}
+                hasCapital={!!capitalData.utilization}
               />
 
               {/* Risk/Reward Comparison */}
