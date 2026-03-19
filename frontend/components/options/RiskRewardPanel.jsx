@@ -57,14 +57,9 @@ function ComparisonCard({ strike, strategy, allStrikes }) {
 
       {/* Highlights */}
       {highlights.length > 0 && (
-        <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-700 space-y-1">
+        <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-1.5">
           {highlights.map((h, i) => (
-            <div
-              key={i}
-              className={`text-xs ${h.type === 'pro' ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}
-            >
-              {h.type === 'pro' ? '\u2713' : '\u26A0'} {h.text}
-            </div>
+            <HighlightBadge key={i} type={h.type} text={h.text} />
           ))}
         </div>
       )}
@@ -83,8 +78,27 @@ function MetricRow({ label, value, highlight }) {
   );
 }
 
+function HighlightBadge({ type, text }) {
+  const styles = {
+    pro: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400',
+    warn: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400',
+    danger: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400',
+  };
+
+  return (
+    <span className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-medium ${styles[type]}`}>
+      {text}
+    </span>
+  );
+}
+
 function getHighlights(strike, allStrikes) {
   const highlights = [];
+
+  // Over budget badge (from Phase 3 capital awareness)
+  if (strike.contracts === 0) {
+    highlights.push({ type: 'danger', text: 'Over budget' });
+  }
 
   // Find best values for comparison
   const maxReturn = Math.max(...allStrikes.map((s) => s.return_on_capital_pct));
