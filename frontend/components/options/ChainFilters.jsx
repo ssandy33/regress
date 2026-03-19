@@ -55,162 +55,173 @@ export default function ChainFilters({
         </button>
       </div>
 
-      <div className="p-4 space-y-4 flex-1">
-        {/* Ticker */}
-        <div>
-          <label className={labelClass}>Ticker Symbol</label>
-          <input
-            type="text"
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value.toUpperCase())}
-            onKeyDown={(e) => e.key === 'Enter' && onScan()}
-            placeholder="SOFI, AAPL, F..."
-            className={inputClass}
-          />
-        </div>
-
-        {/* Strategy Toggle */}
-        <div>
-          <label className={labelClass}>Strategy</label>
-          <div className="flex rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden">
-            <button
-              onClick={() => setStrategy('cash_secured_put')}
-              className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                strategy === 'cash_secured_put'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
-              }`}
-            >
-              Cash-Secured Put
-            </button>
-            <button
-              onClick={() => setStrategy('covered_call')}
-              className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                strategy === 'covered_call'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
-              }`}
-            >
-              Covered Call
-            </button>
-          </div>
-        </div>
-
-        {/* Covered Call Fields */}
-        {strategy === 'covered_call' && (
-          <>
-            <div>
-              <label className={labelClass}>Cost Basis ($)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={costBasis}
-                onChange={(e) => setCostBasis(e.target.value)}
-                placeholder="15.50"
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Shares Held</label>
-              <input
-                type="number"
-                step="100"
-                value={sharesHeld}
-                onChange={(e) => setSharesHeld(parseInt(e.target.value) || 100)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Min Call Distance % (10% Rule)</label>
-              <input
-                type="number"
-                step="0.5"
-                value={callDistance}
-                onChange={(e) => setCallDistance(parseFloat(e.target.value) || 10)}
-                className={inputClass}
-              />
-            </div>
-          </>
-        )}
-
-        {/* CSP Fields */}
-        {strategy === 'cash_secured_put' && (
+      <div className="flex-1 overflow-y-auto">
+        {/* Asset Section */}
+        <div className="p-4 space-y-4">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Asset</h3>
           <div>
-            <label className={labelClass}>Capital Available ($)</label>
+            <label className={labelClass}>Ticker Symbol</label>
             <input
-              type="number"
-              step="100"
-              value={capitalAvailable}
-              onChange={(e) => setCapitalAvailable(e.target.value)}
-              placeholder="5000"
+              type="text"
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === 'Enter' && onScan()}
+              placeholder="SOFI, AAPL, F..."
               className={inputClass}
             />
           </div>
-        )}
+        </div>
 
-        {/* DTE Range */}
-        <div>
-          <label className={labelClass}>DTE Range (days)</label>
-          <div className="flex gap-2 items-center">
+        {/* Strategy Section */}
+        <div className="pt-4 p-4 space-y-4 border-t border-slate-200 dark:border-slate-700">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Strategy</h3>
+          <div>
+            <label className={labelClass}>Strategy</label>
+            <div className="flex rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden">
+              <button
+                onClick={() => setStrategy('cash_secured_put')}
+                className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                  strategy === 'cash_secured_put'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
+                }`}
+              >
+                Cash-Secured Put
+              </button>
+              <button
+                onClick={() => setStrategy('covered_call')}
+                className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                  strategy === 'covered_call'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600'
+                }`}
+              >
+                Covered Call
+              </button>
+            </div>
+          </div>
+
+          {/* Covered Call Fields */}
+          {strategy === 'covered_call' && (
+            <>
+              <div>
+                <label className={labelClass}>Cost Basis ($)</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={costBasis}
+                  onChange={(e) => setCostBasis(e.target.value)}
+                  placeholder="15.50"
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Shares Held</label>
+                <input
+                  type="number"
+                  step="100"
+                  value={sharesHeld}
+                  onChange={(e) => setSharesHeld(parseInt(e.target.value) || 100)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className={labelClass}>Min Call Distance % (10% Rule)</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={callDistance}
+                  onChange={(e) => setCallDistance(parseFloat(e.target.value) || 10)}
+                  className={inputClass}
+                />
+              </div>
+            </>
+          )}
+
+          {/* CSP Fields */}
+          {strategy === 'cash_secured_put' && (
+            <div>
+              <label className={labelClass}>Capital Available ($)</label>
+              <input
+                type="number"
+                step="100"
+                value={capitalAvailable}
+                onChange={(e) => setCapitalAvailable(e.target.value)}
+                placeholder="5000"
+                className={inputClass}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Filters Section */}
+        <div className="pt-4 p-4 space-y-4 border-t border-slate-200 dark:border-slate-700">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Filters</h3>
+
+          {/* DTE Range */}
+          <div>
+            <label className={labelClass}>DTE Range (days)</label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                value={minDte}
+                onChange={(e) => setMinDte(parseInt(e.target.value) || 0)}
+                className={`${inputClass} w-20 text-center`}
+              />
+              <span className="text-xs text-slate-400">to</span>
+              <input
+                type="number"
+                value={maxDte}
+                onChange={(e) => setMaxDte(parseInt(e.target.value) || 0)}
+                className={`${inputClass} w-20 text-center`}
+              />
+            </div>
+          </div>
+
+          {/* Monthly Return Target */}
+          <div>
+            <label className={labelClass}>Monthly Return Target (%)</label>
             <input
               type="number"
-              value={minDte}
-              onChange={(e) => setMinDte(parseInt(e.target.value) || 0)}
-              className={`${inputClass} w-20 text-center`}
-            />
-            <span className="text-xs text-slate-400">to</span>
-            <input
-              type="number"
-              value={maxDte}
-              onChange={(e) => setMaxDte(parseInt(e.target.value) || 0)}
-              className={`${inputClass} w-20 text-center`}
+              step="0.1"
+              value={returnTarget}
+              onChange={(e) => setReturnTarget(parseFloat(e.target.value) || 0)}
+              className={inputClass}
             />
           </div>
-        </div>
 
-        {/* Monthly Return Target */}
-        <div>
-          <label className={labelClass}>Monthly Return Target (%)</label>
-          <input
-            type="number"
-            step="0.1"
-            value={returnTarget}
-            onChange={(e) => setReturnTarget(parseFloat(e.target.value) || 0)}
-            className={inputClass}
-          />
-        </div>
+          {/* Delta Range */}
+          <div>
+            <label className={labelClass}>Delta Range</label>
+            <div className="flex gap-2 items-center">
+              <input
+                type="number"
+                step="0.01"
+                value={minDelta}
+                onChange={(e) => setMinDelta(parseFloat(e.target.value) || 0)}
+                className={`${inputClass} w-20 text-center`}
+              />
+              <span className="text-xs text-slate-400">to</span>
+              <input
+                type="number"
+                step="0.01"
+                value={maxDelta}
+                onChange={(e) => setMaxDelta(parseFloat(e.target.value) || 0)}
+                className={`${inputClass} w-20 text-center`}
+              />
+            </div>
+          </div>
 
-        {/* Delta Range */}
-        <div>
-          <label className={labelClass}>Delta Range</label>
-          <div className="flex gap-2 items-center">
+          {/* Earnings Buffer */}
+          <div>
+            <label className={labelClass}>Earnings Buffer (days)</label>
             <input
               type="number"
-              step="0.01"
-              value={minDelta}
-              onChange={(e) => setMinDelta(parseFloat(e.target.value) || 0)}
-              className={`${inputClass} w-20 text-center`}
-            />
-            <span className="text-xs text-slate-400">to</span>
-            <input
-              type="number"
-              step="0.01"
-              value={maxDelta}
-              onChange={(e) => setMaxDelta(parseFloat(e.target.value) || 0)}
-              className={`${inputClass} w-20 text-center`}
+              value={earningsBuffer}
+              onChange={(e) => setEarningsBuffer(parseInt(e.target.value) || 0)}
+              className={inputClass}
             />
           </div>
-        </div>
-
-        {/* Earnings Buffer */}
-        <div>
-          <label className={labelClass}>Earnings Buffer (days)</label>
-          <input
-            type="number"
-            value={earningsBuffer}
-            onChange={(e) => setEarningsBuffer(parseInt(e.target.value) || 0)}
-            className={inputClass}
-          />
         </div>
       </div>
 
