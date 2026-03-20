@@ -39,7 +39,8 @@ jobs:
             if git diff --name-only "$OLD_HEAD" HEAD | grep -q "deploy/Caddyfile"; then
               echo "Caddyfile changed — clearing Caddy TLS cache to force cert re-issuance"
               docker compose -f docker-compose.prod.yml rm -sf caddy
-              docker volume rm regression-tool_caddy_data || true
+              PROJECT_NAME=$(basename "$(pwd)")
+              docker volume rm "${PROJECT_NAME}_caddy_data" || true
             fi
             docker compose -f docker-compose.prod.yml build --no-cache
             docker compose -f docker-compose.prod.yml up -d
