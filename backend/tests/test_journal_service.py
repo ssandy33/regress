@@ -23,6 +23,14 @@ def test_compute_total_premiums_sell_only():
     assert compute_total_premiums(trades) == 350.0
 
 
+def test_compute_total_premiums_multi_contract():
+    """Multi-contract trades correctly multiply by quantity."""
+    trades = [
+        _make_trade(premium=1.50, quantity=3),  # 1.50 * 3 * 100 = 450
+    ]
+    assert compute_total_premiums(trades) == 450.0
+
+
 def test_compute_total_premiums_mixed():
     """Sells and buy-to-close should net out correctly."""
     trades = [

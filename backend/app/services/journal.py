@@ -1,10 +1,10 @@
 import logging
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.models.database import Position, Trade
+from app.models.schemas import PositionCreate, PositionUpdate, TradeCreate, TradeUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,23 @@ def compute_min_cc_strike(adjusted_basis: float, shares: int) -> float:
     return round((adjusted_basis / shares) * 1.10, 2)
 
 
+def _build_trade_response(trade: Trade) -> dict:
+    """Build a TradeResponse dict from a Trade ORM object."""
+    return {
+        "id": trade.id,
+        "position_id": trade.position_id,
+        "trade_type": trade.trade_type,
+        "strike": trade.strike,
+        "expiration": trade.expiration,
+        "premium": trade.premium,
+        "fees": trade.fees,
+        "quantity": trade.quantity,
+        "opened_at": trade.opened_at,
+        "closed_at": trade.closed_at,
+        "close_reason": trade.close_reason,
+    }
+
+
 def _build_position_response(position: Position) -> dict:
     """Build a PositionResponse dict from a Position ORM object."""
     trades = list(position.trades)
@@ -51,22 +68,7 @@ def _build_position_response(position: Position) -> dict:
         "total_premiums": total_premiums,
         "adjusted_cost_basis": adjusted_cost_basis,
         "min_compliant_cc_strike": min_compliant_cc_strike,
-        "trades": [
-            {
-                "id": t.id,
-                "position_id": t.position_id,
-                "trade_type": t.trade_type,
-                "strike": t.strike,
-                "expiration": t.expiration,
-                "premium": t.premium,
-                "fees": t.fees,
-                "quantity": t.quantity,
-                "opened_at": t.opened_at,
-                "closed_at": t.closed_at,
-                "close_reason": t.close_reason,
-            }
-            for t in trades
-        ],
+        "trades": [_build_trade_response(t) for t in trades],
     }
 
 
@@ -87,7 +89,7 @@ def get_position(db: Session, position_id: str) -> dict | None:
     return _build_position_response(position)
 
 
-def create_position(db: Session, data) -> dict:
+def create_position(db: Session, data: PositionCreate) -> dict:
     """Create a new Position."""
     position = Position(
         id=str(uuid.uuid4()),
@@ -105,7 +107,7 @@ def create_position(db: Session, data) -> dict:
     return _build_position_response(position)
 
 
-def update_position(db: Session, position_id: str, data) -> dict | None:
+def update_position(db: Session, position_id: str, data: PositionUpdate) -> dict | None:
     """Partial update of a position. Returns None if not found."""
     position = db.query(Position).filter(Position.id == position_id).first()
     if position is None:
@@ -121,7 +123,7 @@ def update_position(db: Session, position_id: str, data) -> dict | None:
     return _build_position_response(position)
 
 
-def create_trade(db: Session, data) -> dict | None:
+def create_trade(db: Session, data: TradeCreate) -> dict | None:
     """Create a new trade. Returns None if position_id is invalid."""
     position = db.query(Position).filter(Position.id == data.position_id).first()
     if position is None:
@@ -144,22 +146,10 @@ def create_trade(db: Session, data) -> dict | None:
     db.commit()
     db.refresh(trade)
     logger.info("Created trade %s for position %s", trade.id, trade.position_id)
-    return {
-        "id": trade.id,
-        "position_id": trade.position_id,
-        "trade_type": trade.trade_type,
-        "strike": trade.strike,
-        "expiration": trade.expiration,
-        "premium": trade.premium,
-        "fees": trade.fees,
-        "quantity": trade.quantity,
-        "opened_at": trade.opened_at,
-        "closed_at": trade.closed_at,
-        "close_reason": trade.close_reason,
-    }
+    return _build_trade_response(trade)
 
 
-def update_trade(db: Session, trade_id: str, data) -> dict | None:
+def update_trade(db: Session, trade_id: str, data: TradeUpdate) -> dict | None:
     """Partial update of a trade. Returns None if not found."""
     trade = db.query(Trade).filter(Trade.id == trade_id).first()
     if trade is None:
@@ -172,19 +162,7 @@ def update_trade(db: Session, trade_id: str, data) -> dict | None:
     db.commit()
     db.refresh(trade)
     logger.info("Updated trade %s", trade_id)
-    return {
-        "id": trade.id,
-        "position_id": trade.position_id,
-        "trade_type": trade.trade_type,
-        "strike": trade.strike,
-        "expiration": trade.expiration,
-        "premium": trade.premium,
-        "fees": trade.fees,
-        "quantity": trade.quantity,
-        "opened_at": trade.opened_at,
-        "closed_at": trade.closed_at,
-        "close_reason": trade.close_reason,
-    }
+    return _build_trade_response(trade)
 
 
 def delete_trade(db: Session, trade_id: str) -> bool:

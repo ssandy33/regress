@@ -1,6 +1,7 @@
 """Integration tests for journal service using a real DB session."""
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -211,6 +212,13 @@ def test_delete_trade_not_found(db_session):
     assert delete_trade(db_session, "nonexistent-trade-id") is False
 
 
+def test_update_trade_not_found(db_session):
+    result = update_trade(
+        db_session, "nonexistent-trade-id", TradeUpdate(premium=2.00)
+    )
+    assert result is None
+
+
 # --- Computed fields integration ---
 
 
@@ -268,3 +276,56 @@ def test_min_compliant_cc_strike(db_session):
     result = get_position(db_session, position["id"])
     # adjusted = 5000 - 350 = 4650, min_cc = (4650/100) * 1.10 = 51.15
     assert result["min_compliant_cc_strike"] == 51.15
+
+
+# --- Input validation ---
+
+
+def test_invalid_strategy_rejected():
+    """Invalid strategy value should be rejected by Pydantic."""
+    with pytest.raises(ValidationError):
+        PositionCreate(
+            ticker="AAPL",
+            broker_cost_basis=5000.0,
+            strategy="invalid",
+            opened_at="2025-01-15T10:00:00Z",
+        )
+
+
+def test_invalid_trade_type_rejected():
+    """Invalid trade_type value should be rejected by Pydantic."""
+    with pytest.raises(ValidationError):
+        TradeCreate(
+            position_id="some-id",
+            trade_type="invalid",
+            strike=48.0,
+            expiration="2025-02-21",
+            premium=1.50,
+            opened_at="2025-01-15T10:00:00Z",
+        )
+
+
+def test_zero_shares_rejected():
+    """shares=0 should be rejected by Pydantic validation."""
+    with pytest.raises(ValidationError):
+        PositionCreate(
+            ticker="AAPL",
+            shares=0,
+            broker_cost_basis=5000.0,
+            strategy="csp",
+            opened_at="2025-01-15T10:00:00Z",
+        )
+
+
+def test_invalid_close_reason_rejected():
+    """Invalid close_reason should be rejected by Pydantic."""
+    with pytest.raises(ValidationError):
+        TradeCreate(
+            position_id="some-id",
+            trade_type="sell_put",
+            strike=48.0,
+            expiration="2025-02-21",
+            premium=1.50,
+            opened_at="2025-01-15T10:00:00Z",
+            close_reason="invalid_reason",
+        )

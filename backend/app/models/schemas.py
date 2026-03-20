@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DateRange(BaseModel):
@@ -289,47 +289,52 @@ class OptionScanResponse(BaseModel):
 # --- Journal ---
 
 
+STRATEGY_TYPES = Literal["csp", "cc", "wheel"]
+POSITION_STATUS = Literal["open", "closed"]
+TRADE_TYPES = Literal["sell_put", "buy_put_close", "assignment", "sell_call", "buy_call_close", "called_away"]
+CLOSE_REASONS = Literal["fifty_pct_target", "full_expiration", "rolled", "closed_early", "assigned", "called_away"]
+
+
 class PositionCreate(BaseModel):
     ticker: str
-    shares: int = 100
+    shares: int = Field(default=100, ge=1)
     broker_cost_basis: float
-    strategy: str
+    strategy: STRATEGY_TYPES
     opened_at: str
     notes: Optional[str] = None
 
 
 class PositionUpdate(BaseModel):
-    status: Optional[str] = None
+    status: Optional[POSITION_STATUS] = None
     closed_at: Optional[str] = None
     notes: Optional[str] = None
     broker_cost_basis: Optional[float] = None
-    shares: Optional[int] = None
+    shares: Optional[int] = Field(default=None, ge=1)
 
 
 class TradeCreate(BaseModel):
     position_id: str
-    trade_type: str
+    trade_type: TRADE_TYPES
     strike: float
     expiration: str
     premium: float
     fees: float = 0.0
-    quantity: int = 1
+    quantity: int = Field(default=1, ge=1)
     opened_at: str
     closed_at: Optional[str] = None
-    close_reason: Optional[str] = None
+    close_reason: Optional[CLOSE_REASONS] = None
 
 
 class TradeUpdate(BaseModel):
-    position_id: Optional[str] = None
-    trade_type: Optional[str] = None
+    trade_type: Optional[TRADE_TYPES] = None
     strike: Optional[float] = None
     expiration: Optional[str] = None
     premium: Optional[float] = None
     fees: Optional[float] = None
-    quantity: Optional[int] = None
+    quantity: Optional[int] = Field(default=None, ge=1)
     opened_at: Optional[str] = None
     closed_at: Optional[str] = None
-    close_reason: Optional[str] = None
+    close_reason: Optional[CLOSE_REASONS] = None
 
 
 class TradeResponse(BaseModel):
