@@ -29,6 +29,9 @@ class SchwabClientError(Exception):
     pass
 
 
+SCHWAB_TRANSPORT_ERROR_MSG = "Unable to reach Schwab API. Please try again later."
+
+
 def to_schwab_symbol(ticker: str) -> str:
     """Map common symbol formats to Schwab equivalents. Passthrough for regular tickers."""
     return SCHWAB_SYMBOL_MAP.get(ticker, ticker)
@@ -66,9 +69,11 @@ class SchwabClient:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
-            raise SchwabClientError(f"Schwab quote API error ({e.response.status_code})") from e
+            logger.error("Schwab quote API error: %s", e)
+            raise SchwabClientError("Schwab quote API error") from e
         except httpx.RequestError as e:
-            raise SchwabClientError(f"Schwab quote request failed: {e}") from e
+            logger.error("Schwab quote request error: %s", e)
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
 
         data = resp.json()
         if symbol not in data:
@@ -130,9 +135,11 @@ class SchwabClient:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
-            raise SchwabClientError(f"Schwab chains API error ({e.response.status_code})") from e
+            logger.error("Schwab chains API error: %s", e)
+            raise SchwabClientError("Schwab option chains API error") from e
         except httpx.RequestError as e:
-            raise SchwabClientError(f"Schwab chains request failed: {e}") from e
+            logger.error("Schwab chains request error: %s", e)
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
 
         data = resp.json()
         if data.get("status") == "FAILED" or not (data.get("callExpDateMap") or data.get("putExpDateMap")):
@@ -182,11 +189,11 @@ class SchwabClient:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
-            raise SchwabClientError(
-                f"Schwab price history error ({e.response.status_code}) for '{ticker}'"
-            ) from e
+            logger.error("Schwab price history API error for '%s': %s", ticker, e)
+            raise SchwabClientError("Schwab price history API error") from e
         except httpx.RequestError as e:
-            raise SchwabClientError(f"Schwab price history request failed: {e}") from e
+            logger.error("Schwab price history request error: %s", e)
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
 
         data = resp.json()
         candles = data.get("candles", [])

@@ -163,7 +163,8 @@ def restore_from_backup(filename: str):
             status_code=404, content={"detail": f"Backup '{filename}' not found"}
         )
     except Exception as e:
-        return JSONResponse(status_code=500, content={"detail": str(e)})
+        logger.error("Backup restore failed: %s", e)
+        return JSONResponse(status_code=500, content={"detail": "Backup restore failed"})
 
 
 # --- Cache Freshness ---
