@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from app.auth import get_current_user
 from app.config import settings as app_settings
 from app.models.database import init_db, SessionLocal
-from app.routers import assets, data, health, options, regression, sessions, settings
+from app.routers import assets, data, health, journal, options, regression, sessions, settings
 from app.services.backup import create_backup
 from app.services.cache import CacheService
 from app.services.data_fetcher import DataFetcher, DataFetchError, InvalidTickerError, DataAlignmentError
@@ -149,6 +149,7 @@ app.include_router(regression.router, dependencies=[Depends(get_current_user)])
 app.include_router(sessions.router, dependencies=[Depends(get_current_user)])
 app.include_router(settings.router, dependencies=[Depends(get_current_user)])
 app.include_router(options.router, dependencies=[Depends(get_current_user)])
+app.include_router(journal.router, dependencies=[Depends(get_current_user)])
 
 
 # --- Exception handlers ---
