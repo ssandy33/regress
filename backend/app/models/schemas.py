@@ -284,3 +284,83 @@ class OptionScanResponse(BaseModel):
     recommendations: list[StrikeRecommendation]
     rejected: list[RejectedStrike]
     market_context: MarketContext
+
+
+# --- Journal ---
+
+
+class PositionCreate(BaseModel):
+    ticker: str
+    shares: int = 100
+    broker_cost_basis: float
+    strategy: str
+    opened_at: str
+    notes: Optional[str] = None
+
+
+class PositionUpdate(BaseModel):
+    status: Optional[str] = None
+    closed_at: Optional[str] = None
+    notes: Optional[str] = None
+    broker_cost_basis: Optional[float] = None
+    shares: Optional[int] = None
+
+
+class TradeCreate(BaseModel):
+    position_id: str
+    trade_type: str
+    strike: float
+    expiration: str
+    premium: float
+    fees: float = 0.0
+    quantity: int = 1
+    opened_at: str
+    closed_at: Optional[str] = None
+    close_reason: Optional[str] = None
+
+
+class TradeUpdate(BaseModel):
+    position_id: Optional[str] = None
+    trade_type: Optional[str] = None
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
+    premium: Optional[float] = None
+    fees: Optional[float] = None
+    quantity: Optional[int] = None
+    opened_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    close_reason: Optional[str] = None
+
+
+class TradeResponse(BaseModel):
+    id: str
+    position_id: str
+    trade_type: str
+    strike: float
+    expiration: str
+    premium: float
+    fees: float
+    quantity: int
+    opened_at: str
+    closed_at: Optional[str] = None
+    close_reason: Optional[str] = None
+
+
+class PositionResponse(BaseModel):
+    id: str
+    ticker: str
+    shares: int
+    broker_cost_basis: float
+    status: str
+    strategy: str
+    opened_at: str
+    closed_at: Optional[str] = None
+    notes: Optional[str] = None
+    total_premiums: float
+    adjusted_cost_basis: float
+    min_compliant_cc_strike: float
+    trades: list[TradeResponse] = []
+
+
+class PositionListResponse(BaseModel):
+    positions: list[PositionResponse]
