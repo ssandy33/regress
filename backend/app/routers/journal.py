@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
 from app.models.schemas import (
+    POSITION_STATUS,
     PositionCreate,
     PositionListResponse,
     PositionResponse,
@@ -30,7 +31,7 @@ router = APIRouter(prefix="/api/journal", tags=["journal"])
 
 
 @router.get("/positions", response_model=PositionListResponse)
-def list_positions(status: Optional[str] = None, db: DBSession = Depends(get_db)):
+def list_positions(status: Optional[POSITION_STATUS] = None, db: DBSession = Depends(get_db)):
     """List all positions, optionally filtered by status."""
     results = get_positions(db, status=status)
     return PositionListResponse(positions=results)

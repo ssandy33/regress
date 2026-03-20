@@ -96,6 +96,7 @@ def create_position(db: Session, data: PositionCreate) -> dict:
         ticker=data.ticker,
         shares=data.shares,
         broker_cost_basis=data.broker_cost_basis,
+        status="open",
         strategy=data.strategy,
         opened_at=data.opened_at,
         notes=data.notes,

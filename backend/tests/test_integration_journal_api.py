@@ -241,3 +241,57 @@ def test_position_with_trades_in_list(client):
     assert len(positions) == 1
     assert positions[0]["total_premiums"] == 150.0
     assert positions[0]["adjusted_cost_basis"] == 4850.0
+
+
+# --- Input validation via API ---
+
+
+def test_invalid_status_query_param(client):
+    """Invalid status query param should return 422."""
+    resp = client.get("/api/journal/positions?status=bogus")
+    assert resp.status_code == 422
+
+
+def test_update_position_negative_shares(client):
+    """shares=-1 in update should return 422."""
+    pos = _create_position(client).json()
+    resp = client.put(
+        f"/api/journal/positions/{pos['id']}", json={"shares": -1}
+    )
+    assert resp.status_code == 422
+
+
+def test_create_trade_zero_quantity(client):
+    """quantity=0 should return 422."""
+    pos = _create_position(client).json()
+    resp = _create_trade(client, pos["id"], quantity=0)
+    assert resp.status_code == 422
+
+
+def test_update_trade_zero_quantity(client):
+    """quantity=0 in trade update should return 422."""
+    pos = _create_position(client).json()
+    trade = _create_trade(client, pos["id"]).json()
+    resp = client.put(
+        f"/api/journal/trades/{trade['id']}", json={"quantity": 0}
+    )
+    assert resp.status_code == 422
+
+
+def test_update_position_strategy(client):
+    """Strategy can be corrected via update."""
+    pos = _create_position(client, strategy="csp").json()
+    resp = client.put(
+        f"/api/journal/positions/{pos['id']}", json={"strategy": "wheel"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["strategy"] == "wheel"
+
+
+def test_update_position_invalid_strategy(client):
+    """Invalid strategy in update should return 422."""
+    pos = _create_position(client).json()
+    resp = client.put(
+        f"/api/journal/positions/{pos['id']}", json={"strategy": "invalid"}
+    )
+    assert resp.status_code == 422

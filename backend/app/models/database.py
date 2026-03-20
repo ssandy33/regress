@@ -65,8 +65,8 @@ class Trade(Base):
     strike = Column(Float, nullable=False)
     expiration = Column(String, nullable=False)  # date string
     premium = Column(Float, nullable=False)  # per-share, positive for credits, negative for debits
-    fees = Column(Float, default=0.0)
-    quantity = Column(Integer, default=1)  # number of contracts
+    fees = Column(Float, nullable=False, default=0.0)
+    quantity = Column(Integer, nullable=False, default=1)  # number of contracts
     opened_at = Column(String, nullable=False)  # ISO datetime
     closed_at = Column(String, nullable=True)
     close_reason = Column(String, nullable=True)  # "fifty_pct_target" | "full_expiration" | "rolled" | "closed_early" | "assigned" | "called_away"

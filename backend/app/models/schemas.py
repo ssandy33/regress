@@ -306,6 +306,7 @@ class PositionCreate(BaseModel):
 
 class PositionUpdate(BaseModel):
     status: Optional[POSITION_STATUS] = None
+    strategy: Optional[STRATEGY_TYPES] = None
     closed_at: Optional[str] = None
     notes: Optional[str] = None
     broker_cost_basis: Optional[float] = None
