@@ -179,9 +179,16 @@ class SchwabTokenManager:
                     "Schwab token refresh failed (401). "
                     "Run 'python -m app.cli schwab-auth' to re-authorize."
                 ) from e
-            raise SchwabAuthError(f"Schwab token refresh failed: {e}") from e
+            logger.error("Schwab token refresh HTTP error: %s", e)
+            raise SchwabAuthError(
+                "Schwab token refresh failed. "
+                "Run 'python -m app.cli schwab-auth' to re-authorize."
+            ) from e
         except httpx.RequestError as e:
-            raise SchwabAuthError(f"Schwab token refresh request failed: {e}") from e
+            logger.error("Schwab token refresh request error: %s", e)
+            raise SchwabAuthError(
+                "Unable to reach Schwab API for token refresh. Please try again later."
+            ) from e
 
         token_data = resp.json()
         now = datetime.now(timezone.utc)

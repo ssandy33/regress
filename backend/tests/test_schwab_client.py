@@ -128,7 +128,7 @@ class TestGetQuote:
         mock_get.side_effect = httpx.RequestError("Connection refused")
 
         client = SchwabClient()
-        with pytest.raises(SchwabClientError, match="request failed"):
+        with pytest.raises(SchwabClientError, match="Unable to reach Schwab API"):
             client.get_quote("AAPL")
 
     @patch("app.services.schwab_client.SchwabTokenManager")
@@ -234,7 +234,7 @@ class TestGetPriceHistory:
         mock_get.side_effect = httpx.RequestError("Connection refused")
 
         client = SchwabClient()
-        with pytest.raises(SchwabClientError, match="request failed"):
+        with pytest.raises(SchwabClientError, match="Unable to reach Schwab API"):
             client.get_price_history("AAPL", "2024-01-01", "2024-01-03")
 
     @patch("app.services.schwab_client.SchwabTokenManager")
