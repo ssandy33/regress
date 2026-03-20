@@ -29,6 +29,9 @@ class SchwabClientError(Exception):
     pass
 
 
+SCHWAB_TRANSPORT_ERROR_MSG = "Unable to reach Schwab API. Please try again later."
+
+
 def to_schwab_symbol(ticker: str) -> str:
     """Map common symbol formats to Schwab equivalents. Passthrough for regular tickers."""
     return SCHWAB_SYMBOL_MAP.get(ticker, ticker)
@@ -70,7 +73,7 @@ class SchwabClient:
             raise SchwabClientError("Schwab quote API error") from e
         except httpx.RequestError as e:
             logger.error("Schwab quote request error: %s", e)
-            raise SchwabClientError("Unable to reach Schwab API. Please try again later.") from e
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
 
         data = resp.json()
         if symbol not in data:
@@ -136,7 +139,7 @@ class SchwabClient:
             raise SchwabClientError("Schwab option chains API error") from e
         except httpx.RequestError as e:
             logger.error("Schwab chains request error: %s", e)
-            raise SchwabClientError("Unable to reach Schwab API. Please try again later.") from e
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
 
         data = resp.json()
         if data.get("status") == "FAILED" or not (data.get("callExpDateMap") or data.get("putExpDateMap")):
@@ -190,7 +193,7 @@ class SchwabClient:
             raise SchwabClientError("Schwab price history API error") from e
         except httpx.RequestError as e:
             logger.error("Schwab price history request error: %s", e)
-            raise SchwabClientError("Unable to reach Schwab API. Please try again later.") from e
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
 
         data = resp.json()
         candles = data.get("candles", [])
