@@ -1,14 +1,23 @@
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, quote, urlparse
 
+import httpx
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
 from sqlalchemy import func, text
 
 from app.config import settings, get_fred_api_key
-from app.services.schwab_auth import SchwabTokenManager
+from app.services.schwab_auth import (
+    SCHWAB_AUTHORIZE_URL,
+    SCHWAB_REDIRECT_URI,
+    SCHWAB_TOKEN_URL,
+    SchwabTokenManager,
+    _upsert_setting,
+)
 from app.models.database import AppSetting, CacheEntry, get_db
 from app.models.schemas import CacheStatsResponse, SettingUpdate, SettingsResponse
 from app.services.backup import create_backup, list_backups, restore_backup
@@ -141,6 +150,106 @@ def check_schwab_connection():
     except Exception as e:
         logger.debug("Schwab health check failed: %s", e)
         return {"configured": True, "valid": False, "error": "Validation failed", "token_expiry": token_expiry}
+
+
+# --- Schwab OAuth Setup ---
+
+
+class SchwabAuthUrlRequest(BaseModel):
+    app_key: str
+
+
+class SchwabCallbackRequest(BaseModel):
+    app_key: str
+    app_secret: str
+    callback_url: str
+
+
+@router.post("/schwab/auth-url")
+def get_schwab_auth_url(req: SchwabAuthUrlRequest):
+    """Generate the Schwab OAuth authorization URL."""
+    if not req.app_key.strip():
+        return JSONResponse(status_code=422, content={"detail": "App key is required"})
+
+    auth_url = (
+        f"{SCHWAB_AUTHORIZE_URL}"
+        f"?response_type=code"
+        f"&client_id={req.app_key.strip()}"
+        f"&redirect_uri={quote(SCHWAB_REDIRECT_URI, safe='')}"
+    )
+    return {"auth_url": auth_url, "redirect_uri": SCHWAB_REDIRECT_URI}
+
+
+@router.post("/schwab/callback")
+def exchange_schwab_callback(req: SchwabCallbackRequest, db: DBSession = Depends(get_db)):
+    """Exchange the OAuth callback URL for tokens and store them."""
+    parsed = urlparse(req.callback_url.strip())
+    qs = parse_qs(parsed.query)
+    code = qs.get("code", [None])[0]
+    if not code:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Could not extract authorization code from callback URL"},
+        )
+
+    app_key = req.app_key.strip()
+    app_secret = req.app_secret.strip()
+
+    try:
+        resp = httpx.post(
+            SCHWAB_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": SCHWAB_REDIRECT_URI,
+            },
+            auth=(app_key, app_secret),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error("Schwab token exchange failed: %s", e)
+        return JSONResponse(
+            status_code=502,
+            content={"detail": "Token exchange failed. Check your App Key and Secret."},
+        )
+    except httpx.RequestError:
+        return JSONResponse(
+            status_code=502,
+            content={"detail": "Unable to reach Schwab API. Please try again."},
+        )
+
+    token_data = resp.json()
+    if "access_token" not in token_data or "refresh_token" not in token_data:
+        return JSONResponse(
+            status_code=502,
+            content={"detail": "Unexpected response from Schwab. Missing token fields."},
+        )
+
+    now = datetime.now(timezone.utc)
+    access_expires = now.replace(microsecond=0) + timedelta(
+        seconds=token_data.get("expires_in", 1800)
+    )
+    refresh_expires = now.replace(microsecond=0) + timedelta(days=7)
+
+    _upsert_setting(db, "schwab_app_key", app_key)
+    _upsert_setting(db, "schwab_app_secret", app_secret)
+    _upsert_setting(db, "schwab_access_token", token_data["access_token"])
+    _upsert_setting(db, "schwab_refresh_token", token_data["refresh_token"])
+    _upsert_setting(db, "schwab_access_token_expires", access_expires.isoformat())
+    _upsert_setting(db, "schwab_refresh_token_expires", refresh_expires.isoformat())
+    db.commit()
+
+    # Clear cached token in the singleton so it picks up the new one
+    SchwabTokenManager().invalidate_token()
+
+    logger.info("Schwab tokens stored via settings UI, access expires %s", access_expires.isoformat())
+    return {
+        "status": "ok",
+        "access_token_expires": access_expires.isoformat(),
+        "refresh_token_expires": refresh_expires.isoformat(),
+    }
 
 
 # --- Backups ---
