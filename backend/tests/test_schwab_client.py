@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -254,3 +255,46 @@ class TestGetPriceHistory:
             client.get_price_history("AAPL", "2024-01-01", "2024-01-03")
 
         mock_tm.invalidate_token.assert_called_once()
+
+
+class TestErrorResponseLogging:
+    """Tests for logging Schwab error response bodies (issue #73)."""
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_transactions_error_logs_response_body(self, mock_get, mock_tm_cls, caplog):
+        """Error handler logs the response body for debugging."""
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 400
+        mock_resp.text = '{"error": "date range too large"}'
+        mock_get.return_value = mock_resp
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "400 Bad Request", request=MagicMock(), response=mock_resp
+        )
+
+        client = SchwabClient()
+        with caplog.at_level(logging.ERROR, logger="app.services.schwab_client"):
+            with pytest.raises(SchwabClientError):
+                client.get_transactions("abc123", "2024-01-01", "2025-03-01")
+
+        assert any("date range too large" in r.message for r in caplog.records)
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_transactions_error_message_stays_sanitized(self, mock_get, mock_tm_cls):
+        """SchwabClientError message must not leak the response body."""
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 400
+        mock_resp.text = '{"error": "secret internal detail"}'
+        mock_get.return_value = mock_resp
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "400 Bad Request", request=MagicMock(), response=mock_resp
+        )
+
+        client = SchwabClient()
+        with pytest.raises(SchwabClientError) as exc_info:
+            client.get_transactions("abc123", "2024-01-01", "2025-03-01")
+
+        assert "secret internal detail" not in str(exc_info.value)
