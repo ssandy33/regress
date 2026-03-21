@@ -95,12 +95,17 @@ def delete_existing_trade(trade_id: str, db: DBSession = Depends(get_db)):
 @router.get("/import/preview", response_model=ImportPreviewResponse)
 def import_preview(start_date: str, end_date: str, db: DBSession = Depends(get_db)):
     """Preview Schwab transactions available for import."""
+    if not _is_valid_date(start_date) or not _is_valid_date(end_date):
+        raise HTTPException(status_code=422, detail="Dates must be in YYYY-MM-DD format")
     try:
         return preview_import(db, start_date, end_date)
     except SchwabAuthError:
         raise HTTPException(status_code=401, detail="Schwab authentication required")
     except SchwabClientError:
         raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")
+    except Exception:
+        logger.exception("Unexpected error during import preview")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
 @router.post("/import", response_model=ImportResultResponse)
@@ -112,3 +117,12 @@ def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Schwab authentication required")
     except SchwabClientError:
         raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")
+    except Exception:
+        logger.exception("Unexpected error during import")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
+
+
+def _is_valid_date(date_str: str) -> bool:
+    """Check if a string matches YYYY-MM-DD format."""
+    import re
+    return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", date_str))

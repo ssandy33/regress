@@ -61,7 +61,6 @@ export default function JournalPage() {
           <TradeHistory
             position={journal.selectedPosition}
             onAddTrade={journal.addTrade}
-            onEditTrade={journal.editTrade}
             onDeleteTrade={journal.removeTrade}
           />
         )}

@@ -61,6 +61,10 @@ def mock_schwab():
 
 
 class TestImportPreview:
+    def test_preview_invalid_date_format(self, client):
+        resp = client.get("/api/journal/import/preview", params={"start_date": "not-a-date", "end_date": "2025-03-31"})
+        assert resp.status_code == 422
+
     def test_preview_success(self, client, mock_schwab):
         resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
         assert resp.status_code == 200
@@ -83,6 +87,13 @@ class TestImportPreview:
 
 
 class TestImportExecute:
+    def test_import_invalid_date_format(self, client):
+        resp = client.post("/api/journal/import", json={
+            "start_date": "March 1",
+            "end_date": "2025-03-31",
+        })
+        assert resp.status_code == 422
+
     def test_import_creates_trades(self, client, mock_schwab):
         resp = client.post("/api/journal/import", json={
             "start_date": "2025-03-01",
