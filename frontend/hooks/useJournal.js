@@ -117,8 +117,13 @@ export function useJournal() {
       const data = await previewSchwabImport(startDate, endDate);
       setImportPreview(data);
       return data;
-    } catch {
-      toast.error('Failed to preview Schwab import');
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 401) {
+        toast.error(detail || 'Schwab authentication required. Run schwab-auth CLI to connect.');
+      } else {
+        toast.error(detail || 'Failed to preview Schwab import');
+      }
       return null;
     } finally {
       setImportLoading(false);
@@ -133,8 +138,13 @@ export function useJournal() {
       setImportPreview(null);
       await fetchPositions();
       return result;
-    } catch {
-      toast.error('Failed to import trades');
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 401) {
+        toast.error(detail || 'Schwab authentication required. Run schwab-auth CLI to connect.');
+      } else {
+        toast.error(detail || 'Failed to import trades');
+      }
       return null;
     } finally {
       setImportLoading(false);
