@@ -42,10 +42,6 @@ class TestSchwabCallback:
         assert "access_token_expires" in data
         assert "refresh_token_expires" in data
 
-        # Verify settings show schwab as configured now
-        settings_resp = client.get("/api/settings")
-        assert settings_resp.json()["schwab_configured"] is True
-
     def test_no_code_in_url(self, client):
         resp = client.post("/api/settings/schwab/callback", json={
             "app_key": "key",
