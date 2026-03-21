@@ -99,8 +99,9 @@ def import_preview(start_date: str, end_date: str, db: DBSession = Depends(get_d
         raise HTTPException(status_code=422, detail="Dates must be in YYYY-MM-DD format")
     try:
         return preview_import(db, start_date, end_date)
-    except SchwabAuthError:
-        raise HTTPException(status_code=401, detail="Schwab authentication required")
+    except SchwabAuthError as e:
+        logger.warning("Schwab auth failed during import preview: %s", e)
+        raise HTTPException(status_code=401, detail=_schwab_auth_detail(e)) from e
     except SchwabClientError:
         raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")
     except Exception:
@@ -113,13 +114,26 @@ def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
     """Import Schwab transactions into the trade journal."""
     try:
         return execute_import(db, req.start_date, req.end_date, req.position_strategy)
-    except SchwabAuthError:
-        raise HTTPException(status_code=401, detail="Schwab authentication required")
+    except SchwabAuthError as e:
+        logger.warning("Schwab auth failed during import: %s", e)
+        raise HTTPException(status_code=401, detail=_schwab_auth_detail(e)) from e
     except SchwabClientError:
         raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")
     except Exception:
         logger.exception("Unexpected error during import")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
+
+
+def _schwab_auth_detail(err: SchwabAuthError) -> str:
+    """Return a user-friendly 401 detail based on the auth error."""
+    msg = str(err).lower()
+    if "expired" in msg:
+        return "Schwab token has expired. Please re-authorize in Settings."
+    if "no schwab refresh token" in msg:
+        return "Schwab is not connected. Please authorize in Settings."
+    if "not configured" in msg:
+        return "Schwab app credentials are not configured. Please set up in Settings."
+    return "Schwab authentication failed. Please re-authorize in Settings."
 
 
 def _is_valid_date(date_str: str) -> bool:

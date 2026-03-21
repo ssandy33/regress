@@ -113,6 +113,21 @@ test.describe('Schwab Import', () => {
     await expect(page.getByText('Skipped duplicates: 1')).toBeVisible();
   });
 
+  test('shows specific error toast when Schwab token expired', async ({ page }) => {
+    await page.route('**/api/journal/import/preview*', (route) =>
+      route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Schwab token has expired. Please re-authorize in Settings.' }),
+      })
+    );
+
+    await page.getByTestId('import-schwab-btn').click();
+    await page.getByTestId('preview-import-btn').click();
+
+    await expect(page.getByText('Schwab token has expired. Please re-authorize in Settings.')).toBeVisible();
+  });
+
   test('import button disabled when all duplicates', async ({ page }) => {
     const allDupPreview = {
       ...MOCK_PREVIEW,
