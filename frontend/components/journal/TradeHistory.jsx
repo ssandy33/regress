@@ -30,8 +30,12 @@ export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
   const [showForm, setShowForm] = useState(false);
 
   const handleAddTrade = async (data) => {
-    await onAddTrade(data);
-    setShowForm(false);
+    try {
+      await onAddTrade(data);
+      setShowForm(false);
+    } catch {
+      // Form stays open for retry; error toast handled by parent
+    }
   };
 
   return (
@@ -61,7 +65,7 @@ export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
         </div>
       )}
 
-      {position.trades.length === 0 ? (
+      {(!position.trades || position.trades.length === 0) ? (
         <div className="p-6 text-center text-slate-500 dark:text-slate-400">No trades yet</div>
       ) : (
         <table className="w-full text-sm">
@@ -79,7 +83,7 @@ export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
             </tr>
           </thead>
           <tbody>
-            {position.trades.map((t) => (
+            {(position.trades || []).map((t) => (
               <tr key={t.id} data-testid="trade-row" className="border-b border-slate-100 dark:border-slate-700">
                 <td className="px-4 py-2 text-slate-700 dark:text-slate-300">{t.opened_at?.split('T')[0]}</td>
                 <td className="px-4 py-2 text-slate-700 dark:text-slate-300">{TYPE_LABELS[t.trade_type] || t.trade_type}</td>

@@ -10,8 +10,12 @@ export default function JournalPage() {
   const [showNewPosition, setShowNewPosition] = useState(false);
 
   const handleCreatePosition = async (data) => {
-    await journal.addPosition(data);
-    setShowNewPosition(false);
+    try {
+      await journal.addPosition(data);
+      setShowNewPosition(false);
+    } catch {
+      // Form stays open for retry; error toast handled by hook
+    }
   };
 
   return (

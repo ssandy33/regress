@@ -70,6 +70,7 @@ export function useJournal() {
     try {
       await createTrade(data);
       toast.success('Trade logged');
+      await fetchPositions();
       if (data.position_id) {
         const updated = await getPosition(data.position_id);
         setSelectedPosition(updated);
@@ -77,7 +78,7 @@ export function useJournal() {
     } catch {
       toast.error('Failed to log trade');
     }
-  }, []);
+  }, [fetchPositions]);
 
   const editTrade = useCallback(async (id, data) => {
     try {
@@ -96,6 +97,7 @@ export function useJournal() {
     try {
       await deleteTrade(id);
       toast.success('Trade deleted');
+      await fetchPositions();
       if (selectedPosition) {
         const updated = await getPosition(selectedPosition.id);
         setSelectedPosition(updated);
@@ -103,7 +105,7 @@ export function useJournal() {
     } catch {
       toast.error('Failed to delete trade');
     }
-  }, [selectedPosition]);
+  }, [selectedPosition, fetchPositions]);
 
   useEffect(() => {
     fetchPositions();

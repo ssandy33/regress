@@ -221,7 +221,7 @@ export async function listPositions(status = null) {
 }
 
 export async function getPosition(id) {
-  const { data } = await api.get(`/api/journal/positions/${id}`);
+  const { data } = await api.get(`/api/journal/positions/${encodeURIComponent(id)}`);
   return data;
 }
 
@@ -231,7 +231,7 @@ export async function createPosition(positionData) {
 }
 
 export async function updatePosition(id, positionData) {
-  const { data } = await api.put(`/api/journal/positions/${id}`, positionData);
+  const { data } = await api.put(`/api/journal/positions/${encodeURIComponent(id)}`, positionData);
   return data;
 }
 
@@ -241,12 +241,12 @@ export async function createTrade(tradeData) {
 }
 
 export async function updateTrade(id, tradeData) {
-  const { data } = await api.put(`/api/journal/trades/${id}`, tradeData);
+  const { data } = await api.put(`/api/journal/trades/${encodeURIComponent(id)}`, tradeData);
   return data;
 }
 
 export async function deleteTrade(id) {
-  await api.delete(`/api/journal/trades/${id}`);
+  await api.delete(`/api/journal/trades/${encodeURIComponent(id)}`);
 }
 
 export default api;

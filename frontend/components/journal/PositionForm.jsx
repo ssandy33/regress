@@ -22,12 +22,14 @@ export default function PositionForm({ onSubmit, onCancel }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const date = new Date(form.opened_at);
+    if (isNaN(date.getTime())) return;
     onSubmit({
       ticker: form.ticker.toUpperCase().trim(),
       shares: parseInt(form.shares) || 100,
       broker_cost_basis: parseFloat(form.broker_cost_basis),
       strategy: form.strategy,
-      opened_at: new Date(form.opened_at).toISOString(),
+      opened_at: date.toISOString(),
       notes: form.notes || null,
     });
   };
