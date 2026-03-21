@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.database import Position, Trade
 from app.models.schemas import PositionCreate, PositionUpdate, TradeCreate, TradeUpdate
@@ -74,7 +74,7 @@ def _build_position_response(position: Position) -> dict:
 
 def get_positions(db: Session, status: str | None = None) -> list[dict]:
     """Query positions, optionally filtered by status."""
-    query = db.query(Position)
+    query = db.query(Position).options(selectinload(Position.trades))
     if status is not None:
         query = query.filter(Position.status == status)
     positions = query.all()
@@ -102,7 +102,11 @@ def create_position(db: Session, data: PositionCreate) -> dict:
         notes=data.notes,
     )
     db.add(position)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(position)
     logger.info("Created position %s for %s", position.id, position.ticker)
     return _build_position_response(position)
@@ -118,7 +122,11 @@ def update_position(db: Session, position_id: str, data: PositionUpdate) -> dict
     for field, value in update_data.items():
         setattr(position, field, value)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(position)
     logger.info("Updated position %s", position_id)
     return _build_position_response(position)
@@ -144,7 +152,11 @@ def create_trade(db: Session, data: TradeCreate) -> dict | None:
         close_reason=data.close_reason,
     )
     db.add(trade)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(trade)
     logger.info("Created trade %s for position %s", trade.id, trade.position_id)
     return _build_trade_response(trade)
@@ -160,7 +172,11 @@ def update_trade(db: Session, trade_id: str, data: TradeUpdate) -> dict | None:
     for field, value in update_data.items():
         setattr(trade, field, value)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(trade)
     logger.info("Updated trade %s", trade_id)
     return _build_trade_response(trade)
@@ -173,6 +189,10 @@ def delete_trade(db: Session, trade_id: str) -> bool:
         return False
 
     db.delete(trade)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     logger.info("Deleted trade %s", trade_id)
     return True
