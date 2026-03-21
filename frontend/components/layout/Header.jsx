@@ -21,6 +21,14 @@ export default function Header({ sessions, onLoadSession }) {
           Options
         </Link>
 
+        {/* Journal link */}
+        <Link
+          href="/journal"
+          className="px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium"
+        >
+          Journal
+        </Link>
+
         {/* Saved sessions dropdown */}
         {sessions.length > 0 && (
           <select

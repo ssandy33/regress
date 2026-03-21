@@ -212,4 +212,41 @@ export async function getOptionChain(ticker, expiration = null) {
   return data;
 }
 
+// --- Journal ---
+
+export async function listPositions(status = null) {
+  const params = status ? { status } : {};
+  const { data } = await api.get('/api/journal/positions', { params });
+  return data.positions;
+}
+
+export async function getPosition(id) {
+  const { data } = await api.get(`/api/journal/positions/${encodeURIComponent(id)}`);
+  return data;
+}
+
+export async function createPosition(positionData) {
+  const { data } = await api.post('/api/journal/positions', positionData);
+  return data;
+}
+
+export async function updatePosition(id, positionData) {
+  const { data } = await api.put(`/api/journal/positions/${encodeURIComponent(id)}`, positionData);
+  return data;
+}
+
+export async function createTrade(tradeData) {
+  const { data } = await api.post('/api/journal/trades', tradeData);
+  return data;
+}
+
+export async function updateTrade(id, tradeData) {
+  const { data } = await api.put(`/api/journal/trades/${encodeURIComponent(id)}`, tradeData);
+  return data;
+}
+
+export async function deleteTrade(id) {
+  await api.delete(`/api/journal/trades/${encodeURIComponent(id)}`);
+}
+
 export default api;

@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DateRange(BaseModel):
@@ -284,3 +284,89 @@ class OptionScanResponse(BaseModel):
     recommendations: list[StrikeRecommendation]
     rejected: list[RejectedStrike]
     market_context: MarketContext
+
+
+# --- Journal ---
+
+
+STRATEGY_TYPES = Literal["csp", "cc", "wheel"]
+POSITION_STATUS = Literal["open", "closed"]
+TRADE_TYPES = Literal["sell_put", "buy_put_close", "assignment", "sell_call", "buy_call_close", "called_away"]
+CLOSE_REASONS = Literal["fifty_pct_target", "full_expiration", "rolled", "closed_early", "assigned", "called_away"]
+
+
+class PositionCreate(BaseModel):
+    ticker: str
+    shares: int = Field(default=100, ge=1)
+    broker_cost_basis: float
+    strategy: STRATEGY_TYPES
+    opened_at: str
+    notes: Optional[str] = None
+
+
+class PositionUpdate(BaseModel):
+    status: Optional[POSITION_STATUS] = None
+    strategy: Optional[STRATEGY_TYPES] = None
+    closed_at: Optional[str] = None
+    notes: Optional[str] = None
+    broker_cost_basis: Optional[float] = None
+    shares: Optional[int] = Field(default=None, ge=1)
+
+
+class TradeCreate(BaseModel):
+    position_id: str
+    trade_type: TRADE_TYPES
+    strike: float
+    expiration: str
+    premium: float
+    fees: float = 0.0
+    quantity: int = Field(default=1, ge=1)
+    opened_at: str
+    closed_at: Optional[str] = None
+    close_reason: Optional[CLOSE_REASONS] = None
+
+
+class TradeUpdate(BaseModel):
+    trade_type: Optional[TRADE_TYPES] = None
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
+    premium: Optional[float] = None
+    fees: Optional[float] = None
+    quantity: Optional[int] = Field(default=None, ge=1)
+    opened_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    close_reason: Optional[CLOSE_REASONS] = None
+
+
+class TradeResponse(BaseModel):
+    id: str
+    position_id: str
+    trade_type: str
+    strike: float
+    expiration: str
+    premium: float
+    fees: float
+    quantity: int
+    opened_at: str
+    closed_at: Optional[str] = None
+    close_reason: Optional[str] = None
+
+
+class PositionResponse(BaseModel):
+    id: str
+    ticker: str
+    shares: int
+    broker_cost_basis: float
+    status: str
+    strategy: str
+    opened_at: str
+    closed_at: Optional[str] = None
+    notes: Optional[str] = None
+    total_premiums: float
+    adjusted_cost_basis: float
+    min_compliant_cc_strike: float
+    trades: list[TradeResponse] = []
+
+
+class PositionListResponse(BaseModel):
+    positions: list[PositionResponse]
