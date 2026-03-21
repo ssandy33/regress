@@ -27,7 +27,7 @@ from app.services.journal import (
     update_position,
     update_trade,
 )
-from app.services.schwab_auth import SchwabAuthError
+from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
 from app.services.schwab_client import SchwabClientError
 from app.services.schwab_import import execute_import, preview_import
 
@@ -124,16 +124,19 @@ def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
 
 
+_AUTH_DETAIL_MAP: dict[SchwabAuthCode, str] = {
+    SchwabAuthCode.TOKEN_EXPIRED: "Schwab token has expired. Please re-authorize in Settings.",
+    SchwabAuthCode.REFRESH_FAILED_401: "Schwab token has expired. Please re-authorize in Settings.",
+    SchwabAuthCode.API_401: "Schwab token has expired. Please re-authorize in Settings.",
+    SchwabAuthCode.TOKEN_MISSING: "Schwab is not connected. Please authorize in Settings.",
+    SchwabAuthCode.NOT_CONFIGURED: "Schwab app credentials are not configured. Please set up in Settings.",
+}
+_AUTH_DETAIL_FALLBACK = "Schwab authentication failed. Please re-authorize in Settings."
+
+
 def _schwab_auth_detail(err: SchwabAuthError) -> str:
-    """Return a user-friendly 401 detail based on the auth error."""
-    msg = str(err).lower()
-    if "expired" in msg:
-        return "Schwab token has expired. Please re-authorize in Settings."
-    if "no schwab refresh token" in msg:
-        return "Schwab is not connected. Please authorize in Settings."
-    if "not configured" in msg:
-        return "Schwab app credentials are not configured. Please set up in Settings."
-    return "Schwab authentication failed. Please re-authorize in Settings."
+    """Return a user-friendly 401 detail based on the auth error code."""
+    return _AUTH_DETAIL_MAP.get(err.code, _AUTH_DETAIL_FALLBACK)
 
 
 def _is_valid_date(date_str: str) -> bool:

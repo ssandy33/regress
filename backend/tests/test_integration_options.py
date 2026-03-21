@@ -111,12 +111,13 @@ class TestScanEndpoint:
 
     def test_schwab_auth_error_global_handler_sanitized(self, client):
         """Global SchwabAuthError handler must not leak internal details (issue #41)."""
-        from app.services.schwab_auth import SchwabAuthError
+        from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
 
         with patch.object(
             OptionScanner, "scan",
             side_effect=SchwabAuthError(
-                "No Schwab refresh token found. Run 'python -m app.cli schwab-auth' to authorize."
+                "No Schwab refresh token found. Run 'python -m app.cli schwab-auth' to authorize.",
+                code=SchwabAuthCode.TOKEN_MISSING,
             ),
         ):
             response = client.post("/api/options/scan", json={

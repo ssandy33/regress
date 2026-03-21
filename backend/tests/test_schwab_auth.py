@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.models.database import AppSetting
-from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
+from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError, SchwabTokenManager
 
 
 @pytest.fixture(autouse=True)
@@ -156,8 +156,9 @@ class TestSchwabTokenManager:
         mock_session_local = MagicMock(return_value=mock_db)
         with patch("app.models.database.SessionLocal", mock_session_local), \
              patch("app.services.schwab_auth.get_schwab_credentials", return_value=("key", "secret")):
-            with pytest.raises(SchwabAuthError, match="expired"):
+            with pytest.raises(SchwabAuthError, match="expired") as exc_info:
                 mgr.get_access_token()
+            assert exc_info.value.code == SchwabAuthCode.TOKEN_EXPIRED
 
     def test_thread_safety(self):
         """Concurrent access doesn't create multiple instances."""
