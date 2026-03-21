@@ -14,6 +14,8 @@ from fastapi.responses import JSONResponse
 
 from app.auth import get_current_user
 from app.config import settings as app_settings
+from app.logging_config import setup_logging
+from app.middleware import RequestLoggingMiddleware
 from app.models.database import init_db, SessionLocal
 from app.routers import assets, data, health, journal, options, regression, sessions, settings
 from app.services.backup import create_backup
@@ -51,6 +53,7 @@ def _pre_cache_common_assets():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     init_db()
 
     # Security checks first — must run before backup to avoid
@@ -138,8 +141,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in app_settings.cors_origins.split(",") if o.strip()],
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
+
+app.add_middleware(RequestLoggingMiddleware)
 
 # Include routers — health is public, all others require authentication
 app.include_router(health.router)

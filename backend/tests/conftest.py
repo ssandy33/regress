@@ -8,9 +8,16 @@ from sqlalchemy.pool import StaticPool
 from unittest.mock import patch
 
 from app.auth import get_current_user
+from app.logging_config import setup_logging
 from app.models.database import Base, get_db
 from app.models.schemas import DataMeta, DateRange
 from app.services.data_fetcher import DataFetcher
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _configure_test_logging():
+    """Use plain text logging in tests for readable output."""
+    setup_logging(json_output=False)
 
 
 def _make_price_df(seed=42, n=60):
@@ -65,6 +72,7 @@ def client():
     # Bypass auth for integration tests — auth logic is tested separately
     app.dependency_overrides[get_current_user] = lambda: {"sub": "test", "username": "testuser"}
     with patch("app.main.init_db"), \
+         patch("app.main.setup_logging"), \
          patch("app.main.create_backup", return_value=""), \
          patch("app.main._run_security_checks"):
         with TestClient(app) as c:
