@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
@@ -16,7 +16,7 @@ from app.services.schwab_auth import (
     SCHWAB_REDIRECT_URI,
     SCHWAB_TOKEN_URL,
     SchwabTokenManager,
-    _upsert_setting,
+    store_schwab_tokens,
 )
 from app.models.database import AppSetting, CacheEntry, get_db
 from app.models.schemas import CacheStatsResponse, SettingUpdate, SettingsResponse
@@ -174,7 +174,7 @@ def get_schwab_auth_url(req: SchwabAuthUrlRequest):
     auth_url = (
         f"{SCHWAB_AUTHORIZE_URL}"
         f"?response_type=code"
-        f"&client_id={req.app_key.strip()}"
+        f"&client_id={quote(req.app_key.strip(), safe='')}"
         f"&redirect_uri={quote(SCHWAB_REDIRECT_URI, safe='')}"
     )
     return {"auth_url": auth_url, "redirect_uri": SCHWAB_REDIRECT_URI}
@@ -227,29 +227,8 @@ def exchange_schwab_callback(req: SchwabCallbackRequest, db: DBSession = Depends
             content={"detail": "Unexpected response from Schwab. Missing token fields."},
         )
 
-    now = datetime.now(timezone.utc)
-    access_expires = now.replace(microsecond=0) + timedelta(
-        seconds=token_data.get("expires_in", 1800)
-    )
-    refresh_expires = now.replace(microsecond=0) + timedelta(days=7)
-
-    _upsert_setting(db, "schwab_app_key", app_key)
-    _upsert_setting(db, "schwab_app_secret", app_secret)
-    _upsert_setting(db, "schwab_access_token", token_data["access_token"])
-    _upsert_setting(db, "schwab_refresh_token", token_data["refresh_token"])
-    _upsert_setting(db, "schwab_access_token_expires", access_expires.isoformat())
-    _upsert_setting(db, "schwab_refresh_token_expires", refresh_expires.isoformat())
-    db.commit()
-
-    # Clear cached token in the singleton so it picks up the new one
-    SchwabTokenManager().invalidate_token()
-
-    logger.info("Schwab tokens stored via settings UI, access expires %s", access_expires.isoformat())
-    return {
-        "status": "ok",
-        "access_token_expires": access_expires.isoformat(),
-        "refresh_token_expires": refresh_expires.isoformat(),
-    }
+    result = store_schwab_tokens(db, app_key, app_secret, token_data)
+    return {"status": "ok", **result}
 
 
 # --- Backups ---

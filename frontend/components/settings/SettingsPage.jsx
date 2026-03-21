@@ -412,6 +412,8 @@ export default function SettingsPage() {
                           } catch (err) {
                             const detail = err?.response?.data?.detail;
                             toast.error(detail || 'Failed to exchange authorization code');
+                            setSchwabSetup(s => ({ ...s, appSecret: '', saving: false }));
+                            return;
                           } finally {
                             setSchwabSetup(s => ({ ...s, saving: false }));
                           }

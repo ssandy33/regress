@@ -245,6 +245,40 @@ def _upsert_setting(db, key: str, value: str):
         db.add(AppSetting(key=key, value=store_value))
 
 
+def store_schwab_tokens(db, app_key: str, app_secret: str, token_data: dict):
+    """Store Schwab OAuth credentials and tokens in the database.
+
+    Args:
+        db: SQLAlchemy session
+        app_key: Schwab app key
+        app_secret: Schwab app secret
+        token_data: Token response from Schwab (must have access_token, refresh_token)
+    """
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    access_expires = now.replace(microsecond=0) + timedelta(
+        seconds=token_data.get("expires_in", 1800)
+    )
+    refresh_expires = now.replace(microsecond=0) + timedelta(days=7)
+
+    _upsert_setting(db, "schwab_app_key", app_key)
+    _upsert_setting(db, "schwab_app_secret", app_secret)
+    _upsert_setting(db, "schwab_access_token", token_data["access_token"])
+    _upsert_setting(db, "schwab_refresh_token", token_data["refresh_token"])
+    _upsert_setting(db, "schwab_access_token_expires", access_expires.isoformat())
+    _upsert_setting(db, "schwab_refresh_token_expires", refresh_expires.isoformat())
+    db.commit()
+
+    SchwabTokenManager().invalidate_token()
+    logger.info("Schwab tokens stored, access expires %s", access_expires.isoformat())
+
+    return {
+        "access_token_expires": access_expires.isoformat(),
+        "refresh_token_expires": refresh_expires.isoformat(),
+    }
+
+
 def get_schwab_token_manager() -> SchwabTokenManager:
     """FastAPI dependency returning the singleton token manager."""
     return SchwabTokenManager()
