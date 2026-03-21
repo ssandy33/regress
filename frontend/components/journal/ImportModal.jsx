@@ -6,13 +6,18 @@ const STRATEGIES = [
   { value: 'wheel', label: 'Wheel' },
 ];
 
+function toLocalDate(d) {
+  const tzOffsetMs = d.getTimezoneOffset() * 60_000;
+  return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
+}
+
 function defaultDates() {
   const end = new Date();
   const start = new Date();
   start.setDate(start.getDate() - 30);
   return {
-    startDate: start.toISOString().split('T')[0],
-    endDate: end.toISOString().split('T')[0],
+    startDate: toLocalDate(start),
+    endDate: toLocalDate(end),
   };
 }
 
@@ -39,8 +44,8 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div data-testid="import-modal" className="bg-white dark:bg-slate-800 rounded-xl p-6 w-full max-w-2xl shadow-xl max-h-[80vh] overflow-y-auto">
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Import from Schwab</h2>
+      <div data-testid="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-modal-title" className="bg-white dark:bg-slate-800 rounded-xl p-6 w-full max-w-2xl shadow-xl max-h-[80vh] overflow-y-auto">
+        <h2 id="import-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Import from Schwab</h2>
 
         {result ? (
           <div data-testid="import-result" className="space-y-4">
