@@ -1,5 +1,6 @@
 """Integration tests for Schwab import API endpoints."""
 
+import logging
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -147,3 +148,61 @@ class TestImportExecute:
         data = resp.json()
         assert data["imported"] == 2
         assert data["positions_created"] == 1  # only MSFT created, AAPL reused
+
+
+class TestImportAuthErrors:
+    """Tests for improved auth error messages and logging (issue #69)."""
+
+    def test_preview_expired_token_returns_specific_detail(self, client):
+        from app.services.schwab_auth import SchwabAuthError
+        with patch("app.services.schwab_import.SchwabClient") as mock_cls:
+            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+                "Schwab refresh token has expired. Run 'python -m app.cli schwab-auth' to re-authorize."
+            )
+            resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
+        assert resp.status_code == 401
+        assert "expired" in resp.json()["detail"].lower()
+        assert "Settings" in resp.json()["detail"]
+
+    def test_preview_no_token_returns_not_connected(self, client):
+        from app.services.schwab_auth import SchwabAuthError
+        with patch("app.services.schwab_import.SchwabClient") as mock_cls:
+            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+                "No Schwab refresh token found. Run 'python -m app.cli schwab-auth' to authorize."
+            )
+            resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
+        assert resp.status_code == 401
+        assert "not connected" in resp.json()["detail"].lower()
+
+    def test_preview_not_configured_returns_setup_message(self, client):
+        from app.services.schwab_auth import SchwabAuthError
+        with patch("app.services.schwab_import.SchwabClient") as mock_cls:
+            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+                "Schwab app key/secret not configured. Run 'python -m app.cli schwab-auth' to set up."
+            )
+            resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
+        assert resp.status_code == 401
+        assert "not configured" in resp.json()["detail"].lower()
+
+    def test_import_expired_token_returns_specific_detail(self, client):
+        from app.services.schwab_auth import SchwabAuthError
+        with patch("app.services.schwab_import.SchwabClient") as mock_cls:
+            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+                "Schwab refresh token has expired."
+            )
+            resp = client.post("/api/journal/import", json={
+                "start_date": "2025-03-01",
+                "end_date": "2025-03-31",
+            })
+        assert resp.status_code == 401
+        assert "expired" in resp.json()["detail"].lower()
+
+    def test_auth_error_is_logged(self, client, caplog):
+        from app.services.schwab_auth import SchwabAuthError
+        with patch("app.services.schwab_import.SchwabClient") as mock_cls:
+            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+                "Schwab refresh token has expired."
+            )
+            with caplog.at_level(logging.WARNING, logger="app.routers.journal"):
+                client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
+        assert any("Schwab auth failed" in r.message for r in caplog.records)
