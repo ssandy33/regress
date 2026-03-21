@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session as DBSession
 from app.models.database import get_db
 from app.models.schemas import (
     POSITION_STATUS,
+    ImportPreviewResponse,
+    ImportRequest,
+    ImportResultResponse,
     PositionCreate,
     PositionListResponse,
     PositionResponse,
@@ -24,6 +27,9 @@ from app.services.journal import (
     update_position,
     update_trade,
 )
+from app.services.schwab_auth import SchwabAuthError
+from app.services.schwab_client import SchwabClientError
+from app.services.schwab_import import execute_import, preview_import
 
 logger = logging.getLogger(__name__)
 
@@ -84,3 +90,25 @@ def delete_existing_trade(trade_id: str, db: DBSession = Depends(get_db)):
     """Remove a trade."""
     if not delete_trade(db, trade_id):
         raise HTTPException(status_code=404, detail="Trade not found")
+
+
+@router.get("/import/preview", response_model=ImportPreviewResponse)
+def import_preview(start_date: str, end_date: str, db: DBSession = Depends(get_db)):
+    """Preview Schwab transactions available for import."""
+    try:
+        return preview_import(db, start_date, end_date)
+    except SchwabAuthError:
+        raise HTTPException(status_code=401, detail="Schwab authentication required")
+    except SchwabClientError:
+        raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")
+
+
+@router.post("/import", response_model=ImportResultResponse)
+def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
+    """Import Schwab transactions into the trade journal."""
+    try:
+        return execute_import(db, req.start_date, req.end_date, req.position_strategy)
+    except SchwabAuthError:
+        raise HTTPException(status_code=401, detail="Schwab authentication required")
+    except SchwabClientError:
+        raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")

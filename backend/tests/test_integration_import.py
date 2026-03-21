@@ -1,0 +1,138 @@
+"""Integration tests for Schwab import API endpoints."""
+
+from unittest.mock import patch, MagicMock
+import pytest
+
+
+MOCK_ACCOUNTS = [{"hashValue": "abc123", "securitiesAccount": {"accountNumber": "12345678"}}]
+
+MOCK_TRANSACTIONS = [
+    {
+        "transactionDate": "2025-03-01T10:00:00Z",
+        "netAmount": 300.0,
+        "fees": {"commission": 0.65, "secFee": 0, "optRegFee": 0, "rFee": 0, "cdscFee": 0, "otherCharges": 0},
+        "transferItems": [
+            {
+                "instruction": "SELL_TO_OPEN",
+                "amount": 1,
+                "instrument": {
+                    "assetType": "OPTION",
+                    "underlyingSymbol": "AAPL",
+                    "putCall": "PUT",
+                    "strikePrice": 150.0,
+                    "expirationDate": "2025-03-21T00:00:00.000+0000",
+                },
+            }
+        ],
+    },
+    {
+        "transactionDate": "2025-03-02T10:00:00Z",
+        "netAmount": 500.0,
+        "fees": {},
+        "transferItems": [
+            {
+                "instruction": "SELL_TO_OPEN",
+                "amount": 1,
+                "instrument": {
+                    "assetType": "OPTION",
+                    "underlyingSymbol": "MSFT",
+                    "putCall": "CALL",
+                    "strikePrice": 400.0,
+                    "expirationDate": "2025-04-18T00:00:00.000+0000",
+                },
+            }
+        ],
+    },
+]
+
+
+def _mock_schwab_client():
+    mock = MagicMock()
+    mock.get_accounts.return_value = MOCK_ACCOUNTS
+    mock.get_transactions.return_value = MOCK_TRANSACTIONS
+    return mock
+
+
+@pytest.fixture()
+def mock_schwab():
+    mock = _mock_schwab_client()
+    with patch("app.services.schwab_import.SchwabClient", return_value=mock):
+        yield mock
+
+
+class TestImportPreview:
+    def test_preview_success(self, client, mock_schwab):
+        resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["account_number"] == "****5678"
+        assert data["total"] == 2
+        assert data["new_count"] == 2
+        assert data["duplicates"] == 0
+        assert len(data["trades"]) == 2
+        assert data["trades"][0]["ticker"] == "AAPL"
+        assert data["trades"][0]["trade_type"] == "sell_put"
+        assert data["trades"][1]["ticker"] == "MSFT"
+
+    def test_preview_no_auth_returns_401(self, client):
+        from app.services.schwab_auth import SchwabAuthError
+        with patch("app.services.schwab_import.SchwabClient") as mock_cls:
+            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError("no token")
+            resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
+        assert resp.status_code == 401
+
+
+class TestImportExecute:
+    def test_import_creates_trades(self, client, mock_schwab):
+        resp = client.post("/api/journal/import", json={
+            "start_date": "2025-03-01",
+            "end_date": "2025-03-31",
+            "position_strategy": "wheel",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["imported"] == 2
+        assert data["skipped_duplicates"] == 0
+        assert data["positions_created"] == 2  # AAPL + MSFT
+
+        # Verify trades exist in DB
+        positions_resp = client.get("/api/journal/positions")
+        positions = positions_resp.json()["positions"]
+        assert len(positions) == 2
+        tickers = {p["ticker"] for p in positions}
+        assert tickers == {"AAPL", "MSFT"}
+
+    def test_import_skips_duplicates(self, client, mock_schwab):
+        # First import
+        client.post("/api/journal/import", json={
+            "start_date": "2025-03-01",
+            "end_date": "2025-03-31",
+        })
+
+        # Second import — same transactions
+        resp = client.post("/api/journal/import", json={
+            "start_date": "2025-03-01",
+            "end_date": "2025-03-31",
+        })
+        data = resp.json()
+        assert data["imported"] == 0
+        assert data["skipped_duplicates"] == 2
+        assert data["positions_created"] == 0
+
+    def test_import_reuses_existing_position(self, client, mock_schwab):
+        # Create a position for AAPL first
+        client.post("/api/journal/positions", json={
+            "ticker": "AAPL",
+            "shares": 100,
+            "broker_cost_basis": 15000.0,
+            "strategy": "wheel",
+            "opened_at": "2025-01-01T00:00:00Z",
+        })
+
+        resp = client.post("/api/journal/import", json={
+            "start_date": "2025-03-01",
+            "end_date": "2025-03-31",
+        })
+        data = resp.json()
+        assert data["imported"] == 2
+        assert data["positions_created"] == 1  # only MSFT created, AAPL reused

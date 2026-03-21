@@ -39,6 +39,7 @@ def to_schwab_symbol(ticker: str) -> str:
 
 class SchwabClient:
     BASE_URL = "https://api.schwabapi.com/marketdata/v1"
+    TRADER_BASE_URL = "https://api.schwabapi.com/trader/v1"
 
     def _headers(self) -> dict:
         token = SchwabTokenManager().get_access_token()
@@ -212,3 +213,65 @@ class SchwabClient:
         df.index.name = "date"
         df = df.dropna(subset=["value"])
         return df
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        retry=retry_if_exception_type(SchwabClientError),
+        reraise=True,
+    )
+    def get_accounts(self) -> list[dict]:
+        """Get linked brokerage accounts from Trader API."""
+        url = f"{self.TRADER_BASE_URL}/accounts"
+        try:
+            resp = httpx.get(url, headers=self._headers(), timeout=15)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                SchwabTokenManager().invalidate_token()
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+            logger.error("Schwab accounts API error: %s", e)
+            raise SchwabClientError("Schwab accounts API error") from e
+        except httpx.RequestError as e:
+            logger.error("Schwab accounts request error: %s", e)
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
+
+        return resp.json()
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        retry=retry_if_exception_type(SchwabClientError),
+        reraise=True,
+    )
+    def get_transactions(self, account_hash: str, start_date: str, end_date: str) -> list[dict]:
+        """Get transactions for an account from Trader API.
+
+        Args:
+            account_hash: alphanumeric account hash from get_accounts()
+            start_date: ISO date string (YYYY-MM-DD)
+            end_date: ISO date string (YYYY-MM-DD)
+        """
+        if not account_hash.isalnum():
+            raise SchwabClientError("Invalid account hash")
+
+        url = f"{self.TRADER_BASE_URL}/accounts/{account_hash}/transactions"
+        params = {
+            "startDate": start_date,
+            "endDate": end_date,
+            "types": "TRADE",
+        }
+        try:
+            resp = httpx.get(url, params=params, headers=self._headers(), timeout=30)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                SchwabTokenManager().invalidate_token()
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+            logger.error("Schwab transactions API error: %s", e)
+            raise SchwabClientError("Schwab transactions API error") from e
+        except httpx.RequestError as e:
+            logger.error("Schwab transactions request error: %s", e)
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
+
+        return resp.json()

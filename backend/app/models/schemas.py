@@ -370,3 +370,38 @@ class PositionResponse(BaseModel):
 
 class PositionListResponse(BaseModel):
     positions: list[PositionResponse]
+
+
+# --- Schwab Import ---
+
+
+class ImportPreviewTrade(BaseModel):
+    ticker: str
+    trade_type: TRADE_TYPES
+    strike: float
+    expiration: str
+    premium: float
+    fees: float
+    quantity: int
+    opened_at: str
+    is_duplicate: bool
+
+
+class ImportPreviewResponse(BaseModel):
+    account_number: str  # masked "****1234"
+    trades: list[ImportPreviewTrade]
+    total: int
+    duplicates: int
+    new_count: int
+
+
+class ImportRequest(BaseModel):
+    start_date: str
+    end_date: str
+    position_strategy: STRATEGY_TYPES = "wheel"
+
+
+class ImportResultResponse(BaseModel):
+    imported: int
+    skipped_duplicates: int
+    positions_created: int
