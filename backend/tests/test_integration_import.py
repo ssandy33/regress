@@ -197,6 +197,16 @@ class TestImportAuthErrors:
         assert resp.status_code == 401
         assert "expired" in resp.json()["detail"].lower()
 
+    def test_generic_auth_error_returns_fallback_detail(self, client):
+        from app.services.schwab_auth import SchwabAuthError
+        with patch("app.services.schwab_import.SchwabClient") as mock_cls:
+            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+                "Schwab token refresh failed (401). Run 'python -m app.cli schwab-auth' to re-authorize."
+            )
+            resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Schwab authentication failed. Please re-authorize in Settings."
+
     def test_auth_error_is_logged(self, client, caplog):
         from app.services.schwab_auth import SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
