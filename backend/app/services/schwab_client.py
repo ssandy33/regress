@@ -37,6 +37,13 @@ def to_schwab_symbol(ticker: str) -> str:
     return SCHWAB_SYMBOL_MAP.get(ticker, ticker)
 
 
+def _to_iso8601(date_str: str) -> str:
+    """Convert YYYY-MM-DD to ISO 8601 UTC timestamp for Schwab Trader API."""
+    if "T" in date_str:
+        return date_str
+    return f"{date_str}T00:00:00.000Z"
+
+
 class SchwabClient:
     BASE_URL = "https://api.schwabapi.com/marketdata/v1"
     TRADER_BASE_URL = "https://api.schwabapi.com/trader/v1"
@@ -249,16 +256,16 @@ class SchwabClient:
 
         Args:
             account_hash: alphanumeric account hash from get_accounts()
-            start_date: ISO date string (YYYY-MM-DD)
-            end_date: ISO date string (YYYY-MM-DD)
+            start_date: date string (YYYY-MM-DD), converted to ISO 8601 for API
+            end_date: date string (YYYY-MM-DD), converted to ISO 8601 for API
         """
         if not account_hash.isalnum():
             raise SchwabClientError("Invalid account hash")
 
         url = f"{self.TRADER_BASE_URL}/accounts/{account_hash}/transactions"
         params = {
-            "startDate": start_date,
-            "endDate": end_date,
+            "startDate": _to_iso8601(start_date),
+            "endDate": _to_iso8601(end_date),
             "types": "TRADE",
         }
         try:

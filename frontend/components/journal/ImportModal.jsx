@@ -83,7 +83,7 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
                         <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{t.trade_type}</td>
                         <td className="px-3 py-2 text-slate-700 dark:text-slate-300">${t.strike}</td>
                         <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{t.expiration}</td>
-                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">${t.premium.toFixed(2)}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">${(t.premium ?? 0).toFixed(2)}</td>
                         <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{t.quantity}</td>
                         <td className="px-3 py-2">
                           {t.is_duplicate ? (
