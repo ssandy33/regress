@@ -101,7 +101,7 @@ def import_preview(start_date: str, end_date: str, db: DBSession = Depends(get_d
         return preview_import(db, start_date, end_date)
     except SchwabAuthError as e:
         logger.warning("Schwab auth failed during import preview: %s", e)
-        raise HTTPException(status_code=401, detail=_schwab_auth_detail(e))
+        raise HTTPException(status_code=401, detail=_schwab_auth_detail(e)) from e
     except SchwabClientError:
         raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")
     except Exception:
@@ -116,7 +116,7 @@ def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
         return execute_import(db, req.start_date, req.end_date, req.position_strategy)
     except SchwabAuthError as e:
         logger.warning("Schwab auth failed during import: %s", e)
-        raise HTTPException(status_code=401, detail=_schwab_auth_detail(e))
+        raise HTTPException(status_code=401, detail=_schwab_auth_detail(e)) from e
     except SchwabClientError:
         raise HTTPException(status_code=502, detail="Unable to fetch transactions from Schwab")
     except Exception:
