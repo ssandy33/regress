@@ -28,6 +28,9 @@ def compute_min_cc_strike(adjusted_basis: float, shares: int) -> float:
 
     Rounded to 2 decimal places.
     """
+    if shares <= 0:
+        logger.warning("compute_min_cc_strike called with shares=%d", shares)
+        return 0.0
     return round((adjusted_basis / shares) * 1.10, 2)
 
 

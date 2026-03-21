@@ -1,6 +1,8 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class DateRange(BaseModel):
@@ -370,3 +372,45 @@ class PositionResponse(BaseModel):
 
 class PositionListResponse(BaseModel):
     positions: list[PositionResponse]
+
+
+# --- Schwab Import ---
+
+
+class ImportPreviewTrade(BaseModel):
+    ticker: str
+    trade_type: TRADE_TYPES
+    strike: float
+    expiration: str
+    premium: float
+    fees: float
+    quantity: int
+    opened_at: str
+    is_duplicate: bool
+
+
+class ImportPreviewResponse(BaseModel):
+    account_number: str  # masked "****1234"
+    trades: list[ImportPreviewTrade]
+    total: int
+    duplicates: int
+    new_count: int
+
+
+class ImportRequest(BaseModel):
+    start_date: str
+    end_date: str
+    position_strategy: STRATEGY_TYPES = "wheel"
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def validate_date_format(cls, v):
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            raise ValueError("Date must be in YYYY-MM-DD format")
+        return v
+
+
+class ImportResultResponse(BaseModel):
+    imported: int
+    skipped_duplicates: int
+    positions_created: int

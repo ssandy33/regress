@@ -249,4 +249,22 @@ export async function deleteTrade(id) {
   await api.delete(`/api/journal/trades/${encodeURIComponent(id)}`);
 }
 
+// --- Schwab Import ---
+
+export async function previewSchwabImport(startDate, endDate) {
+  const { data } = await api.get('/api/journal/import/preview', {
+    params: { start_date: startDate, end_date: endDate },
+  });
+  return data;
+}
+
+export async function executeSchwabImport(startDate, endDate, positionStrategy = 'wheel') {
+  const { data } = await api.post('/api/journal/import', {
+    start_date: startDate,
+    end_date: endDate,
+    position_strategy: positionStrategy,
+  });
+  return data;
+}
+
 export default api;

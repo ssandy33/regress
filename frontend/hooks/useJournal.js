@@ -8,6 +8,8 @@ import {
   createTrade,
   updateTrade,
   deleteTrade,
+  previewSchwabImport,
+  executeSchwabImport,
 } from '../api/client';
 
 export function useJournal() {
@@ -15,6 +17,8 @@ export function useJournal() {
   const [selectedPosition, setSelectedPosition] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importLoading, setImportLoading] = useState(false);
 
   const fetchPositions = useCallback(async (status = null) => {
     setLoading(true);
@@ -107,6 +111,40 @@ export function useJournal() {
     }
   }, [selectedPosition, fetchPositions]);
 
+  const previewImport = useCallback(async (startDate, endDate) => {
+    setImportLoading(true);
+    try {
+      const data = await previewSchwabImport(startDate, endDate);
+      setImportPreview(data);
+      return data;
+    } catch {
+      toast.error('Failed to preview Schwab import');
+      return null;
+    } finally {
+      setImportLoading(false);
+    }
+  }, []);
+
+  const confirmImport = useCallback(async (startDate, endDate, positionStrategy = 'wheel') => {
+    setImportLoading(true);
+    try {
+      const result = await executeSchwabImport(startDate, endDate, positionStrategy);
+      toast.success(`Imported ${result.imported} trades`);
+      setImportPreview(null);
+      await fetchPositions();
+      return result;
+    } catch {
+      toast.error('Failed to import trades');
+      return null;
+    } finally {
+      setImportLoading(false);
+    }
+  }, [fetchPositions]);
+
+  const clearImportPreview = useCallback(() => {
+    setImportPreview(null);
+  }, []);
+
   useEffect(() => {
     fetchPositions();
   }, [fetchPositions]);
@@ -116,6 +154,8 @@ export function useJournal() {
     selectedPosition,
     loading,
     error,
+    importPreview,
+    importLoading,
     fetchPositions,
     selectPosition,
     clearSelection,
@@ -124,5 +164,8 @@ export function useJournal() {
     addTrade,
     editTrade,
     removeTrade,
+    previewImport,
+    confirmImport,
+    clearImportPreview,
   };
 }
