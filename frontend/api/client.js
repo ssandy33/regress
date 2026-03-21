@@ -155,6 +155,20 @@ export async function checkSchwabHealth() {
   return data;
 }
 
+export async function getSchwabAuthUrl(appKey) {
+  const { data } = await api.post('/api/settings/schwab/auth-url', { app_key: appKey });
+  return data;
+}
+
+export async function exchangeSchwabCallback(appKey, appSecret, callbackUrl) {
+  const { data } = await api.post('/api/settings/schwab/callback', {
+    app_key: appKey,
+    app_secret: appSecret,
+    callback_url: callbackUrl,
+  });
+  return data;
+}
+
 // --- Health ---
 
 export async function checkSourceHealth() {

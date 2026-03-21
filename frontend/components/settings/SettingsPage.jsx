@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import {
   getSettings, updateSetting, getCacheStats, clearCache, checkFredHealth,
   checkSchwabHealth, checkSourceHealth, getBackups, restoreBackup, getCacheFreshness,
-  refreshAllCache, refreshStaleCache,
+  refreshAllCache, refreshStaleCache, getSchwabAuthUrl, exchangeSchwabCallback,
 } from '../../api/client';
 import { formatNumber } from '../../utils/formatters';
 
@@ -33,6 +33,7 @@ export default function SettingsPage() {
   const [restoring, setRestoring] = useState(null);
   const [schwabStatus, setSchwabStatus] = useState(null);
   const [schwabTesting, setSchwabTesting] = useState(false);
+  const [schwabSetup, setSchwabSetup] = useState({ step: 0, appKey: '', appSecret: '', authUrl: '', callbackUrl: '', saving: false });
 
   useEffect(() => {
     Promise.all([
@@ -244,7 +245,7 @@ export default function SettingsPage() {
           <section className="bg-slate-50 dark:bg-slate-800 rounded-xl p-6 border border-slate-200 dark:border-slate-700">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-1">Schwab API</h2>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
-              OAuth 2.0 connection for Schwab market data.
+              OAuth 2.0 connection for Schwab market data and trade import.
             </p>
 
             <div className="flex items-center gap-2 mb-3">
@@ -263,28 +264,36 @@ export default function SettingsPage() {
                     Refresh token expires: {new Date(settings.schwab_token_expires).toLocaleString()}
                   </p>
                 )}
-                <button
-                  onClick={async () => {
-                    setSchwabTesting(true);
-                    try {
-                      const result = await checkSchwabHealth();
-                      setSchwabStatus(result);
-                      if (result.valid) {
-                        toast.success('Schwab connection is working');
-                      } else {
-                        toast.error(result.error || 'Schwab connection test failed');
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      setSchwabTesting(true);
+                      try {
+                        const result = await checkSchwabHealth();
+                        setSchwabStatus(result);
+                        if (result.valid) {
+                          toast.success('Schwab connection is working');
+                        } else {
+                          toast.error(result.error || 'Schwab connection test failed');
+                        }
+                      } catch {
+                        toast.error('Failed to test Schwab connection');
+                      } finally {
+                        setSchwabTesting(false);
                       }
-                    } catch {
-                      toast.error('Failed to test Schwab connection');
-                    } finally {
-                      setSchwabTesting(false);
-                    }
-                  }}
-                  disabled={schwabTesting}
-                  className="px-4 py-2 text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-600 disabled:opacity-50"
-                >
-                  {schwabTesting ? 'Testing...' : 'Test Connection'}
-                </button>
+                    }}
+                    disabled={schwabTesting}
+                    className="px-4 py-2 text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-600 disabled:opacity-50"
+                  >
+                    {schwabTesting ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  <button
+                    onClick={() => setSchwabSetup({ step: 1, appKey: '', appSecret: '', authUrl: '', callbackUrl: '', saving: false })}
+                    className="px-4 py-2 text-sm border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-600"
+                  >
+                    Re-authorize
+                  </button>
+                </div>
                 {schwabStatus && (
                   <div className="flex items-center gap-2 mt-2">
                     <span className={`w-2 h-2 rounded-full ${schwabStatus.valid ? 'bg-green-400' : 'bg-red-400'}`} />
@@ -294,14 +303,135 @@ export default function SettingsPage() {
                   </div>
                 )}
               </div>
-            ) : (
-              <div className="bg-white dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 p-4">
-                <p className="text-sm text-slate-600 dark:text-slate-300 mb-2">
-                  To connect, run the authorization CLI command:
-                </p>
-                <code className="block text-xs bg-slate-100 dark:bg-slate-800 px-3 py-2 rounded text-slate-800 dark:text-slate-200">
-                  cd backend && python -m app.cli schwab-auth
-                </code>
+            ) : null}
+
+            {/* Setup flow — shown when not configured or re-authorizing */}
+            {(schwabSetup.step > 0 || !settings?.schwab_configured) && (
+              <div className="mt-4 bg-white dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600 p-4 space-y-4">
+                {/* Step 1: Enter credentials */}
+                {(schwabSetup.step === 0 || schwabSetup.step === 1) && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Step 1: Enter your Schwab Developer App credentials</p>
+                    <input
+                      type="text"
+                      placeholder="App Key (Client ID)"
+                      value={schwabSetup.appKey}
+                      onChange={(e) => setSchwabSetup(s => ({ ...s, appKey: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                    />
+                    <input
+                      type="password"
+                      placeholder="App Secret (Client Secret)"
+                      value={schwabSetup.appSecret}
+                      onChange={(e) => setSchwabSetup(s => ({ ...s, appSecret: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          if (!schwabSetup.appKey.trim() || !schwabSetup.appSecret.trim()) {
+                            toast.error('Both App Key and App Secret are required');
+                            return;
+                          }
+                          try {
+                            const result = await getSchwabAuthUrl(schwabSetup.appKey.trim());
+                            setSchwabSetup(s => ({ ...s, step: 2, authUrl: result.auth_url }));
+                          } catch {
+                            toast.error('Failed to generate authorization URL');
+                          }
+                        }}
+                        disabled={!schwabSetup.appKey.trim() || !schwabSetup.appSecret.trim()}
+                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400"
+                      >
+                        Next
+                      </button>
+                      {settings?.schwab_configured && (
+                        <button
+                          onClick={() => setSchwabSetup({ step: 0, appKey: '', appSecret: '', authUrl: '', callbackUrl: '', saving: false })}
+                          className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Need credentials? Create an app at{' '}
+                      <a href="https://developer.schwab.com" target="_blank" rel="noopener noreferrer" className="text-blue-500 underline">
+                        developer.schwab.com
+                      </a>
+                      {' '}with callback URL: <code className="text-xs bg-slate-100 dark:bg-slate-800 px-1 rounded">https://127.0.0.1:8089/callback</code>
+                    </p>
+                  </div>
+                )}
+
+                {/* Step 2: Authorize and paste callback */}
+                {schwabSetup.step === 2 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Step 2: Authorize with Schwab</p>
+                    <ol className="text-sm text-slate-600 dark:text-slate-400 list-decimal list-inside space-y-1">
+                      <li>Click the link below to open Schwab&apos;s login page</li>
+                      <li>Log in and authorize the application</li>
+                      <li>You&apos;ll be redirected to a page that won&apos;t load — that&apos;s expected</li>
+                      <li>Copy the <strong>full URL</strong> from your browser&apos;s address bar</li>
+                    </ol>
+                    <a
+                      href={schwabSetup.authUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                    >
+                      Open Schwab Authorization
+                    </a>
+
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300 pt-2">Step 3: Paste the callback URL</p>
+                    <input
+                      type="text"
+                      placeholder="https://127.0.0.1:8089/callback?code=..."
+                      value={schwabSetup.callbackUrl}
+                      onChange={(e) => setSchwabSetup(s => ({ ...s, callbackUrl: e.target.value }))}
+                      className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          if (!schwabSetup.callbackUrl.trim()) {
+                            toast.error('Please paste the callback URL');
+                            return;
+                          }
+                          setSchwabSetup(s => ({ ...s, saving: true }));
+                          try {
+                            await exchangeSchwabCallback(
+                              schwabSetup.appKey.trim(),
+                              schwabSetup.appSecret.trim(),
+                              schwabSetup.callbackUrl.trim(),
+                            );
+                            toast.success('Schwab connected successfully!');
+                            setSchwabSetup({ step: 0, appKey: '', appSecret: '', authUrl: '', callbackUrl: '', saving: false });
+                            const s = await getSettings();
+                            setSettings(s);
+                          } catch (err) {
+                            const detail = err?.response?.data?.detail;
+                            toast.error(detail || 'Failed to exchange authorization code');
+                            setSchwabSetup(s => ({ ...s, appSecret: '', saving: false }));
+                            return;
+                          } finally {
+                            setSchwabSetup(s => ({ ...s, saving: false }));
+                          }
+                        }}
+                        disabled={!schwabSetup.callbackUrl.trim() || schwabSetup.saving}
+                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400"
+                      >
+                        {schwabSetup.saving ? 'Connecting...' : 'Connect'}
+                      </button>
+                      <button
+                        onClick={() => setSchwabSetup(s => ({ ...s, step: 1 }))}
+                        className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                      >
+                        Back
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </section>
