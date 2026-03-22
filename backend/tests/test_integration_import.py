@@ -166,7 +166,7 @@ class TestImportDateRangeValidation:
             "start_date": "2024-01-01",
             "end_date": "2024-12-31",  # exactly 365 days
         })
-        assert resp.status_code != 422
+        assert resp.status_code == 200
 
     def test_import_rejects_range_over_365_days(self, client):
         resp = client.post("/api/journal/import", json={
@@ -181,7 +181,7 @@ class TestImportDateRangeValidation:
             "start_date": "2024-01-01",
             "end_date": "2024-12-31",  # exactly 365 days
         })
-        assert resp.status_code != 422
+        assert resp.status_code == 200
 
 
 class TestImportAuthErrors:

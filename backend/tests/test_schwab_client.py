@@ -257,12 +257,22 @@ class TestGetPriceHistory:
         mock_tm.invalidate_token.assert_called_once()
 
 
+HANDLER_CALL_ARGS = {
+    "get_quote": ("AAPL",),
+    "get_option_chain": ("AAPL",),
+    "get_price_history": ("AAPL", "2024-01-01", "2024-01-03"),
+    "get_accounts": (),
+    "get_transactions": ("abc123", "2024-01-01", "2025-03-01"),
+}
+
+
 class TestErrorResponseLogging:
     """Tests for logging Schwab error response bodies (issue #73)."""
 
+    @pytest.mark.parametrize("handler_name", list(HANDLER_CALL_ARGS.keys()))
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
-    def test_transactions_error_logs_response_body(self, mock_get, mock_tm_cls, caplog):
+    def test_error_logs_response_body(self, mock_get, mock_tm_cls, caplog, handler_name):
         """Error handler logs the response body for debugging."""
         mock_tm_cls.return_value.get_access_token.return_value = "token"
         mock_resp = MagicMock(spec=httpx.Response)
@@ -276,13 +286,14 @@ class TestErrorResponseLogging:
         client = SchwabClient()
         with caplog.at_level(logging.ERROR, logger="app.services.schwab_client"):
             with pytest.raises(SchwabClientError):
-                client.get_transactions("abc123", "2024-01-01", "2025-03-01")
+                getattr(client, handler_name)(*HANDLER_CALL_ARGS[handler_name])
 
         assert any("date range too large" in r.message for r in caplog.records)
 
+    @pytest.mark.parametrize("handler_name", list(HANDLER_CALL_ARGS.keys()))
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
-    def test_transactions_error_message_stays_sanitized(self, mock_get, mock_tm_cls):
+    def test_error_message_stays_sanitized(self, mock_get, mock_tm_cls, handler_name):
         """SchwabClientError message must not leak the response body."""
         mock_tm_cls.return_value.get_access_token.return_value = "token"
         mock_resp = MagicMock(spec=httpx.Response)
@@ -295,6 +306,6 @@ class TestErrorResponseLogging:
 
         client = SchwabClient()
         with pytest.raises(SchwabClientError) as exc_info:
-            client.get_transactions("abc123", "2024-01-01", "2025-03-01")
+            getattr(client, handler_name)(*HANDLER_CALL_ARGS[handler_name])
 
         assert "secret internal detail" not in str(exc_info.value)
