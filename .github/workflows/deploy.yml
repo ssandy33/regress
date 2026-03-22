@@ -31,7 +31,7 @@ jobs:
               -i ~/.ssh/deploy_key \
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'ENDSSH'
             set -e
-            cd /opt/regression-tool
+            cd ~/regress
             OLD_HEAD=$(git rev-parse HEAD)
             git fetch origin main
             git reset --hard origin/main
