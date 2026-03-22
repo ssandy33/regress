@@ -1,0 +1,82 @@
+# Grafana alerting provisioning: rules and contact points
+# Alert: fires when >5 errors in 5 minutes
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: slack-webhook
+    receivers:
+      - uid: slack-contact
+        type: slack
+        settings:
+          url: ${SLACK_WEBHOOK_URL}
+          title: |
+            {{ template "slack.default.title" . }}
+          text: |
+            {{ len .Alerts.Firing }} alert(s) firing:
+            {{ range .Alerts.Firing }}
+            - {{ .Labels.alertname }}: {{ .Annotations.summary }}
+            {{ end }}
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: slack-webhook
+    group_by:
+      - grafana_folder
+      - alertname
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: error-rate-alerts
+    folder: Alerts
+    interval: 1m
+    rules:
+      - uid: high-error-rate
+        title: High Error Rate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: ""
+            model:
+              expr: "count_over_time({compose_service=~\"backend|frontend\"} | json | level=\"ERROR\" [5m])"
+              queryType: range
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              expression: A
+              reducer: sum
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 5
+              refId: C
+        for: 0s
+        annotations:
+          summary: "More than 5 errors detected in the last 5 minutes"
+          description: "The application error rate has exceeded the threshold. Check the Errors dashboard for details."
+        labels:
+          severity: warning
+        noDataState: OK
+        execErrState: Error
