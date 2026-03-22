@@ -87,6 +87,7 @@ services:
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - ALLOWED_USERS=${ALLOWED_USERS:-}
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - SCHWAB_ENCRYPTION_KEY=${SCHWAB_ENCRYPTION_KEY:-}
     volumes:
       - sqlite_data:/app/data
     logging:
