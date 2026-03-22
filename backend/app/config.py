@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     schwab_app_key: str = ""
     schwab_app_secret: str = ""
     alpha_vantage_api_key: str = ""
+    slack_webhook_url: str = ""
     schwab_encryption_key: str = ""
     nextauth_secret: Optional[str] = None
     allowed_users: str = ""
@@ -33,6 +34,29 @@ def get_fred_api_key() -> str:
         try:
             entry = (
                 db.query(AppSetting).filter(AppSetting.key == "fred_api_key").first()
+            )
+            if entry:
+                return entry.value
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return ""
+
+
+def get_slack_webhook_url() -> str:
+    """Get Slack webhook URL, checking DB settings as fallback."""
+    if settings.slack_webhook_url:
+        return settings.slack_webhook_url
+    try:
+        from app.models.database import SessionLocal, AppSetting
+
+        db = SessionLocal()
+        try:
+            entry = (
+                db.query(AppSetting)
+                .filter(AppSetting.key == "slack_webhook_url")
+                .first()
             )
             if entry:
                 return entry.value
