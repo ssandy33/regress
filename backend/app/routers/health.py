@@ -4,6 +4,7 @@ import requests as _requests
 from fastapi import APIRouter
 
 from app.config import get_fred_api_key
+from app.services.slack_notifier import get_slack_notifier
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,17 @@ def check_sources():
     results["all_down"] = all(
         not v["available"] for k, v in results.items() if k != "all_down"
     )
+
+    # Send Slack notifications for degraded sources
+    notifier = get_slack_notifier()
+    if notifier.is_configured:
+        for source, status in results.items():
+            if source == "all_down":
+                continue
+            if isinstance(status, dict) and not status.get("available"):
+                notifier.notify_health_degraded(source, status.get("error"))
+        results["slack"] = _check_slack()
+
     return results
 
 
@@ -100,3 +112,11 @@ def _check_zillow() -> dict:
     except Exception as e:
         logger.debug("Zillow health check failed: %s", e)
         return {"available": False, "error": "Connection failed"}
+
+
+def _check_slack() -> dict:
+    """Check whether Slack webhook is configured."""
+    notifier = get_slack_notifier()
+    if notifier.is_configured:
+        return {"available": True, "error": None}
+    return {"available": False, "error": "Webhook URL not configured"}
