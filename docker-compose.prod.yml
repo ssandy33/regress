@@ -21,6 +21,55 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  loki:
+    image: grafana/loki:3.4.2
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./deploy/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=-", "http://127.0.0.1:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-https://${DOMAIN}/grafana/}
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-changeme}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_LOG_LEVEL=warn
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
   backend:
     build: ./backend
     # No ports exposed — only accessible via Caddy through Docker network
@@ -32,8 +81,16 @@ services:
       - DATABASE_URL=sqlite:///./data/regression_tool.db
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - ALLOWED_USERS=${ALLOWED_USERS:-}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
     volumes:
       - sqlite_data:/app/data
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        loki-retries: "3"
+        loki-batch-size: "400"
+        loki-external-labels: "job=regression-tool,service=backend"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
       interval: 30s
@@ -57,6 +114,13 @@ services:
       - GITHUB_SECRET=${GITHUB_SECRET:-}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-}
       - ALLOWED_USERS=${ALLOWED_USERS:-}
+    logging:
+      driver: loki
+      options:
+        loki-url: "http://localhost:3100/loki/api/v1/push"
+        loki-retries: "3"
+        loki-batch-size: "400"
+        loki-external-labels: "job=regression-tool,service=frontend"
     healthcheck:
       test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://127.0.0.1:8080/', (r) => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
@@ -73,3 +137,5 @@ volumes:
   sqlite_data:
   caddy_data:
   caddy_config:
+  loki_data:
+  grafana_data:
