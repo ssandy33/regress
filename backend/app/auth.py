@@ -32,17 +32,6 @@ def is_auth_configured() -> bool:
     return bool(settings.nextauth_secret)
 
 
-def _is_partially_configured() -> bool:
-    """Return True when NEXTAUTH_SECRET is set but empty or whitespace-only.
-
-    Since auth now depends only on NEXTAUTH_SECRET, partial configuration
-    means the variable exists but is blank. This is kept for forward
-    compatibility if additional required vars are added later.
-    """
-    # With only one required var, partial config is not meaningfully possible.
-    # Always return False — auth is either configured or not.
-    return False
-
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
@@ -58,15 +47,9 @@ async def get_current_user(
     global _auth_warning_logged
     if not is_auth_configured():
         if not _auth_warning_logged:
-            if _is_partially_configured():
-                logger.warning(
-                    "Auth partially configured — NEXTAUTH_SECRET is required. "
-                    "Running without auth."
-                )
-            else:
-                logger.info(
-                    "Auth env vars not set — auth disabled, allowing anonymous access"
-                )
+            logger.info(
+                "Auth env vars not set — auth disabled, allowing anonymous access"
+            )
             _auth_warning_logged = True
         return {"sub": "anonymous", "username": "anonymous"}
 

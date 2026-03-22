@@ -4,7 +4,7 @@ Covers acceptance criteria from issue #20 (original auth) and issue #28
 (remove GITHUB_ID/GITHUB_SECRET from backend):
 - AC1: App works out of the box with no auth env vars set
 - AC2: Setting NEXTAUTH_SECRET enables full auth (no GitHub secrets needed)
-- AC3: _is_partially_configured() always returns False (single-var model)
+- AC3: _is_partially_configured() removed as dead code (single-var model)
 - AC4: ALLOWED_USERS still restricts access when auth is enabled
 - AC5: No DEV_AUTH_BYPASS flag needed
 - AC6: github_id and github_secret removed from Settings
@@ -15,11 +15,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import jwt
-import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.auth import get_current_user, is_auth_configured, _is_partially_configured
+from app.auth import get_current_user, is_auth_configured
 
 SECRET = "test-secret-key-for-unit-tests"
 
@@ -30,7 +29,7 @@ def _make_app():
 
     @app.get("/protected")
     async def protected(
-        user: dict = pytest.importorskip("fastapi").Depends(get_current_user),
+        user: dict = Depends(get_current_user),
     ):
         return {"user": user}
 
@@ -240,15 +239,11 @@ class TestAC2FullAuthEnabled:
 class TestAC3PartialConfig:
     """AC3: With single-var auth model, partial config is not possible."""
 
-    def test_is_partially_configured_always_false(self):
-        """_is_partially_configured() always returns False with single-var model."""
-        with patch("app.auth.settings") as mock_settings:
-            _mock_no_auth(mock_settings)
-            assert _is_partially_configured() is False
+    def test_no_partial_config_function(self):
+        """_is_partially_configured() has been removed as dead code."""
+        import app.auth
 
-        with patch("app.auth.settings") as mock_settings:
-            _mock_full_auth(mock_settings)
-            assert _is_partially_configured() is False
+        assert not hasattr(app.auth, "_is_partially_configured")
 
     def test_anonymous_access_when_secret_not_set(self):
         """Anonymous access works when NEXTAUTH_SECRET is not set."""
