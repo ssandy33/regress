@@ -64,7 +64,7 @@ echo ""
 # 5. Create app user
 # --------------------------------------------------
 APP_USER="regapp"
-APP_DIR="/opt/regression-tool"
+APP_DIR="$HOME/regress"
 
 if id "$APP_USER" &> /dev/null; then
     echo ">>> App user '$APP_USER' already exists."
