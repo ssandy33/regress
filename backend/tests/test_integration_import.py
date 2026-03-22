@@ -150,6 +150,40 @@ class TestImportExecute:
         assert data["positions_created"] == 1  # only MSFT created, AAPL reused
 
 
+class TestImportDateRangeValidation:
+    """Tests for date range validation (issue #73)."""
+
+    def test_preview_rejects_range_over_365_days(self, client):
+        resp = client.get("/api/journal/import/preview", params={
+            "start_date": "2024-01-01",
+            "end_date": "2025-02-04",  # 400 days
+        })
+        assert resp.status_code == 422
+        assert "365" in resp.json()["detail"]
+
+    def test_preview_accepts_range_at_365_days(self, client, mock_schwab):
+        resp = client.get("/api/journal/import/preview", params={
+            "start_date": "2024-01-01",
+            "end_date": "2024-12-31",  # exactly 365 days
+        })
+        assert resp.status_code == 200
+
+    def test_import_rejects_range_over_365_days(self, client):
+        resp = client.post("/api/journal/import", json={
+            "start_date": "2024-01-01",
+            "end_date": "2025-02-04",  # 400 days
+        })
+        assert resp.status_code == 422
+        assert "365" in resp.json()["detail"]
+
+    def test_import_accepts_range_at_365_days(self, client, mock_schwab):
+        resp = client.post("/api/journal/import", json={
+            "start_date": "2024-01-01",
+            "end_date": "2024-12-31",  # exactly 365 days
+        })
+        assert resp.status_code == 200
+
+
 class TestImportAuthErrors:
     """Tests for improved auth error messages and logging (issue #69)."""
 

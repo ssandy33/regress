@@ -148,4 +148,28 @@ test.describe('Schwab Import', () => {
     await page.getByTestId('preview-import-btn').click();
     await expect(page.getByTestId('confirm-import-btn')).toBeDisabled();
   });
+
+  test('ESC key dismisses the modal', async ({ page }) => {
+    await page.getByTestId('import-schwab-btn').click();
+    await expect(page.getByTestId('import-modal')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('import-modal')).not.toBeVisible();
+  });
+
+  test('backdrop click dismisses the modal', async ({ page }) => {
+    await page.getByTestId('import-schwab-btn').click();
+    await expect(page.getByTestId('import-modal')).toBeVisible();
+
+    await page.getByTestId('import-backdrop').click({ position: { x: 5, y: 5 } });
+    await expect(page.getByTestId('import-modal')).not.toBeVisible();
+  });
+
+  test('clicking inside modal does not dismiss it', async ({ page }) => {
+    await page.getByTestId('import-schwab-btn').click();
+    await expect(page.getByTestId('import-modal')).toBeVisible();
+
+    await page.getByTestId('import-modal').click();
+    await expect(page.getByTestId('import-modal')).toBeVisible();
+  });
 });

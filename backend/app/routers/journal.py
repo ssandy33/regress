@@ -97,6 +97,8 @@ def import_preview(start_date: str, end_date: str, db: DBSession = Depends(get_d
     """Preview Schwab transactions available for import."""
     if not _is_valid_date(start_date) or not _is_valid_date(end_date):
         raise HTTPException(status_code=422, detail="Dates must be in YYYY-MM-DD format")
+    if _date_range_exceeds_limit(start_date, end_date):
+        raise HTTPException(status_code=422, detail="Date range cannot exceed 1 year (365 days)")
     try:
         return preview_import(db, start_date, end_date)
     except SchwabAuthError as e:
@@ -112,6 +114,10 @@ def import_preview(start_date: str, end_date: str, db: DBSession = Depends(get_d
 @router.post("/import", response_model=ImportResultResponse)
 def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
     """Import Schwab transactions into the trade journal."""
+    if not _is_valid_date(req.start_date) or not _is_valid_date(req.end_date):
+        raise HTTPException(status_code=422, detail="Dates must be in YYYY-MM-DD format")
+    if _date_range_exceeds_limit(req.start_date, req.end_date):
+        raise HTTPException(status_code=422, detail="Date range cannot exceed 1 year (365 days)")
     try:
         return execute_import(db, req.start_date, req.end_date, req.position_strategy)
     except SchwabAuthError as e:
@@ -140,6 +146,24 @@ def _schwab_auth_detail(err: SchwabAuthError) -> str:
 
 
 def _is_valid_date(date_str: str) -> bool:
-    """Check if a string matches YYYY-MM-DD format."""
+    """Check if a string is a valid YYYY-MM-DD date."""
     import re
-    return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", date_str))
+    from datetime import date
+    if not isinstance(date_str, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+        return False
+    try:
+        date.fromisoformat(date_str)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _date_range_exceeds_limit(start_date: str, end_date: str, max_days: int = 365) -> bool:
+    """Check if a date range exceeds the maximum allowed days."""
+    from datetime import date
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except (ValueError, TypeError):
+        return False
+    return (end - start).days > max_days

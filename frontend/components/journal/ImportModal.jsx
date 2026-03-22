@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 const STRATEGIES = [
   { value: 'csp', label: 'Cash Secured Put' },
@@ -22,6 +22,14 @@ function defaultDates() {
 }
 
 export default function ImportModal({ onClose, onPreview, onImport, preview, loading }) {
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && !loading) onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose, loading]);
+
   const defaults = defaultDates();
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
@@ -43,8 +51,8 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
   const labelClass = 'block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1';
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div data-testid="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-modal-title" className="bg-white dark:bg-slate-800 rounded-xl p-6 w-full max-w-2xl shadow-xl max-h-[80vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="import-backdrop" aria-label="Close modal" onClick={loading ? undefined : onClose}>
+      <div data-testid="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-modal-title" className="bg-white dark:bg-slate-800 rounded-xl p-6 w-full max-w-2xl shadow-xl max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <h2 id="import-modal-title" className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Import from Schwab</h2>
 
         {result ? (
