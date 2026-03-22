@@ -31,8 +31,6 @@ services:
       - FRED_API_KEY=${FRED_API_KEY}
       - DATABASE_URL=sqlite:///./data/regression_tool.db
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
-      - GITHUB_ID=${GITHUB_ID:-}
-      - GITHUB_SECRET=${GITHUB_SECRET:-}
       - ALLOWED_USERS=${ALLOWED_USERS:-}
     volumes:
       - sqlite_data:/app/data
