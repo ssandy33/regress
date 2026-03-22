@@ -2,20 +2,26 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
-from app.models.database import CacheEntry
+from app.models.database import CacheEntry, get_db
 
 
-def _insert_cache_entry(client, asset_key, source_name="fred",
+@pytest.fixture()
+def db(client):
+    """Yield a DB session from the test dependency override."""
+    from app.main import app
+    gen = app.dependency_overrides[get_db]()
+    session = next(gen)
+    yield session
+
+
+def _insert_cache_entry(db, asset_key, source_name="fred",
                         frequency="daily", data='{"value": [1,2,3]}',
                         fetched_at=None):
-    """Insert a CacheEntry via the test DB session."""
+    """Insert a CacheEntry directly via a DB session."""
     if fetched_at is None:
         fetched_at = datetime.now(timezone.utc).isoformat()
-    from app.models.database import get_db
-    from app.main import app
-    db_gen = app.dependency_overrides[get_db]()
-    db = next(db_gen)
     entry = CacheEntry(
         asset_key=asset_key,
         source_name=source_name,
@@ -65,10 +71,10 @@ class TestCacheClearAndFreshness:
         assert data["status"] == "ok"
         assert data["message"] == "Cache cleared"
 
-    def test_clear_cache_with_entries(self, client):
+    def test_clear_cache_with_entries(self, client, db):
         """Clearing a populated cache removes all entries."""
-        _insert_cache_entry(client, "fred:DGS10")
-        _insert_cache_entry(client, "schwab:AAPL", source_name="schwab")
+        _insert_cache_entry(db, "fred:DGS10")
+        _insert_cache_entry(db, "schwab:AAPL", source_name="schwab")
 
         # Verify entries exist
         stats = client.get("/api/settings/cache").json()
@@ -88,10 +94,10 @@ class TestCacheClearAndFreshness:
         data = response.json()
         assert data["entries"] == []
 
-    def test_cache_freshness_fresh_entry(self, client):
+    def test_cache_freshness_fresh_entry(self, client, db):
         """Entry fetched 5 days ago is labeled 'fresh'."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
-        _insert_cache_entry(client, "fred:DGS10", fetched_at=fetched_at)
+        _insert_cache_entry(db, "fred:DGS10", fetched_at=fetched_at)
 
         response = client.get("/api/settings/cache/freshness")
         assert response.status_code == 200
@@ -101,32 +107,32 @@ class TestCacheClearAndFreshness:
         assert entries[0]["age_days"] == 5
         assert entries[0]["asset_key"] == "fred:DGS10"
 
-    def test_cache_freshness_stale_entry(self, client):
+    def test_cache_freshness_stale_entry(self, client, db):
         """Entry fetched 60 days ago is labeled 'stale'."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
-        _insert_cache_entry(client, "fred:DGS10", fetched_at=fetched_at)
+        _insert_cache_entry(db, "fred:DGS10", fetched_at=fetched_at)
 
         response = client.get("/api/settings/cache/freshness")
         entries = response.json()["entries"]
         assert entries[0]["freshness"] == "stale"
         assert entries[0]["age_days"] == 60
 
-    def test_cache_freshness_very_stale_entry(self, client):
+    def test_cache_freshness_very_stale_entry(self, client, db):
         """Entry fetched 100 days ago is labeled 'very_stale'."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
-        _insert_cache_entry(client, "fred:DGS10", fetched_at=fetched_at)
+        _insert_cache_entry(db, "fred:DGS10", fetched_at=fetched_at)
 
         response = client.get("/api/settings/cache/freshness")
         entries = response.json()["entries"]
         assert entries[0]["freshness"] == "very_stale"
         assert entries[0]["age_days"] == 100
 
-    def test_cache_freshness_naive_datetime(self, client):
+    def test_cache_freshness_naive_datetime(self, client, db):
         """Naive datetime (no tzinfo) is treated as UTC."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=10)).strftime(
             "%Y-%m-%dT%H:%M:%S"
         )
-        _insert_cache_entry(client, "fred:DGS10", fetched_at=fetched_at)
+        _insert_cache_entry(db, "fred:DGS10", fetched_at=fetched_at)
 
         response = client.get("/api/settings/cache/freshness")
         entries = response.json()["entries"]
@@ -239,6 +245,11 @@ class TestHealthChecks:
         assert data["valid"] is False
         assert data["error"] == "HTTP 401"
 
+    @pytest.mark.skip(reason="Alpha Vantage health check lives in routers/health.py, not settings.py. Tracked separately.")
+    def test_alpha_vantage_health_check(self):
+        """AC from issue #84 — deferred: endpoint is in health router, not settings router."""
+        pass
+
 
 class TestBackups:
     """Tests for GET /api/settings/backups and POST /api/settings/backups/restore."""
@@ -319,10 +330,10 @@ class TestCacheRefresh:
         assert response.status_code == 200
         assert response.json()["results"] == []
 
-    def test_refresh_all_with_entries(self, client, mock_fetcher):
+    def test_refresh_all_with_entries(self, client, db, mock_fetcher):
         """All entries are refreshed successfully."""
-        _insert_cache_entry(client, "fred:DGS10")
-        _insert_cache_entry(client, "schwab:AAPL", source_name="schwab")
+        _insert_cache_entry(db, "fred:DGS10")
+        _insert_cache_entry(db, "schwab:AAPL", source_name="schwab")
 
         response = client.post("/api/settings/cache/refresh-all")
         assert response.status_code == 200
@@ -330,20 +341,20 @@ class TestCacheRefresh:
         assert len(results) == 2
         assert all(r["status"] == "refreshed" for r in results)
 
-    def test_refresh_all_skips_zillow_csv(self, client, mock_fetcher):
+    def test_refresh_all_skips_zillow_csv(self, client, db, mock_fetcher):
         """The zillow:__csv__ entry is skipped during refresh-all."""
-        _insert_cache_entry(client, "zillow:__csv__", source_name="zillow")
-        _insert_cache_entry(client, "fred:DGS10")
+        _insert_cache_entry(db, "zillow:__csv__", source_name="zillow")
+        _insert_cache_entry(db, "fred:DGS10")
 
         response = client.post("/api/settings/cache/refresh-all")
         results = response.json()["results"]
         assert len(results) == 1
         assert results[0]["asset_key"] == "fred:DGS10"
 
-    def test_refresh_all_partial_failure(self, client):
+    def test_refresh_all_partial_failure(self, client, db):
         """Mixed success/failure returns per-entry status with sanitized errors."""
-        _insert_cache_entry(client, "fred:DGS10")
-        _insert_cache_entry(client, "fred:CPIAUCSL")
+        _insert_cache_entry(db, "fred:DGS10")
+        _insert_cache_entry(db, "fred:CPIAUCSL")
 
         call_count = 0
 
@@ -366,21 +377,21 @@ class TestCacheRefresh:
         # Verify raw exception is NOT leaked
         assert "Connection timed out" not in str(results)
 
-    def test_refresh_stale_no_stale_entries(self, client):
+    def test_refresh_stale_no_stale_entries(self, client, db):
         """All entries are fresh (<30 days), none are refreshed."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
-        _insert_cache_entry(client, "fred:DGS10", fetched_at=fetched_at)
+        _insert_cache_entry(db, "fred:DGS10", fetched_at=fetched_at)
 
         response = client.post("/api/settings/cache/refresh-stale")
         assert response.status_code == 200
         assert response.json()["results"] == []
 
-    def test_refresh_stale_with_stale_entries(self, client, mock_fetcher):
+    def test_refresh_stale_with_stale_entries(self, client, db, mock_fetcher):
         """Only stale entries (>30 days) are refreshed."""
         fresh_at = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         stale_at = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
-        _insert_cache_entry(client, "fred:DGS10", fetched_at=fresh_at)
-        _insert_cache_entry(client, "fred:CPIAUCSL", fetched_at=stale_at)
+        _insert_cache_entry(db, "fred:DGS10", fetched_at=fresh_at)
+        _insert_cache_entry(db, "fred:CPIAUCSL", fetched_at=stale_at)
 
         response = client.post("/api/settings/cache/refresh-stale")
         results = response.json()["results"]
@@ -388,12 +399,12 @@ class TestCacheRefresh:
         assert results[0]["asset_key"] == "fred:CPIAUCSL"
         assert results[0]["status"] == "refreshed"
 
-    def test_refresh_stale_skips_zillow_csv(self, client, mock_fetcher):
+    def test_refresh_stale_skips_zillow_csv(self, client, db, mock_fetcher):
         """The zillow:__csv__ entry is skipped even when stale."""
         stale_at = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
-        _insert_cache_entry(client, "zillow:__csv__", source_name="zillow",
+        _insert_cache_entry(db, "zillow:__csv__", source_name="zillow",
                             fetched_at=stale_at)
-        _insert_cache_entry(client, "fred:DGS10", fetched_at=stale_at)
+        _insert_cache_entry(db, "fred:DGS10", fetched_at=stale_at)
 
         response = client.post("/api/settings/cache/refresh-stale")
         results = response.json()["results"]
