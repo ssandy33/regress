@@ -167,12 +167,10 @@ NEXTAUTH_URL=${NEXTAUTH_URL}
 ALLOWED_USERS=${ALLOWED_USERS}
 EOF
 
-# Also create backend/.env (no NEXTAUTH_URL — only needed by frontend)
+# Also create backend/.env (only NEXTAUTH_SECRET for JWT verification — no GitHub OAuth secrets)
 cat > "$APP_DIR/backend/.env" <<EOF
 FRED_API_KEY=${FRED_API_KEY}
 NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-GITHUB_ID=${GITHUB_ID}
-GITHUB_SECRET=${GITHUB_SECRET}
 ALLOWED_USERS=${ALLOWED_USERS}
 EOF
 
