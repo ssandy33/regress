@@ -144,7 +144,10 @@ def _schwab_auth_detail(err: SchwabAuthError) -> str:
 
 def _is_valid_date(date_str: str) -> bool:
     """Check if a string is a valid YYYY-MM-DD date."""
+    import re
     from datetime import date
+    if not isinstance(date_str, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str):
+        return False
     try:
         date.fromisoformat(date_str)
         return True
