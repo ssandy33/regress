@@ -4,6 +4,7 @@ Wraps quote and price history endpoints using SchwabTokenManager for auth.
 """
 
 import logging
+import re
 
 import httpx
 import pandas as pd
@@ -259,7 +260,7 @@ class SchwabClient:
             start_date: date string (YYYY-MM-DD), converted to ISO 8601 for API
             end_date: date string (YYYY-MM-DD), converted to ISO 8601 for API
         """
-        if not account_hash.isalnum():
+        if not account_hash or not re.fullmatch(r'[A-Za-z0-9_\-]+', account_hash):
             raise SchwabClientError("Invalid account hash")
 
         url = f"{self.TRADER_BASE_URL}/accounts/{account_hash}/transactions"
