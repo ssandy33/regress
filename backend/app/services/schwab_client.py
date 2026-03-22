@@ -9,7 +9,7 @@ import httpx
 import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
+from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError, SchwabTokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class SchwabClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
-                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab quote API error: %s — response body: %s", e, e.response.text)
             raise SchwabClientError("Schwab quote API error") from e
         except httpx.RequestError as e:
@@ -142,7 +142,7 @@ class SchwabClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
-                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab chains API error: %s — response body: %s", e, e.response.text)
             raise SchwabClientError("Schwab option chains API error") from e
         except httpx.RequestError as e:
@@ -196,7 +196,7 @@ class SchwabClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
-                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab price history API error for '%s': %s — response body: %s", ticker, e, e.response.text)
             raise SchwabClientError("Schwab price history API error") from e
         except httpx.RequestError as e:
@@ -236,7 +236,7 @@ class SchwabClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
-                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab accounts API error: %s — response body: %s", e, e.response.text)
             raise SchwabClientError("Schwab accounts API error") from e
         except httpx.RequestError as e:
@@ -274,7 +274,7 @@ class SchwabClient:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 401:
                 SchwabTokenManager().invalidate_token()
-                raise SchwabAuthError("Schwab API returned 401 — token may be invalid") from e
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab transactions API error: %s — response body: %s", e, e.response.text)
             raise SchwabClientError("Schwab transactions API error") from e
         except httpx.RequestError as e:

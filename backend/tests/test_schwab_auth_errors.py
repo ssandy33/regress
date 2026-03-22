@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
+from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError, SchwabTokenManager
 
 
 URL_PATTERN = re.compile(r"https?://")
@@ -64,6 +64,7 @@ class TestRefreshTokenErrorSanitization:
         assert not URL_PATTERN.search(msg), f"URL leaked in error message: {msg}"
         assert "400" not in msg
         assert "re-authorize" in msg.lower() or "schwab-auth" in msg.lower()
+        assert exc_info.value.code == SchwabAuthCode.REFRESH_FAILED
 
     def test_request_error_does_not_leak_url(self):
         """Network-level errors must not expose raw exception text."""
@@ -83,6 +84,7 @@ class TestRefreshTokenErrorSanitization:
         assert not URL_PATTERN.search(msg), f"URL leaked in error message: {msg}"
         assert "Connection refused" not in msg
         assert "try again" in msg.lower()
+        assert exc_info.value.code == SchwabAuthCode.NETWORK_ERROR
 
     def test_401_still_mentions_reauth(self):
         """401 errors should still tell the user to re-authorize."""
@@ -98,5 +100,6 @@ class TestRefreshTokenErrorSanitization:
         with patch("app.services.schwab_auth.get_schwab_credentials", return_value=("k", "s")), \
              patch("httpx.post", side_effect=exc), \
              patch("app.models.database.SessionLocal", return_value=mock_db):
-            with pytest.raises(SchwabAuthError, match="schwab-auth"):
+            with pytest.raises(SchwabAuthError, match="schwab-auth") as exc_info:
                 mgr.get_access_token()
+            assert exc_info.value.code == SchwabAuthCode.REFRESH_FAILED_401

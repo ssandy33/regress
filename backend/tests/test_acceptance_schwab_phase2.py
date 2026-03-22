@@ -21,7 +21,7 @@ from app.services.data_fetcher import (
 )
 from app.services.cache import CacheService
 from app.services.schwab_client import SchwabClient, SchwabClientError
-from app.services.schwab_auth import SchwabAuthError
+from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
 from app.services.options_scanner import OptionScanner, OptionScannerError
 from app.models.schemas import MarketContext
 
@@ -157,7 +157,7 @@ class TestAC2_CurrentPriceViaSchwab:
         """SchwabAuthError also raises OptionScannerError."""
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
-        mock_client.get_quote.side_effect = SchwabAuthError("Token expired")
+        mock_client.get_quote.side_effect = SchwabAuthError("Token expired", code=SchwabAuthCode.TOKEN_EXPIRED)
         scanner = OptionScanner()
 
         with pytest.raises(OptionScannerError, match="Cannot get current price"):
@@ -264,7 +264,7 @@ class TestAC4_CacheBehaviorUnchanged:
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_stale_cache_fallback_on_auth_error(self, mock_schwab):
         """SchwabAuthError also triggers stale cache fallback."""
-        mock_schwab.side_effect = SchwabAuthError("Token expired")
+        mock_schwab.side_effect = SchwabAuthError("Token expired", code=SchwabAuthCode.TOKEN_EXPIRED)
         cache = _mock_cache(has_stale=True)
         fetcher = DataFetcher(cache)
 

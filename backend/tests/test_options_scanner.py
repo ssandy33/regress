@@ -500,12 +500,13 @@ class TestScanWithSchwabChain:
     @patch("app.services.options_scanner.SchwabClient")
     def test_schwab_auth_error_returns_sanitized_message(self, mock_client_cls, scanner, cc_request):
         """No token configured error must not leak internal details (issue #41)."""
-        from app.services.schwab_auth import SchwabAuthError
+        from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
 
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         mock_client.get_option_chain.side_effect = SchwabAuthError(
-            "No Schwab refresh token found. Run 'python -m app.cli schwab-auth' to authorize."
+            "No Schwab refresh token found. Run 'python -m app.cli schwab-auth' to authorize.",
+            code=SchwabAuthCode.TOKEN_MISSING,
         )
 
         with pytest.raises(OptionScannerError, match="Options scanning is unavailable") as exc_info:

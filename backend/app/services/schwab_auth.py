@@ -7,6 +7,7 @@ Access tokens expire in 30 minutes, refresh tokens in 7 days.
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 
 import httpx
 
@@ -25,9 +26,23 @@ SCHWAB_REDIRECT_URI = "https://127.0.0.1:8089/callback"
 ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 120
 
 
+class SchwabAuthCode(str, Enum):
+    """Stable error codes for SchwabAuthError dispatch."""
+    TOKEN_MISSING = "token_missing"
+    TOKEN_EXPIRED = "token_expired"
+    NOT_CONFIGURED = "not_configured"
+    REFRESH_FAILED_401 = "refresh_failed_401"
+    REFRESH_FAILED = "refresh_failed"
+    NETWORK_ERROR = "network_error"
+    API_401 = "api_401"
+
+
 class SchwabAuthError(Exception):
     """Raised when Schwab authentication fails and re-auth is needed."""
-    pass
+
+    def __init__(self, message: str, code: SchwabAuthCode = SchwabAuthCode.REFRESH_FAILED):
+        super().__init__(message)
+        self.code = code
 
 
 class SchwabTokenManager:
@@ -133,7 +148,8 @@ class SchwabTokenManager:
         if not refresh_value:
             raise SchwabAuthError(
                 "No Schwab refresh token found. "
-                "Run 'python -m app.cli schwab-auth' to authorize."
+                "Run 'python -m app.cli schwab-auth' to authorize.",
+                code=SchwabAuthCode.TOKEN_MISSING,
             )
 
         # Check if refresh token itself is expired
@@ -143,7 +159,8 @@ class SchwabTokenManager:
             if refresh_expires <= now_utc:
                 raise SchwabAuthError(
                     "Schwab refresh token has expired. "
-                    "Run 'python -m app.cli schwab-auth' to re-authorize."
+                    "Run 'python -m app.cli schwab-auth' to re-authorize.",
+                    code=SchwabAuthCode.TOKEN_EXPIRED,
                 )
             # Warn if refresh token expires within 48 hours
             hours_remaining = (refresh_expires - now_utc).total_seconds() / 3600
@@ -158,7 +175,8 @@ class SchwabTokenManager:
         if not app_key or not app_secret:
             raise SchwabAuthError(
                 "Schwab app key/secret not configured. "
-                "Run 'python -m app.cli schwab-auth' to set up."
+                "Run 'python -m app.cli schwab-auth' to set up.",
+                code=SchwabAuthCode.NOT_CONFIGURED,
             )
 
         try:
@@ -177,17 +195,20 @@ class SchwabTokenManager:
             if e.response.status_code == 401:
                 raise SchwabAuthError(
                     "Schwab token refresh failed (401). "
-                    "Run 'python -m app.cli schwab-auth' to re-authorize."
+                    "Run 'python -m app.cli schwab-auth' to re-authorize.",
+                    code=SchwabAuthCode.REFRESH_FAILED_401,
                 ) from e
             logger.error("Schwab token refresh HTTP error: %s", e)
             raise SchwabAuthError(
                 "Schwab token refresh failed. "
-                "Run 'python -m app.cli schwab-auth' to re-authorize."
+                "Run 'python -m app.cli schwab-auth' to re-authorize.",
+                code=SchwabAuthCode.REFRESH_FAILED,
             ) from e
         except httpx.RequestError as e:
             logger.error("Schwab token refresh request error: %s", e)
             raise SchwabAuthError(
-                "Unable to reach Schwab API for token refresh. Please try again later."
+                "Unable to reach Schwab API for token refresh. Please try again later.",
+                code=SchwabAuthCode.NETWORK_ERROR,
             ) from e
 
         token_data = resp.json()
