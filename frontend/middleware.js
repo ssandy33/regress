@@ -1,26 +1,16 @@
 import { NextResponse } from "next/server";
 
 /**
- * Auth is opt-in: middleware only enforces authentication when all three
- * OAuth env vars are configured (NEXTAUTH_SECRET, GITHUB_ID, GITHUB_SECRET).
- * When unconfigured or partially configured, all routes are public.
+ * Auth is opt-in: middleware enforces authentication when NEXTAUTH_SECRET is
+ * set. This aligns with the backend, which also checks only NEXTAUTH_SECRET.
+ * GITHUB_ID and GITHUB_SECRET are still required by NextAuth's OAuth provider
+ * but are not checked here — the middleware guard fires on NEXTAUTH_SECRET alone.
+ * When NEXTAUTH_SECRET is absent, all routes are public.
  */
 
 const authSecret = process.env.NEXTAUTH_SECRET;
-const githubId = process.env.GITHUB_ID;
-const githubSecret = process.env.GITHUB_SECRET;
 
-const authFullyConfigured = Boolean(authSecret && githubId && githubSecret);
-
-const isPartiallyConfigured =
-  !authFullyConfigured && Boolean(authSecret || githubId || githubSecret);
-
-if (isPartiallyConfigured) {
-  console.warn(
-    "Auth partially configured — all three env vars (NEXTAUTH_SECRET, GITHUB_ID, GITHUB_SECRET) " +
-      "are required to enable authentication. Running without auth.",
-  );
-}
+const authFullyConfigured = Boolean(authSecret);
 
 async function middleware(request) {
   if (!authFullyConfigured) {
