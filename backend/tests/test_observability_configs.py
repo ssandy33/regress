@@ -56,6 +56,15 @@ class TestDockerComposeServices:
         memory = loki["deploy"]["resources"]["limits"]["memory"]
         assert memory == "256M"
 
+    def test_loki_exposes_port_3100_on_loopback(self, compose_config: dict) -> None:
+        """Loki exposes port 3100 bound to 127.0.0.1 for the Docker log driver."""
+        loki = compose_config["services"]["loki"]
+        assert "ports" in loki
+        ports = loki["ports"]
+        assert any("3100" in str(p) for p in ports)
+        # Verify it binds to loopback only (not externally accessible)
+        assert any("127.0.0.1" in str(p) for p in ports)
+
     def test_grafana_service_exists(self, compose_config: dict) -> None:
         """Grafana service is defined in docker-compose."""
         assert "grafana" in compose_config["services"]
@@ -109,6 +118,17 @@ class TestDockerComposeServices:
         grafana = compose_config["services"]["grafana"]
         env_list = grafana["environment"]
         assert "GF_SERVER_SERVE_FROM_SUB_PATH=true" in env_list
+
+    def test_grafana_password_requires_env_var(self, compose_config: dict) -> None:
+        """Grafana admin password must be set via env var with no weak default."""
+        grafana = compose_config["services"]["grafana"]
+        env_list = grafana["environment"]
+        password_entry = next(
+            e for e in env_list if e.startswith("GF_SECURITY_ADMIN_PASSWORD=")
+        )
+        # Must use :? syntax to fail if unset, must NOT have a weak fallback
+        assert "changeme" not in password_entry
+        assert ":?" in password_entry or "?Set" in password_entry
 
 
 class TestDockerLogDriver:
@@ -322,6 +342,13 @@ class TestCaddyfileGrafanaRoute:
         grafana_pos = caddyfile_content.index("/grafana/")
         catchall_pos = caddyfile_content.index("handle {")
         assert grafana_pos < catchall_pos
+
+    def test_grafana_route_clears_csp_header(self, caddyfile_content: str) -> None:
+        """Grafana handler clears the global CSP so Grafana can manage its own."""
+        # Find the grafana handler block and check it contains CSP clearing
+        grafana_block_start = caddyfile_content.index("handle_path /grafana/*")
+        grafana_block = caddyfile_content[grafana_block_start:grafana_block_start + 300]
+        assert 'Content-Security-Policy ""' in grafana_block
 
 
 @pytest.mark.skip(
