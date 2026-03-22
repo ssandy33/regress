@@ -7,8 +7,6 @@ Three issue ACs reference methods that do not exist on CacheService
 
 import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
-
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
