@@ -5,7 +5,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
-MOCK_ACCOUNTS = [{"hashValue": "abc123", "securitiesAccount": {"accountNumber": "12345678"}}]
+MOCK_ACCOUNT_NUMBERS = [{"accountNumber": "12345678", "hashValue": "abc123"}]
 
 MOCK_TRANSACTIONS = [
     {
@@ -49,7 +49,7 @@ MOCK_TRANSACTIONS = [
 
 def _mock_schwab_client():
     mock = MagicMock()
-    mock.get_accounts.return_value = MOCK_ACCOUNTS
+    mock.get_account_numbers.return_value = MOCK_ACCOUNT_NUMBERS
     mock.get_transactions.return_value = MOCK_TRANSACTIONS
     return mock
 
@@ -82,7 +82,7 @@ class TestImportPreview:
     def test_preview_no_auth_returns_401(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
-            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError("no token", code=SchwabAuthCode.TOKEN_MISSING)
+            mock_cls.return_value.get_account_numbers.side_effect = SchwabAuthError("no token", code=SchwabAuthCode.TOKEN_MISSING)
             resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
         assert resp.status_code == 401
 
@@ -190,7 +190,7 @@ class TestImportAuthErrors:
     def test_preview_expired_token_returns_specific_detail(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
-            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+            mock_cls.return_value.get_account_numbers.side_effect = SchwabAuthError(
                 "expired", code=SchwabAuthCode.TOKEN_EXPIRED,
             )
             resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
@@ -201,7 +201,7 @@ class TestImportAuthErrors:
     def test_preview_no_token_returns_not_connected(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
-            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+            mock_cls.return_value.get_account_numbers.side_effect = SchwabAuthError(
                 "no token", code=SchwabAuthCode.TOKEN_MISSING,
             )
             resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
@@ -211,7 +211,7 @@ class TestImportAuthErrors:
     def test_preview_not_configured_returns_setup_message(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
-            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+            mock_cls.return_value.get_account_numbers.side_effect = SchwabAuthError(
                 "not configured", code=SchwabAuthCode.NOT_CONFIGURED,
             )
             resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
@@ -221,7 +221,7 @@ class TestImportAuthErrors:
     def test_import_expired_token_returns_specific_detail(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
-            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+            mock_cls.return_value.get_account_numbers.side_effect = SchwabAuthError(
                 "expired", code=SchwabAuthCode.TOKEN_EXPIRED,
             )
             resp = client.post("/api/journal/import", json={
@@ -234,7 +234,7 @@ class TestImportAuthErrors:
     def test_generic_auth_error_returns_fallback_detail(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
-            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+            mock_cls.return_value.get_account_numbers.side_effect = SchwabAuthError(
                 "refresh failed", code=SchwabAuthCode.REFRESH_FAILED,
             )
             resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
@@ -244,7 +244,7 @@ class TestImportAuthErrors:
     def test_auth_error_is_logged(self, client, caplog):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
-            mock_cls.return_value.get_accounts.side_effect = SchwabAuthError(
+            mock_cls.return_value.get_account_numbers.side_effect = SchwabAuthError(
                 "expired", code=SchwabAuthCode.TOKEN_EXPIRED,
             )
             with caplog.at_level(logging.WARNING, logger="app.routers.journal"):
