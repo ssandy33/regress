@@ -68,6 +68,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Startup backup failed: {e}")
 
+    # Send Slack startup notification (no-op when not configured)
+    from app.services.slack_notifier import get_slack_notifier
+
+    notifier = get_slack_notifier()
+    if notifier.is_configured:
+        notifier.notify_startup()
+
     yield
 
 
