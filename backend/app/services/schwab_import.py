@@ -137,9 +137,9 @@ def preview_import(db: Session, start_date: str, end_date: str) -> dict:
     Returns dict with account info, trade list, and duplicate counts.
     """
     client = SchwabClient()
-    accounts = client.get_accounts()
+    account_numbers = client.get_account_numbers()
 
-    if not accounts:
+    if not account_numbers:
         return {
             "account_number": "",
             "trades": [],
@@ -148,9 +148,9 @@ def preview_import(db: Session, start_date: str, end_date: str) -> dict:
             "new_count": 0,
         }
 
-    account = accounts[0]
+    account = account_numbers[0]
     account_hash = account.get("hashValue", "")
-    account_number = account.get("securitiesAccount", {}).get("accountNumber", "")
+    account_number = account.get("accountNumber", "")
     masked_account = f"****{account_number[-4:]}" if len(account_number) >= 4 else account_number
 
     transactions = client.get_transactions(account_hash, start_date, end_date)
@@ -186,12 +186,12 @@ def execute_import(db: Session, start_date: str, end_date: str, position_strateg
     Creates positions as needed and logs trades.
     """
     client = SchwabClient()
-    accounts = client.get_accounts()
+    account_numbers = client.get_account_numbers()
 
-    if not accounts:
+    if not account_numbers:
         return {"imported": 0, "skipped_duplicates": 0, "positions_created": 0}
 
-    account = accounts[0]
+    account = account_numbers[0]
     account_hash = account.get("hashValue", "")
     transactions = client.get_transactions(account_hash, start_date, end_date)
 

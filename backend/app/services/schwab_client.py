@@ -228,6 +228,28 @@ class SchwabClient:
         retry=retry_if_exception_type(SchwabClientError),
         reraise=True,
     )
+    def get_account_numbers(self) -> list[dict]:
+        """Get account numbers and hashes from Trader API.
+
+        Returns list of dicts with 'accountNumber' and 'hashValue' keys.
+        The hashValue is required for transaction endpoints.
+        """
+        url = f"{self.TRADER_BASE_URL}/accounts/accountNumbers"
+        try:
+            resp = httpx.get(url, headers=self._headers(), timeout=15)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                SchwabTokenManager().invalidate_token()
+                raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
+            logger.error("Schwab accountNumbers API error: %s — response body: %s", e, e.response.text)
+            raise SchwabClientError("Schwab accountNumbers API error") from e
+        except httpx.RequestError as e:
+            logger.error("Schwab accountNumbers request error: %s", e)
+            raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
+
+        return resp.json()
+
     def get_accounts(self) -> list[dict]:
         """Get linked brokerage accounts from Trader API."""
         url = f"{self.TRADER_BASE_URL}/accounts"
