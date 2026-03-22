@@ -99,7 +99,7 @@
             "uid": ""
           },
           "editorMode": "code",
-          "expr": "count_over_time({compose_service=~\"$container\"} | json | level=\"ERROR\" [$__range])",
+          "expr": "sum(count_over_time({compose_service=~\"$container\"} | json | level=\"ERROR\" [$__range]))",
           "queryType": "instant",
           "refId": "A"
         }
@@ -144,7 +144,7 @@
             "uid": ""
           },
           "editorMode": "code",
-          "expr": "count_over_time({compose_service=~\"$container\"} | json | level=\"WARNING\" [$__range])",
+          "expr": "sum(count_over_time({compose_service=~\"$container\"} | json | level=\"WARNING\" [$__range]))",
           "queryType": "instant",
           "refId": "A"
         }

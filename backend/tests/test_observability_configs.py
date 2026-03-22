@@ -43,7 +43,7 @@ class TestDockerComposeServices:
     def test_loki_uses_official_image(self, compose_config: dict) -> None:
         """Loki service uses the official Grafana Loki image."""
         loki = compose_config["services"]["loki"]
-        assert loki["image"].startswith("grafana/loki:")
+        assert loki["image"] == "grafana/loki:3.4.2"
 
     def test_loki_has_healthcheck(self, compose_config: dict) -> None:
         """Loki service has a healthcheck configured."""
@@ -72,7 +72,7 @@ class TestDockerComposeServices:
     def test_grafana_uses_official_image(self, compose_config: dict) -> None:
         """Grafana service uses the official Grafana image."""
         grafana = compose_config["services"]["grafana"]
-        assert grafana["image"].startswith("grafana/grafana:")
+        assert grafana["image"] == "grafana/grafana:11.5.2"
 
     def test_grafana_has_healthcheck(self, compose_config: dict) -> None:
         """Grafana service has a healthcheck configured."""
