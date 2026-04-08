@@ -18,5 +18,5 @@ pytest-asyncio==0.25.0
 pytest-cov==6.0.0
 scipy==1.14.1
 PyJWT==2.12.0
-cryptography==46.0.5
+cryptography==46.0.7
 PyYAML==6.0.2
