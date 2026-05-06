@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Issue #117: Tailwind v4's default `dark:` variant is media-query-based
+   (`prefers-color-scheme: dark`). The in-app toggle in
+   `context/ThemeContext.jsx` is class-based — it adds `.dark` to <html>.
+   This declaration re-binds the `dark:` variant to the class strategy so
+   the toggle actually drives every `dark:` utility in the codebase. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
   body {
     @apply m-0 min-h-screen bg-white text-slate-900 antialiased;
