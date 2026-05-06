@@ -269,6 +269,61 @@ def test_dashboard_schwab_quote_failure(client, monkeypatch):
     assert data["data_meta"]["is_stale"] is True
 
 
+def test_dashboard_unexpected_quote_exception_does_not_500(client, monkeypatch):
+    """A non-Schwab exception escaping a per-ticker quote call must not 500.
+
+    Regression guard for PR #116 review item: previously the worker only
+    caught SchwabClientError/SchwabAuthError, so any other exception (httpx
+    timeout escaping tenacity, malformed payload causing KeyError, etc.)
+    would propagate out of ThreadPoolExecutor.map and surface as a 500.
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    aapl_id = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        aapl_id,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",
+    )
+    msft_id = _seed_position(client, ticker="MSFT", broker_cost_basis=30000.0)
+    _seed_trade(
+        client,
+        msft_id,
+        trade_type="sell_call",
+        strike=320.0,
+        expiration="2026-05-15",
+    )
+
+    def fake_get_quote(self, ticker):
+        if ticker == "AAPL":
+            # A non-Schwab exception escaping the client (e.g. httpx timeout
+            # that exhausted tenacity retries, or a KeyError from a malformed
+            # payload). Must be swallowed by the worker.
+            raise RuntimeError("synthetic unexpected failure")
+        return {"lastPrice": 318.5}
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote", fake_get_quote
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    # Failed ticker shows a None price; the dashboard still rendered.
+    rows_by_ticker = {row["ticker"]: row for row in data["positions"]}
+    assert rows_by_ticker["AAPL"]["current_price"] is None
+    assert rows_by_ticker["AAPL"]["notional"] is None
+    # Healthy ticker still has its price.
+    assert rows_by_ticker["MSFT"]["current_price"] == 318.5
+
+    # And the failure is surfaced on data_meta so the UI can flag it.
+    assert "schwab" in data["data_meta"]["sources_unavailable"]
+    assert data["data_meta"]["is_stale"] is True
+
+
 def test_dashboard_stale_cache(client, monkeypatch):
     """Cache contains entries >30 days old → flagged stale."""
     _patch_status(monkeypatch, schwab_configured=False, fred_key="")

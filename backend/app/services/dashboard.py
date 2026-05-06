@@ -109,9 +109,13 @@ def _fetch_quotes_parallel(
     """Fetch live quotes for `tickers` concurrently. Returns
     (price_by_ticker, schwab_failed_flag).
 
-    Failures are *expected* states (token expired, network down, ticker
-    unknown to Schwab). Individual failures yield a None price; the caller
-    surfaces the partial outage via data_meta.sources_unavailable.
+    Any per-ticker failure — known Schwab errors (auth/client) *or*
+    unexpected ones (httpx timeouts that escape tenacity, malformed quote
+    payloads, etc.) — yields a None price for that ticker; the caller
+    surfaces the partial outage via data_meta.sources_unavailable. We
+    deliberately catch broad Exception inside the worker so one bad ticker
+    cannot 500 the entire dashboard. KeyboardInterrupt / SystemExit still
+    propagate.
 
     Schwab's client is synchronous (httpx + retry/tenacity decorators), so we
     use a thread pool rather than refactoring it to async. See PR #114.
@@ -132,6 +136,14 @@ def _fetch_quotes_parallel(
             quote = client.get_quote(ticker)
         except (SchwabClientError, SchwabAuthError) as exc:
             logger.warning("Dashboard quote fetch failed for %s: %s", ticker, exc)
+            return ticker, None, True
+        except Exception:
+            # Defense-in-depth: any other exception (network timeouts that
+            # escape tenacity, malformed payloads causing KeyError, etc.)
+            # must not propagate out of the worker — that would raise from
+            # ThreadPoolExecutor.map and 500 the whole dashboard. Log with
+            # traceback so the cause is debuggable.
+            logger.exception("Unexpected error fetching quote for %s", ticker)
             return ticker, None, True
         # Schwab `quote` payloads have lastPrice or fall back to `mark`.
         price = quote.get("lastPrice") if isinstance(quote, dict) else None
