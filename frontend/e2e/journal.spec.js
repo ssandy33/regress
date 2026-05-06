@@ -175,6 +175,21 @@ test.describe('Journal page', () => {
     expect(body.premium).toBe(1.75);
   });
 
+  test('?position=<id> deep-link auto-selects position and renders trade history', async ({ page }) => {
+    await setupMocks(page);
+    await page.goto('/journal?position=pos-1');
+    await page.waitForLoadState('networkidle');
+
+    // The deep-link should have triggered selectPosition(pos-1), which renders
+    // the trade history for AAPL with both seeded trades.
+    const history = page.getByTestId('trade-history');
+    await expect(history).toBeVisible();
+    await expect(history).toContainText('AAPL');
+    await expect(history).toContainText('Sell Put');
+    await expect(history).toContainText('Sell Call');
+    await expect(page.getByTestId('trade-row')).toHaveCount(2);
+  });
+
   test('new position form works', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/journal');

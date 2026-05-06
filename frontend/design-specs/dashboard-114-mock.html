@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard mock — Issue #114</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    /* Match the app's body styles from frontend/app/globals.css */
+    body { margin: 0; min-height: 100vh; }
+    html.dark body { background-color: rgb(15 23 42); color: rgb(241 245 249); }
+    /* Skeleton shimmer fallback (animate-pulse handles this in Tailwind) */
+  </style>
+</head>
+<body class="antialiased font-sans">
+
+<!-- =========================================================================
+     SELF-DOCUMENTATION
+     ========================================================================= -->
+<section class="border-b-4 border-blue-600 bg-slate-800/60">
+  <div class="max-w-7xl mx-auto px-6 py-5">
+    <div class="flex items-start justify-between flex-wrap gap-3">
+      <div>
+        <div class="text-[11px] font-semibold uppercase tracking-wider text-blue-400 mb-1">Static design mock — not production code</div>
+        <h1 class="text-xl font-semibold text-white">Dashboard (Issue #114) — visual review</h1>
+        <p class="text-sm text-slate-400 mt-1 max-w-3xl">
+          Read-only HTML/Tailwind mock of the dashboard described in the design spec. Two states are stacked below: <strong class="text-slate-200">Populated</strong> and <strong class="text-slate-200">Empty</strong>.
+          Click-throughs are visual cues only — nothing is interactive.
+        </p>
+      </div>
+      <div class="text-xs text-slate-400 text-right space-y-0.5">
+        <div>Last updated <span class="text-slate-200 font-medium">2026-05-05</span></div>
+        <div>Issue: <span class="text-blue-400">#114 — Add a unified Dashboard as the default landing route</span></div>
+        <div>Spec: <span class="font-mono text-slate-300">frontend/design-specs/dashboard-114.md</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================================
+     SECTION 1 — POPULATED STATE
+     ========================================================================= -->
+<section class="border-b border-slate-700">
+  <!-- section header -->
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-900/40 text-green-300 border border-green-700">State 1</span>
+      <h2 class="text-base font-semibold text-white">Populated — Schwab connected, 4 positions, 7 open legs, recent activity</h2>
+    </div>
+  </div>
+
+  <!-- =====================  HEADER (per §7 of spec)  ===================== -->
+  <header class="h-14 border-b border-slate-700 bg-slate-800 flex items-center justify-between px-4">
+    <a href="#" class="text-lg font-semibold text-white hover:text-blue-400">Regression Analysis Tool</a>
+    <div class="flex items-center gap-3">
+      <!-- Dashboard becomes first link in right cluster, current route -->
+      <a href="#" class="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-sm font-medium" aria-current="page">Dashboard</a>
+      <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Analysis</a>
+      <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Options</a>
+      <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Journal</a>
+      <a href="#" class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Settings">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+      </a>
+      <a href="#" class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Help">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+      </a>
+      <button class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Toggle dark mode">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6 space-y-4">
+
+    <!-- Page title row -->
+    <div class="flex items-end justify-between flex-wrap gap-2">
+      <div>
+        <h2 class="text-2xl font-semibold text-white">Dashboard</h2>
+        <p class="text-sm text-slate-400">What should I pay attention to today?</p>
+      </div>
+      <div class="text-xs text-slate-400">Last sync <span class="font-mono tabular-nums text-slate-200">09:42</span> · <span class="text-slate-300">data fresh</span></div>
+    </div>
+
+    <!-- Stale-data banner (§9 — drives off data_meta.is_stale) -->
+    <div role="alert" class="px-4 py-2 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg text-sm text-yellow-800 dark:text-yellow-200">
+      <strong>Using cached data from May 4, 2026.</strong> Live source unavailable for 3 cached items — quotes auto-refresh next pull.
+    </div>
+
+    <!-- ============== STATUS STRIP (§3, §5.4) ============== -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-green-700 bg-green-900/30 text-green-200">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></span>
+        <span class="text-sm font-medium">Schwab Connected</span>
+        <span class="text-xs text-green-400 ml-auto">expires Jul 14</span>
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-green-700 bg-green-900/30 text-green-200">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></span>
+        <span class="text-sm font-medium">FRED Connected</span>
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-yellow-700 bg-yellow-900/30 text-yellow-200">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-500 shrink-0"></span>
+        <span class="text-sm font-medium">Cache Stale</span>
+        <span class="text-xs text-yellow-400 ml-auto">3 of 47</span>
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-slate-700 bg-slate-800 text-slate-300">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0"></span>
+        <span class="text-sm font-medium">Journal</span>
+        <span class="text-xs text-slate-400 ml-auto">4 positions</span>
+      </a>
+    </div>
+
+    <!-- ============== KPI ROW (§3 / §5) ============== -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">Open positions</div>
+        <div class="text-2xl font-semibold text-slate-900 dark:text-white">4</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">3 stock · 1 cash-secured</div>
+      </div>
+      <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">Notional value</div>
+        <div class="text-2xl font-semibold text-slate-900 dark:text-white">$48,210</div>
+        <div class="text-xs text-green-400 mt-1">+2.1% vs cost</div>
+      </div>
+      <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">Open option legs</div>
+        <div class="text-2xl font-semibold text-slate-900 dark:text-white">7</div>
+        <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">4 puts · 3 calls</div>
+      </div>
+      <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+        <div class="text-xs text-slate-500 dark:text-slate-400 mb-1">Unrealized P/L</div>
+        <div class="text-2xl font-semibold text-green-600 dark:text-green-400">+$612</div>
+        <div class="text-xs text-green-400 mt-1">+1.3% on basis</div>
+      </div>
+    </div>
+
+    <!-- ============== DECISION ROW (§3, §5.2, §5.3) — 7+5 split ============== -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+      <!-- Upcoming Expirations card (7 cols) -->
+      <div class="lg:col-span-7 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+        <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-white">Upcoming expirations</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Next 14 days · sorted by DTE</p>
+          </div>
+          <span class="text-xs text-slate-400">3 of 7</span>
+        </div>
+        <ul class="divide-y divide-slate-700">
+          <!-- ≤ 7 DTE, ITM → roll-or-assign (red) -->
+          <li class="px-5 py-3 hover:bg-slate-700/40 cursor-pointer">
+            <div class="flex items-center gap-3">
+              <span class="w-5 text-red-400" aria-hidden="true">⚠</span>
+              <span class="font-semibold text-white">AAPL</span>
+              <span class="text-slate-300">175 P</span>
+              <span class="text-slate-500 text-sm">·</span>
+              <span class="text-slate-400 text-sm">Fri 05/08</span>
+              <span class="ml-auto inline-block px-2 py-0.5 text-xs font-medium rounded-full bg-red-900/40 text-red-300 border border-red-800">3 DTE</span>
+            </div>
+            <div class="mt-1 ml-8 flex items-center gap-2 text-sm">
+              <span class="text-red-300">ITM by $0.42</span>
+              <span class="text-slate-500">·</span>
+              <span class="inline-block px-2 py-0.5 text-[11px] font-medium rounded-full bg-red-900/40 text-red-300">Roll or assign</span>
+            </div>
+          </li>
+
+          <!-- ≤ 14 DTE, OTM → manage (yellow) -->
+          <li class="px-5 py-3 hover:bg-slate-700/40 cursor-pointer">
+            <div class="flex items-center gap-3">
+              <span class="w-5 text-yellow-400" aria-hidden="true">●</span>
+              <span class="font-semibold text-white">TSLA</span>
+              <span class="text-slate-300">240 C</span>
+              <span class="text-slate-500 text-sm">·</span>
+              <span class="text-slate-400 text-sm">Fri 05/15</span>
+              <span class="ml-auto inline-block px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-900/40 text-yellow-300 border border-yellow-800">10 DTE</span>
+            </div>
+            <div class="mt-1 ml-8 flex items-center gap-2 text-sm">
+              <span class="text-slate-300">OTM 4.1%</span>
+              <span class="text-slate-500">·</span>
+              <span class="inline-block px-2 py-0.5 text-[11px] font-medium rounded-full bg-yellow-900/40 text-yellow-300">Watch</span>
+            </div>
+          </li>
+
+          <!-- 8-21 DTE, OTM → hold (neutral) -->
+          <li class="px-5 py-3 hover:bg-slate-700/40 cursor-pointer">
+            <div class="flex items-center gap-3">
+              <span class="w-5 text-slate-500" aria-hidden="true">·</span>
+              <span class="font-semibold text-white">NVDA</span>
+              <span class="text-slate-300">920 P</span>
+              <span class="text-slate-500 text-sm">·</span>
+              <span class="text-slate-400 text-sm">Fri 05/22</span>
+              <span class="ml-auto inline-block px-2 py-0.5 text-xs font-medium rounded-full bg-slate-700 text-slate-300 border border-slate-600">17 DTE</span>
+            </div>
+            <div class="mt-1 ml-8 flex items-center gap-2 text-sm">
+              <span class="text-slate-400">OTM 1.8%</span>
+              <span class="text-slate-500">·</span>
+              <span class="inline-block px-2 py-0.5 text-[11px] font-medium rounded-full bg-slate-700 text-slate-300">Hold</span>
+            </div>
+          </li>
+        </ul>
+        <div class="px-5 py-3 border-t border-slate-700 text-xs">
+          <a href="#" class="text-blue-400 hover:text-blue-300">→ Manage in Journal</a>
+        </div>
+      </div>
+
+      <!-- Open option legs card (5 cols) -->
+      <div class="lg:col-span-5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+        <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-white">Open option legs</h3>
+            <p class="text-xs text-slate-400 mt-0.5">All open puts &amp; calls</p>
+          </div>
+          <span class="text-xs text-slate-400">7 of 7</span>
+        </div>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-slate-800 border-b border-slate-700">
+              <th class="text-left px-3 py-2 font-medium text-slate-400 text-xs">Tkr</th>
+              <th class="text-left px-2 py-2 font-medium text-slate-400 text-xs">Strike</th>
+              <th class="text-left px-2 py-2 font-medium text-slate-400 text-xs">Exp</th>
+              <th class="text-right px-2 py-2 font-medium text-slate-400 text-xs">DTE</th>
+              <th class="text-right px-3 py-2 font-medium text-slate-400 text-xs">Moneyness</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-700">
+            <tr class="hover:bg-slate-700/40 cursor-pointer">
+              <td class="px-3 py-2 font-medium text-white">AAPL</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">175 P</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">05/08</td>
+              <td class="px-2 py-2 text-right"><span class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-red-900/40 text-red-300">3d</span></td>
+              <td class="px-3 py-2 text-right text-red-300">ITM $0.42</td>
+            </tr>
+            <tr class="hover:bg-slate-700/40 cursor-pointer">
+              <td class="px-3 py-2 font-medium text-white">TSLA</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">240 C</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">05/15</td>
+              <td class="px-2 py-2 text-right"><span class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-yellow-900/40 text-yellow-300">10d</span></td>
+              <td class="px-3 py-2 text-right text-slate-300">OTM 4.1%</td>
+            </tr>
+            <tr class="hover:bg-slate-700/40 cursor-pointer">
+              <td class="px-3 py-2 font-medium text-white">NVDA</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">920 P</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">05/22</td>
+              <td class="px-2 py-2 text-right"><span class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-700 text-slate-300">17d</span></td>
+              <td class="px-3 py-2 text-right text-slate-400">OTM 1.8%</td>
+            </tr>
+            <tr class="hover:bg-slate-700/40 cursor-pointer">
+              <td class="px-3 py-2 font-medium text-white">AMD</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">165 C</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">06/05</td>
+              <td class="px-2 py-2 text-right"><span class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-700 text-slate-300">31d</span></td>
+              <td class="px-3 py-2 text-right text-slate-400">OTM 6.2%</td>
+            </tr>
+            <tr class="hover:bg-slate-700/40 cursor-pointer">
+              <td class="px-3 py-2 font-medium text-white">MSFT</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">410 P</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">06/12</td>
+              <td class="px-2 py-2 text-right"><span class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-700 text-slate-300">38d</span></td>
+              <td class="px-3 py-2 text-right text-slate-400">OTM 3.4%</td>
+            </tr>
+            <tr class="hover:bg-slate-700/40 cursor-pointer">
+              <td class="px-3 py-2 font-medium text-white">SPY</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">505 P</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">06/19</td>
+              <td class="px-2 py-2 text-right"><span class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-700 text-slate-300">45d</span></td>
+              <td class="px-3 py-2 text-right text-slate-400">OTM 2.1%</td>
+            </tr>
+            <tr class="hover:bg-slate-700/40 cursor-pointer">
+              <td class="px-3 py-2 font-medium text-white">QQQ</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">440 C</td>
+              <td class="px-2 py-2 text-slate-300 tabular-nums">07/03</td>
+              <td class="px-2 py-2 text-right"><span class="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-slate-700 text-slate-300">59d</span></td>
+              <td class="px-3 py-2 text-right text-slate-400">OTM 5.8%</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="px-5 py-3 border-t border-slate-700 text-xs">
+          <a href="#" class="text-blue-400 hover:text-blue-300">→ View all in Options</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============== POSITIONS TABLE (§5.1) ============== -->
+    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-white">Positions</h3>
+          <p class="text-xs text-slate-400 mt-0.5">Sorted by notional · click to open in Journal</p>
+        </div>
+        <a href="#" class="text-xs text-blue-400 hover:text-blue-300">→ Open Journal</a>
+      </div>
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-slate-700 bg-slate-800">
+            <th class="text-left px-4 py-3 font-medium text-slate-400">Ticker</th>
+            <th class="text-right px-4 py-3 font-medium text-slate-400">Shares</th>
+            <th class="text-right px-4 py-3 font-medium text-slate-400">Adj. Basis</th>
+            <th class="text-right px-4 py-3 font-medium text-slate-400">Current</th>
+            <th class="text-right px-4 py-3 font-medium text-slate-400">Notional</th>
+            <th class="text-right px-4 py-3 font-medium text-slate-400">Unrealized P/L</th>
+            <th class="text-center px-4 py-3 font-medium text-slate-400">Open Legs</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="border-b border-slate-700 cursor-pointer hover:bg-slate-700/40">
+            <td class="px-4 py-3 font-medium text-white">AAPL</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">100</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$172.40</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$175.42</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$17,542</td>
+            <td class="px-4 py-3 text-right text-green-400 tabular-nums">+$302</td>
+            <td class="px-4 py-3 text-center"><span class="inline-block px-2 py-0.5 text-xs font-medium rounded-full bg-slate-700 text-slate-300">1</span></td>
+          </tr>
+          <tr class="border-b border-slate-700 cursor-pointer hover:bg-slate-700/40">
+            <td class="px-4 py-3 font-medium text-white">AMD</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">75</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$158.20</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$162.35</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$12,176</td>
+            <td class="px-4 py-3 text-right text-green-400 tabular-nums">+$311</td>
+            <td class="px-4 py-3 text-center"><span class="inline-block px-2 py-0.5 text-xs font-medium rounded-full bg-slate-700 text-slate-300">1</span></td>
+          </tr>
+          <tr class="border-b border-slate-700 cursor-pointer hover:bg-slate-700/40">
+            <td class="px-4 py-3 font-medium text-white">TSLA</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">50</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$235.10</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$238.80</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$11,940</td>
+            <td class="px-4 py-3 text-right text-green-400 tabular-nums">+$185</td>
+            <td class="px-4 py-3 text-center"><span class="inline-block px-2 py-0.5 text-xs font-medium rounded-full bg-slate-700 text-slate-300">1</span></td>
+          </tr>
+          <tr class="cursor-pointer hover:bg-slate-700/40">
+            <td class="px-4 py-3 font-medium text-white">NVDA</td>
+            <td class="px-4 py-3 text-right text-slate-500 tabular-nums">—</td>
+            <td class="px-4 py-3 text-right text-slate-400">cash-secured</td>
+            <td class="px-4 py-3 text-right text-slate-500">—</td>
+            <td class="px-4 py-3 text-right text-slate-300 tabular-nums">$9,200</td>
+            <td class="px-4 py-3 text-right text-slate-500">—</td>
+            <td class="px-4 py-3 text-center"><span class="inline-block px-2 py-0.5 text-xs font-medium rounded-full bg-orange-900/40 text-orange-300">1 put</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ============== TWO-COL: Recent activity (left) + Loading skeleton example (right) ============== -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+      <!-- Recent activity (8 cols) — §5.5 -->
+      <div class="lg:col-span-8 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+        <div class="px-5 py-4 border-b border-slate-700">
+          <h3 class="text-lg font-semibold text-white">Recent activity</h3>
+          <p class="text-xs text-slate-400 mt-0.5">Sessions, imports, and trades from the last few days</p>
+        </div>
+        <ul class="divide-y divide-slate-700">
+          <li class="px-5 py-2.5 flex items-baseline gap-4 text-sm hover:bg-slate-700/40 cursor-pointer">
+            <span class="font-mono tabular-nums text-xs text-slate-500 w-12 shrink-0">09:42</span>
+            <span class="text-slate-300"><span class="font-medium text-slate-200">Schwab import completed</span> — 3 trades added</span>
+          </li>
+          <li class="px-5 py-2.5 flex items-baseline gap-4 text-sm hover:bg-slate-700/40 cursor-pointer">
+            <span class="font-mono tabular-nums text-xs text-slate-500 w-12 shrink-0">09:18</span>
+            <span class="text-slate-300">Scanned <span class="font-medium text-slate-200">AAPL</span> — 12 strikes, top return 2.4%</span>
+          </li>
+          <li class="px-5 py-2.5 flex items-baseline gap-4 text-sm hover:bg-slate-700/40 cursor-pointer">
+            <span class="font-mono tabular-nums text-xs text-slate-500 w-12 shrink-0">yest</span>
+            <span class="text-slate-300">Saved regression session <span class="font-medium text-slate-200">"AAPL vs DGS10 5y"</span></span>
+          </li>
+          <li class="px-5 py-2.5 flex items-baseline gap-4 text-sm hover:bg-slate-700/40 cursor-pointer">
+            <span class="font-mono tabular-nums text-xs text-slate-500 w-12 shrink-0">yest</span>
+            <span class="text-slate-300">Closed trade: <span class="font-medium text-slate-200">AAPL 170P @ $0.32</span> <span class="text-green-400">(50% target hit)</span></span>
+          </li>
+          <li class="px-5 py-2.5 flex items-baseline gap-4 text-sm hover:bg-slate-700/40 cursor-pointer">
+            <span class="font-mono tabular-nums text-xs text-slate-500 w-12 shrink-0">2d</span>
+            <span class="text-slate-300">New position: <span class="font-medium text-slate-200">NVDA cash-secured put cycle</span></span>
+          </li>
+          <li class="px-5 py-2.5 flex items-baseline gap-4 text-sm hover:bg-slate-700/40 cursor-pointer">
+            <span class="font-mono tabular-nums text-xs text-slate-500 w-12 shrink-0">May 02</span>
+            <span class="text-slate-300">Saved regression session <span class="font-medium text-slate-200">"SPY vs VIX 10y"</span></span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Loading skeleton sample (4 cols) — shows what a card-in-loading state looks like -->
+      <div class="lg:col-span-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+        <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-white">Data readiness</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Loading sample (illustrative)</p>
+          </div>
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-slate-700 text-slate-300">Loading</span>
+        </div>
+        <div class="p-5 animate-pulse space-y-3">
+          <div class="h-4 bg-slate-700 rounded w-3/4"></div>
+          <div class="h-4 bg-slate-700 rounded w-1/2"></div>
+          <div class="h-4 bg-slate-700 rounded w-2/3"></div>
+          <div class="h-4 bg-slate-700 rounded w-3/5"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============== EMPTY SUB-STATE inside populated dashboard ============== -->
+    <!-- Demonstrates the "positions exist but no open legs" wrinkle from §5.2 -->
+    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+      <div class="px-5 py-4 border-b border-slate-700">
+        <h3 class="text-lg font-semibold text-white">Wheel-cycle summary</h3>
+        <p class="text-xs text-slate-400 mt-0.5">Illustrates a per-card empty state inside an otherwise populated dashboard</p>
+      </div>
+      <div class="px-5 py-10 text-center">
+        <svg class="w-12 h-12 mx-auto mb-3 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.25" d="M4 4v5h5M20 20v-5h-5M5 9a7 7 0 0112-3M19 15a7 7 0 01-12 3" />
+        </svg>
+        <h4 class="text-sm font-medium text-slate-300">No active wheel cycles</h4>
+        <p class="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+          Your stock-only positions don't have rolling option cycles. Use the Options scanner to find candidate strikes, or wait for a CSP cycle to be created from an assignment.
+        </p>
+        <a href="#" class="inline-block mt-3 text-xs text-blue-400 hover:text-blue-300">→ Open Options scanner</a>
+      </div>
+    </div>
+
+  </main>
+</section>
+
+
+<!-- =========================================================================
+     SECTION 2 — EMPTY STATE
+     ========================================================================= -->
+<section class="border-b border-slate-700">
+  <!-- section header -->
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-7xl mx-auto px-6 py-3 flex items-center gap-3">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-slate-700 text-slate-300 border border-slate-600">State 2</span>
+      <h2 class="text-base font-semibold text-white">Empty — fresh install, Schwab disconnected, FRED unset, no positions</h2>
+    </div>
+  </div>
+
+  <!-- Header (same as populated) -->
+  <header class="h-14 border-b border-slate-700 bg-slate-800 flex items-center justify-between px-4">
+    <a href="#" class="text-lg font-semibold text-white hover:text-blue-400">Regression Analysis Tool</a>
+    <div class="flex items-center gap-3">
+      <a href="#" class="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-sm font-medium" aria-current="page">Dashboard</a>
+      <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Analysis</a>
+      <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Options</a>
+      <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Journal</a>
+      <a href="#" class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Settings">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+      </a>
+      <a href="#" class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Help">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+      </a>
+      <button class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Toggle dark mode">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6 space-y-4">
+
+    <!-- Page title row -->
+    <div class="flex items-end justify-between flex-wrap gap-2">
+      <div>
+        <h2 class="text-2xl font-semibold text-white">Dashboard</h2>
+        <p class="text-sm text-slate-400">Set up the basics so the dashboard can show your portfolio.</p>
+      </div>
+      <div class="text-xs text-slate-500">No data yet</div>
+    </div>
+
+    <!-- ============== STATUS STRIP — empty state (Schwab disconnected pill is a focal point) ============== -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-red-700 bg-red-900/30 text-red-200">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></span>
+        <span class="text-sm font-medium">Schwab Disconnected</span>
+        <span class="text-xs text-red-400 ml-auto">Set up</span>
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-red-700 bg-red-900/30 text-red-200">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></span>
+        <span class="text-sm font-medium">FRED Not configured</span>
+        <span class="text-xs text-red-400 ml-auto">Add key</span>
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-slate-700 bg-slate-800 text-slate-300">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-slate-500 shrink-0"></span>
+        <span class="text-sm font-medium">Cache Empty</span>
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-3 rounded-lg border border-slate-700 bg-slate-800 text-slate-300">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-slate-500 shrink-0"></span>
+        <span class="text-sm font-medium">Journal</span>
+        <span class="text-xs text-slate-500 ml-auto">0 positions</span>
+      </a>
+    </div>
+
+    <!-- ============== ONBOARDING PANEL (§4) ============== -->
+    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-8 py-10">
+      <div class="text-center mb-6">
+        <svg class="w-14 h-14 mx-auto mb-3 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.25" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+        <h3 class="text-xl font-semibold text-white">Welcome to Regress</h3>
+        <p class="text-sm text-slate-400 mt-1 max-w-xl mx-auto">
+          The dashboard surfaces what you should pay attention to today — once you've connected your data sources and imported a position or two.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="border border-slate-700 rounded-lg p-5 bg-slate-900/40 flex flex-col">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-900/40 border border-blue-700 text-blue-300 text-xs font-semibold">1</span>
+            <h4 class="text-base font-semibold text-white">Connect Schwab</h4>
+          </div>
+          <p class="text-sm text-slate-400 flex-1">Live prices, option chains, and one-click trade import. Required for unrealized P/L and option scanner results.</p>
+          <a href="#" class="mt-3 text-sm text-blue-400 hover:text-blue-300 font-medium">→ Open Settings</a>
+        </div>
+
+        <div class="border border-slate-700 rounded-lg p-5 bg-slate-900/40 flex flex-col">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-900/40 border border-blue-700 text-blue-300 text-xs font-semibold">2</span>
+            <h4 class="text-base font-semibold text-white">Add a FRED API key</h4>
+          </div>
+          <p class="text-sm text-slate-400 flex-1">Macro context for regression analysis (rates, CPI, M2, etc.). Free key, takes about a minute.</p>
+          <a href="#" class="mt-3 text-sm text-blue-400 hover:text-blue-300 font-medium">→ Open Settings</a>
+        </div>
+
+        <div class="border border-slate-700 rounded-lg p-5 bg-slate-900/40 flex flex-col">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-blue-900/40 border border-blue-700 text-blue-300 text-xs font-semibold">3</span>
+            <h4 class="text-base font-semibold text-white">Import positions</h4>
+          </div>
+          <p class="text-sm text-slate-400 flex-1">Pull positions from Schwab automatically, or add a position manually if you'd rather track it by hand.</p>
+          <a href="#" class="mt-3 text-sm text-blue-400 hover:text-blue-300 font-medium">→ Open Journal</a>
+        </div>
+      </div>
+
+      <div class="mt-6 pt-5 border-t border-slate-700 text-center">
+        <p class="text-xs text-slate-500">
+          Already configured? Try the <a href="#" class="text-blue-400 hover:text-blue-300">Analysis</a> page or the <a href="#" class="text-blue-400 hover:text-blue-300">Options scanner</a> while you set up positions.
+        </p>
+      </div>
+    </div>
+
+    <!-- ============== Recent activity (empty state) ============== -->
+    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+      <div class="px-5 py-4 border-b border-slate-700">
+        <h3 class="text-lg font-semibold text-white">Recent activity</h3>
+      </div>
+      <div class="px-5 py-12 text-center">
+        <svg class="w-10 h-10 mx-auto mb-2 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.25" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p class="text-sm text-slate-400">No activity yet — saved sessions, imports, and trades will appear here.</p>
+      </div>
+    </div>
+
+  </main>
+</section>
+
+
+<!-- =========================================================================
+     FOOTER
+     ========================================================================= -->
+<footer class="max-w-7xl mx-auto px-6 py-8 text-center">
+  <p class="text-xs text-slate-500">
+    End of mock · Issue <span class="text-slate-300">#114</span> · Spec <span class="font-mono text-slate-300">frontend/design-specs/dashboard-114.md</span> · 2026-05-05
+  </p>
+</footer>
+
+</body>
+</html>

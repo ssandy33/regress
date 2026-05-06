@@ -41,6 +41,35 @@ export function pValueColor(p) {
   return 'text-red-600 dark:text-red-400';
 }
 
+export function formatRelativeTime(iso) {
+  if (!iso) return '—';
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return '—';
+  const now = new Date();
+
+  const sameDay =
+    dt.getFullYear() === now.getFullYear() &&
+    dt.getMonth() === now.getMonth() &&
+    dt.getDate() === now.getDate();
+  if (sameDay) {
+    const hh = String(dt.getHours()).padStart(2, '0');
+    const mm = String(dt.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (
+    dt.getFullYear() === yesterday.getFullYear() &&
+    dt.getMonth() === yesterday.getMonth() &&
+    dt.getDate() === yesterday.getDate()
+  ) {
+    return 'yest';
+  }
+
+  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export function categoryLabel(category) {
   const labels = {
     stock: 'Stocks',

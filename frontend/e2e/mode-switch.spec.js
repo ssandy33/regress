@@ -9,7 +9,7 @@ const MODES = [
 
 test.describe('Regression mode selector bar', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/analysis');
     await page.waitForLoadState('networkidle');
   });
 

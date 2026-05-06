@@ -125,7 +125,7 @@ test.describe('Regression stats grouped display', () => {
   test.describe('Linear mode sections', () => {
     test('displays Model Fit, Trend, and Diagnostics section headers', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await selectAssetAndRun(page);
@@ -137,7 +137,7 @@ test.describe('Regression stats grouped display', () => {
 
     test('Model Fit section contains R-Squared and P-Value cards', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await selectAssetAndRun(page);
@@ -148,7 +148,7 @@ test.describe('Regression stats grouped display', () => {
 
     test('Trend section contains Slope, Intercept, and Std Error cards', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await selectAssetAndRun(page);
@@ -160,7 +160,7 @@ test.describe('Regression stats grouped display', () => {
 
     test('Diagnostics section hidden when durbin_watson is null', async ({ page }) => {
       await mockBackendAPIs(page, { linear: { ...LINEAR_RESULT, durbin_watson: null } });
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await selectAssetAndRun(page);
@@ -174,7 +174,7 @@ test.describe('Regression stats grouped display', () => {
   test.describe('Rolling mode sections', () => {
     test('displays Current Window and Historical Range section headers', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await page.getByRole('button', { name: 'Rolling' }).click();
@@ -186,7 +186,7 @@ test.describe('Regression stats grouped display', () => {
 
     test('Current Window contains Current Slope and Current R-Squared', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await page.getByRole('button', { name: 'Rolling' }).click();
@@ -198,7 +198,7 @@ test.describe('Regression stats grouped display', () => {
 
     test('Historical Range contains Avg/Min/Max stats', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await page.getByRole('button', { name: 'Rolling' }).click();
@@ -216,7 +216,7 @@ test.describe('Regression stats grouped display', () => {
   test.describe('Multi-Factor mode sections', () => {
     test('displays Summary, Coefficients, and Stationarity section headers', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await page.getByRole('button', { name: 'Multi-Factor' }).click();
@@ -229,7 +229,7 @@ test.describe('Regression stats grouped display', () => {
 
     test('Summary section contains stat cards', async ({ page }) => {
       await mockBackendAPIs(page);
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await page.getByRole('button', { name: 'Multi-Factor' }).click();
@@ -242,7 +242,7 @@ test.describe('Regression stats grouped display', () => {
 
     test('Stationarity section hidden when stationarity is null', async ({ page }) => {
       await mockBackendAPIs(page, { multiFactor: { ...MULTI_FACTOR_RESULT, stationarity: null } });
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await page.getByRole('button', { name: 'Multi-Factor' }).click();
@@ -258,7 +258,7 @@ test.describe('Regression stats grouped display', () => {
     test('section headers visible in dark mode for linear stats', async ({ page }) => {
       await mockBackendAPIs(page);
       await page.emulateMedia({ colorScheme: 'dark' });
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await selectAssetAndRun(page);
@@ -271,7 +271,7 @@ test.describe('Regression stats grouped display', () => {
     test('section headers visible in dark mode for rolling stats', async ({ page }) => {
       await mockBackendAPIs(page);
       await page.emulateMedia({ colorScheme: 'dark' });
-      await page.goto('/');
+      await page.goto('/analysis');
       await page.waitForLoadState('networkidle');
 
       await page.getByRole('button', { name: 'Rolling' }).click();
