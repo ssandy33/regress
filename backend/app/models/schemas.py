@@ -414,3 +414,127 @@ class ImportResultResponse(BaseModel):
     imported: int
     skipped_duplicates: int
     positions_created: int
+
+
+# --- Dashboard ---
+
+
+DASHBOARD_OPTION_TYPE = Literal["put", "call"]
+DASHBOARD_MONEYNESS_STATE = Literal["ITM", "ATM", "OTM"]
+DASHBOARD_DECISION_TAG = Literal["roll-or-assign", "manage", "watch", "hold"]
+DASHBOARD_ACTIVITY_KIND = Literal["session_saved", "trade_added"]
+
+
+class DashboardSchwabStatus(BaseModel):
+    configured: bool
+    valid: bool
+    expires_at: Optional[str] = None
+
+
+class DashboardFredStatus(BaseModel):
+    configured: bool
+    valid: bool
+
+
+class DashboardCacheStatus(BaseModel):
+    fresh: int
+    stale: int
+    very_stale: int
+    total: int
+
+
+class DashboardJournalStatus(BaseModel):
+    positions_count: int
+
+
+class DashboardStatus(BaseModel):
+    schwab: DashboardSchwabStatus
+    fred: DashboardFredStatus
+    cache: DashboardCacheStatus
+    journal: DashboardJournalStatus
+
+
+class DashboardOpenPositionsBreakdown(BaseModel):
+    stock: int
+    csp: int
+    cc: int
+    wheel: int
+
+
+class DashboardOpenLegsBreakdown(BaseModel):
+    puts: int
+    calls: int
+
+
+class DashboardKpis(BaseModel):
+    open_positions: int
+    open_positions_breakdown: DashboardOpenPositionsBreakdown
+    notional_value: float
+    notional_change_pct: Optional[float] = None
+    open_legs: int
+    open_legs_breakdown: DashboardOpenLegsBreakdown
+    unrealized_pl: Optional[float] = None
+    unrealized_pl_pct: Optional[float] = None
+
+
+class DashboardPositionRow(BaseModel):
+    id: str
+    ticker: str
+    shares: int
+    strategy: str
+    adjusted_cost_basis: float
+    current_price: Optional[float] = None
+    notional: Optional[float] = None
+    unrealized_pl: Optional[float] = None
+    open_legs_count: int
+
+
+class DashboardMoneyness(BaseModel):
+    state: DASHBOARD_MONEYNESS_STATE
+    distance_pct: float
+    distance_dollars: float
+
+
+class DashboardOpenLeg(BaseModel):
+    id: str
+    ticker: str
+    type: DASHBOARD_OPTION_TYPE
+    strike: float
+    expiration: str
+    dte: int
+    moneyness: Optional[DashboardMoneyness] = None
+    position_id: str
+
+
+class DashboardUpcomingExpiration(DashboardOpenLeg):
+    decision_tag: DASHBOARD_DECISION_TAG
+    decision_reason: str
+
+
+class DashboardActivity(BaseModel):
+    kind: DASHBOARD_ACTIVITY_KIND
+    timestamp: str
+    # session_saved
+    session_name: Optional[str] = None
+    session_id: Optional[str] = None
+    # trade_added
+    ticker: Optional[str] = None
+    trade_type: Optional[str] = None
+    position_id: Optional[str] = None
+
+
+class DashboardDataMeta(BaseModel):
+    is_stale: bool
+    fetched_at: str
+    sources_unavailable: list[str] = []
+
+
+class DashboardResponse(BaseModel):
+    generated_at: str
+    status: DashboardStatus
+    kpis: DashboardKpis
+    positions: list[DashboardPositionRow]
+    open_legs: list[DashboardOpenLeg]
+    upcoming_expirations: list[DashboardUpcomingExpiration]
+    recent_activity: list[DashboardActivity]
+    data_meta: DashboardDataMeta

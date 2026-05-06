@@ -281,4 +281,11 @@ export async function executeSchwabImport(startDate, endDate, positionStrategy =
   return data;
 }
 
+// --- Dashboard ---
+
+export async function getDashboard() {
+  const { data } = await api.get('/api/dashboard');
+  return data;
+}
+
 export default api;
