@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useJournal } from '../../hooks/useJournal';
 import Header from '../layout/Header';
 import PositionsTable from './PositionsTable';
@@ -10,6 +11,30 @@ export default function JournalPage() {
   const journal = useJournal();
   const [showNewPosition, setShowNewPosition] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const searchParams = useSearchParams();
+  const positionParam = searchParams?.get('position') ?? null;
+  const consumedDeepLinkRef = useRef(false);
+
+  // Pull stable refs out of the journal hook for the deep-link effect's
+  // dependency list — keeps `react-hooks/exhaustive-deps` honest without
+  // re-running on every unrelated journal field change.
+  const { loading: journalLoading, selectPosition } = journal;
+
+  // Deep-link consumer: when arriving at /journal?position=<id> (e.g. from a
+  // dashboard PositionsCard or RecentActivityCard row), select that position
+  // once the initial positions fetch settles. We only honor the param once
+  // per mount so the user can later click another row without the deep-link
+  // snapping back to the original selection.
+  useEffect(() => {
+    if (!positionParam) {
+      consumedDeepLinkRef.current = false;
+      return;
+    }
+    if (journalLoading) return;
+    if (consumedDeepLinkRef.current) return;
+    consumedDeepLinkRef.current = true;
+    selectPosition(positionParam);
+  }, [positionParam, journalLoading, selectPosition]);
 
   const handleCreatePosition = async (data) => {
     try {
