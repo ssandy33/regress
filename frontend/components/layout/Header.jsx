@@ -82,6 +82,7 @@ export default function Header({ sessions, onLoadSession }) {
 
         {/* Dark mode toggle */}
         <button
+          data-testid="dark-mode-toggle"
           onClick={toggle}
           className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
           aria-label="Toggle dark mode"
