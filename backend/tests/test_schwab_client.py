@@ -266,6 +266,46 @@ HANDLER_CALL_ARGS = {
 }
 
 
+class TestGetTransactions:
+    """Tests for get_transactions request parameters (issue #119)."""
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_transactions_passes_trade_and_receive_and_deliver_types(
+        self, mock_get, mock_tm_cls
+    ):
+        """Both TRADE and RECEIVE_AND_DELIVER types are sent so assignments are returned."""
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = []
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        client = SchwabClient()
+        client.get_transactions("abc123", "2024-01-01", "2024-03-01")
+
+        params = mock_get.call_args.kwargs["params"]
+        assert params["types"] == "TRADE,RECEIVE_AND_DELIVER"
+        assert "startDate" in params
+        assert "endDate" in params
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_transactions_returns_response_json(self, mock_get, mock_tm_cls):
+        """Response JSON is returned as-is for the importer to map."""
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [{"type": "TRADE"}, {"type": "RECEIVE_AND_DELIVER"}]
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        client = SchwabClient()
+        result = client.get_transactions("abc123", "2024-01-01", "2024-03-01")
+        assert result == [{"type": "TRADE"}, {"type": "RECEIVE_AND_DELIVER"}]
+
+
 class TestErrorResponseLogging:
     """Tests for logging Schwab error response bodies (issue #73)."""
 

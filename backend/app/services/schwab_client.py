@@ -286,10 +286,12 @@ class SchwabClient:
             raise SchwabClientError("Invalid account hash")
 
         url = f"{self.TRADER_BASE_URL}/accounts/{account_hash}/transactions"
+        # Include RECEIVE_AND_DELIVER so option assignments and called-away events are returned.
+        # The instruction-level value RECEIVE_DELIVER is mapped in schwab_import._INSTRUCTION_MAP.
         params = {
             "startDate": _to_iso8601(start_date),
             "endDate": _to_iso8601(end_date),
-            "types": "TRADE",
+            "types": "TRADE,RECEIVE_AND_DELIVER",
         }
         try:
             resp = httpx.get(url, params=params, headers=self._headers(), timeout=30)

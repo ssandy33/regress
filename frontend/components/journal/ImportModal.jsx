@@ -11,10 +11,15 @@ function toLocalDate(d) {
   return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
 }
 
+// Default lookback covers typical wheel/options cycles (~60-90 day expirations)
+// without exceeding the server-side 365-day cap from issue #75.
+const DEFAULT_LOOKBACK_DAYS = 90;
+const MAX_LOOKBACK_DAYS = 365;
+
 function defaultDates() {
   const end = new Date();
   const start = new Date();
-  start.setDate(start.getDate() - 30);
+  start.setDate(start.getDate() - DEFAULT_LOOKBACK_DAYS);
   return {
     startDate: toLocalDate(start),
     endDate: toLocalDate(end),
@@ -40,12 +45,24 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
     await onPreview(startDate, endDate);
   };
 
+  const handleLookBack365 = async () => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - MAX_LOOKBACK_DAYS);
+    const newStart = toLocalDate(start);
+    const newEnd = toLocalDate(end);
+    setStartDate(newStart);
+    setEndDate(newEnd);
+    await onPreview(newStart, newEnd);
+  };
+
   const handleImport = async () => {
     const res = await onImport(startDate, endDate, strategy);
     if (res) setResult(res);
   };
 
   const allDuplicates = preview && preview.new_count === 0;
+  const emptyPreview = preview && preview.total === 0;
 
   const inputClass = 'w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white';
   const labelClass = 'block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1';
@@ -74,6 +91,26 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
             <p className="text-sm text-slate-600 dark:text-slate-400">
               Account: {preview.account_number} | {preview.total} trades found | {preview.duplicates} duplicates | {preview.new_count} new
             </p>
+
+            {emptyPreview && (
+              <div
+                data-testid="empty-preview-banner"
+                className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 space-y-2"
+              >
+                <p className="text-sm text-amber-800 dark:text-amber-200">
+                  No trades found between <span className="font-medium">{startDate}</span> and{' '}
+                  <span className="font-medium">{endDate}</span>. Try a longer date range.
+                </p>
+                <button
+                  data-testid="look-back-365-btn"
+                  onClick={handleLookBack365}
+                  disabled={loading}
+                  className="px-3 py-1.5 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? 'Loading...' : 'Look back 365 days'}
+                </button>
+              </div>
+            )}
 
             {preview.trades.length > 0 && (
               <div className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">

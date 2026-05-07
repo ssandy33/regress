@@ -172,4 +172,67 @@ test.describe('Schwab Import', () => {
     await page.getByTestId('import-modal').click();
     await expect(page.getByTestId('import-modal')).toBeVisible();
   });
+
+  test('default date range is 90 days back from today (issue #119)', async ({ page }) => {
+    await page.getByTestId('import-schwab-btn').click();
+    const modal = page.getByTestId('import-modal');
+    await expect(modal).toBeVisible();
+
+    const startInput = modal.locator('input[type="date"]').nth(0);
+    const endInput = modal.locator('input[type="date"]').nth(1);
+    const startValue = await startInput.inputValue();
+    const endValue = await endInput.inputValue();
+
+    const start = new Date(`${startValue}T00:00:00`);
+    const end = new Date(`${endValue}T00:00:00`);
+    const diffDays = Math.round((end - start) / (1000 * 60 * 60 * 24));
+    expect(diffDays).toBe(90);
+  });
+
+  test('empty preview shows banner and "Look back 365 days" widens the range (issue #119)', async ({ page }) => {
+    // Capture every preview call so we can assert the second one uses a 365-day range.
+    const previewCalls = [];
+    await page.unroute('**/api/journal/import/preview*');
+    await page.route('**/api/journal/import/preview*', (route) => {
+      const url = new URL(route.request().url());
+      previewCalls.push({
+        start_date: url.searchParams.get('start_date'),
+        end_date: url.searchParams.get('end_date'),
+      });
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          account_number: '****5678',
+          trades: [],
+          total: 0,
+          duplicates: 0,
+          new_count: 0,
+        }),
+      });
+    });
+
+    await page.getByTestId('import-schwab-btn').click();
+    await page.getByTestId('preview-import-btn').click();
+
+    // Empty banner appears with the suggestion.
+    const banner = page.getByTestId('empty-preview-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('No trades found');
+    await expect(banner).toContainText('Try a longer date range');
+
+    // First call used the 90-day default.
+    expect(previewCalls.length).toBe(1);
+    const firstStart = new Date(`${previewCalls[0].start_date}T00:00:00`);
+    const firstEnd = new Date(`${previewCalls[0].end_date}T00:00:00`);
+    expect(Math.round((firstEnd - firstStart) / (1000 * 60 * 60 * 24))).toBe(90);
+
+    // Click "Look back 365 days" — should re-call preview with a 365-day range.
+    await page.getByTestId('look-back-365-btn').click();
+
+    await expect.poll(() => previewCalls.length).toBe(2);
+    const secondStart = new Date(`${previewCalls[1].start_date}T00:00:00`);
+    const secondEnd = new Date(`${previewCalls[1].end_date}T00:00:00`);
+    expect(Math.round((secondEnd - secondStart) / (1000 * 60 * 60 * 24))).toBe(365);
+  });
 });
