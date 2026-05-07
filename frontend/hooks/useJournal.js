@@ -10,6 +10,8 @@ import {
   deleteTrade,
   previewSchwabImport,
   executeSchwabImport,
+  previewSchwabCsvImport,
+  executeSchwabCsvImport,
 } from '../api/client';
 
 export function useJournal() {
@@ -151,6 +153,38 @@ export function useJournal() {
     }
   }, [fetchPositions]);
 
+  const previewCsvImport = useCallback(async (file) => {
+    setImportLoading(true);
+    try {
+      const data = await previewSchwabCsvImport(file);
+      setImportPreview(data);
+      return data;
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(detail || 'Failed to preview CSV import');
+      return null;
+    } finally {
+      setImportLoading(false);
+    }
+  }, []);
+
+  const confirmCsvImport = useCallback(async (file, positionStrategy = 'wheel') => {
+    setImportLoading(true);
+    try {
+      const result = await executeSchwabCsvImport(file, positionStrategy);
+      toast.success(`Imported ${result.imported} trades`);
+      setImportPreview(null);
+      await fetchPositions();
+      return result;
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(detail || 'Failed to import CSV trades');
+      return null;
+    } finally {
+      setImportLoading(false);
+    }
+  }, [fetchPositions]);
+
   const clearImportPreview = useCallback(() => {
     setImportPreview(null);
   }, []);
@@ -176,6 +210,8 @@ export function useJournal() {
     removeTrade,
     previewImport,
     confirmImport,
+    previewCsvImport,
+    confirmCsvImport,
     clearImportPreview,
   };
 }

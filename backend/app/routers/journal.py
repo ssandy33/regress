@@ -1,12 +1,13 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
 from app.models.schemas import (
     POSITION_STATUS,
+    STRATEGY_TYPES,
     ImportPreviewResponse,
     ImportRequest,
     ImportResultResponse,
@@ -29,7 +30,21 @@ from app.services.journal import (
 )
 from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
 from app.services.schwab_client import SchwabClientError
-from app.services.schwab_import import execute_import, preview_import
+from app.services.schwab_csv import parse_schwab_csv
+from app.services.schwab_import import (
+    build_preview,
+    execute_import,
+    execute_mapped_import,
+    preview_import,
+)
+
+# Maximum CSV upload size; chosen to comfortably hold a year of transactions
+# for an active wheel trader (~5,000 rows averaging well under 1 KB each).
+_MAX_CSV_BYTES = 5 * 1024 * 1024
+_CSV_SIZE_DETAIL = "CSV file is larger than the 5 MB limit"
+_CSV_EXT_DETAIL = "Only .csv files are accepted"
+_CSV_EMPTY_DETAIL = "Uploaded file is empty"
+_CSV_PARSE_DETAIL = "Could not parse the uploaded CSV file"
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +145,62 @@ def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
     except Exception:
         logger.exception("Unexpected error during import")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
+
+
+@router.post("/import/csv/preview", response_model=ImportPreviewResponse)
+async def import_csv_preview(
+    file: UploadFile = File(...),
+    db: DBSession = Depends(get_db),
+):
+    """Preview options trades from a Schwab transaction CSV export.
+
+    Mirrors the Schwab API preview path but reads from an uploaded CSV file.
+    Use this when historical transactions predate the developer-app creation
+    date and are therefore not returned by ``/api/journal/import/preview``.
+    """
+    file_bytes = await _read_csv_upload(file)
+    try:
+        mapped = parse_schwab_csv(file_bytes)
+    except Exception:
+        logger.exception("Failed to parse uploaded Schwab CSV")
+        raise HTTPException(status_code=422, detail=_CSV_PARSE_DETAIL)
+    return build_preview(db, mapped, account_number="")
+
+
+@router.post("/import/csv", response_model=ImportResultResponse)
+async def import_csv(
+    file: UploadFile = File(...),
+    position_strategy: STRATEGY_TYPES = Form("wheel"),
+    db: DBSession = Depends(get_db),
+):
+    """Import options trades from a Schwab transaction CSV export."""
+    file_bytes = await _read_csv_upload(file)
+    try:
+        mapped = parse_schwab_csv(file_bytes)
+    except Exception:
+        logger.exception("Failed to parse uploaded Schwab CSV")
+        raise HTTPException(status_code=422, detail=_CSV_PARSE_DETAIL)
+    return execute_mapped_import(db, mapped, position_strategy=position_strategy)
+
+
+async def _read_csv_upload(file: UploadFile) -> bytes:
+    """Validate and read a CSV upload, enforcing size + extension limits.
+
+    Raises ``HTTPException`` 422 with a generic, user-safe detail if the file
+    is missing, has the wrong extension, or exceeds the 5 MB cap. Never logs
+    or returns the raw filename or contents.
+    """
+    if file is None or not file.filename:
+        raise HTTPException(status_code=422, detail=_CSV_EXT_DETAIL)
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=422, detail=_CSV_EXT_DETAIL)
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=422, detail=_CSV_EMPTY_DETAIL)
+    if len(contents) > _MAX_CSV_BYTES:
+        raise HTTPException(status_code=422, detail=_CSV_SIZE_DETAIL)
+    return contents
 
 
 _AUTH_DETAIL_MAP: dict[SchwabAuthCode, str] = {

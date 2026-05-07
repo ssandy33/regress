@@ -281,6 +281,21 @@ export async function executeSchwabImport(startDate, endDate, positionStrategy =
   return data;
 }
 
+export async function previewSchwabCsvImport(file) {
+  const form = new FormData();
+  form.append('file', file);
+  const { data } = await api.post('/api/journal/import/csv/preview', form);
+  return data;
+}
+
+export async function executeSchwabCsvImport(file, positionStrategy = 'wheel') {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('position_strategy', positionStrategy);
+  const { data } = await api.post('/api/journal/import/csv', form);
+  return data;
+}
+
 // --- Dashboard ---
 
 export async function getDashboard() {
