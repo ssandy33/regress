@@ -70,6 +70,11 @@ function setupMocks(page) {
 }
 
 test.describe('Schwab Import', () => {
+  // Manual acceptance criterion from issue #119: verify the fix end-to-end against a
+  // real Schwab brokerage account with assignments / called-away events in the last
+  // 90 days. Not automatable in CI (requires live OAuth + non-deterministic data).
+  test.skip('manual: verify assignment/called_away rows with a live Schwab account', () => {});
+
   test.beforeEach(async ({ page }) => {
     await setupMocks(page);
     await page.goto('/journal');
