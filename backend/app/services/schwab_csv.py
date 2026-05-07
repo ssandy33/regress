@@ -197,6 +197,9 @@ def _parse_option_symbol(symbol: str) -> tuple[str, str, float, str] | None:
 
     occ = _OCC_SYMBOL_RE.match(symbol)
     if occ:
+        # OCC symbols encode year as 2 digits; we hardcode the 21st-century
+        # prefix. Schwab journals containing options expiring in 2100+ would
+        # need revisiting then.
         try:
             exp = datetime.strptime(
                 f"20{occ.group('yy')}-{occ.group('mm')}-{occ.group('dd')}",

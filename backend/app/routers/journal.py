@@ -163,7 +163,7 @@ async def import_csv_preview(
         mapped = parse_schwab_csv(file_bytes)
     except Exception:
         logger.exception("Failed to parse uploaded Schwab CSV")
-        raise HTTPException(status_code=422, detail=_CSV_PARSE_DETAIL)
+        raise HTTPException(status_code=422, detail=_CSV_PARSE_DETAIL) from None
     return build_preview(db, mapped, account_number="")
 
 
@@ -179,7 +179,7 @@ async def import_csv(
         mapped = parse_schwab_csv(file_bytes)
     except Exception:
         logger.exception("Failed to parse uploaded Schwab CSV")
-        raise HTTPException(status_code=422, detail=_CSV_PARSE_DETAIL)
+        raise HTTPException(status_code=422, detail=_CSV_PARSE_DETAIL) from None
     return execute_mapped_import(db, mapped, position_strategy=position_strategy)
 
 

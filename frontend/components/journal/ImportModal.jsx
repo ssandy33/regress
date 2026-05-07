@@ -105,6 +105,7 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
     if (next === mode) return;
     setMode(next);
     setCsvError(null);
+    setCsvFile(null);
   };
 
   const allDuplicates = preview && preview.new_count === 0;
