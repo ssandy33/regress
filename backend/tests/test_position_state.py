@@ -341,6 +341,52 @@ class TestLifecycleScenarios:
         assert result.shares == 0
         assert result.closed_at is None
 
+    def test_covered_call_expires_keeps_shares(self, db_session):
+        # Wheel mid-cycle: assigned 100 shares from a put, then sold a covered
+        # call that expired worthless. Position must stay open with shares and
+        # basis intact — closing this would silently delete shares the trader
+        # still holds.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+                # Now 100 shares held at $1350 basis.
+                {
+                    "trade_type": "sell_call",
+                    "strike": 15.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-01",
+                },
+                {
+                    "trade_type": "expired",
+                    "strike": 15.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-17",
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        # Covered call expired worthless → shares and basis unchanged from
+        # post-assignment state, position stays open, no closed_at stamp.
+        assert result.status == "open"
+        assert result.shares == 100
+        assert result.broker_cost_basis == pytest.approx(1350.0)
+        assert result.closed_at is None
+
     def test_partial_called_away_keeps_position_open(self, db_session):
         # 200 shares held (two assignments at $20), 1 call exercised at $22.
         # Expectation: 100 shares remain, basis halved, status stays open.

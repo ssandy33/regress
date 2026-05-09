@@ -226,6 +226,15 @@ def recompute_position_state(
                 # broker basis is reduced proportionally to the shares removed.
                 if shares > 0:
                     removed = min(contract_shares, shares)
+                    if removed < contract_shares:
+                        logger.warning(
+                            "recompute_position_state: called_away on %s "
+                            "requested %d shares but only %d held; "
+                            "truncating removal (ledger may be incomplete)",
+                            position.ticker,
+                            contract_shares,
+                            shares,
+                        )
                     if shares > 0 and basis != 0.0:
                         basis = basis * (1 - removed / shares)
                     shares -= removed
