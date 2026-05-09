@@ -49,12 +49,17 @@ def _make_schwab_mgr(*, configured: bool, expires_at: str | None = None):
 
 
 def _seed_position(client, **overrides) -> str:
-    """Create a position via the API and return its id."""
+    """Create a position via the API and return its id.
+
+    Per issue #131 ``strategy`` is no longer accepted on PositionCreate;
+    the recomputer derives the label from the trade ledger. Callers that
+    need a specific strategy on the seeded row should add a trade after
+    creation so the recomputer derives the desired label.
+    """
     payload = {
         "ticker": "AAPL",
         "shares": 100,
         "broker_cost_basis": 17000.0,
-        "strategy": "wheel",
         "opened_at": "2026-04-01T10:00:00Z",
     }
     payload.update(overrides)
@@ -139,7 +144,6 @@ def test_dashboard_populated(client, monkeypatch):
         ticker="TSLA",
         broker_cost_basis=20000.0,
         shares=100,
-        strategy="cc",
     )
 
     # AAPL short put 175 expires in 3 days → ITM → roll-or-assign
@@ -186,6 +190,10 @@ def test_dashboard_populated(client, monkeypatch):
     assert data["kpis"]["open_positions"] == 2
     assert data["kpis"]["open_legs"] == 2
     assert data["kpis"]["open_legs_breakdown"] == {"puts": 1, "calls": 1}
+    # Issue #131: ``holding`` is part of the additive breakdown shape.
+    # Both seeded positions retain the create-time "csp" placeholder
+    # because the manual trade flow does not invoke the recomputer.
+    assert "holding" in data["kpis"]["open_positions_breakdown"]
 
     # Unrealized P/L is computed because both quotes resolved.
     assert data["kpis"]["unrealized_pl"] is not None

@@ -145,6 +145,57 @@ test.describe('Schwab CSV Import (issue #104)', () => {
     await expect(page.getByText('Positions created: 2')).toBeVisible();
   });
 
+  test('Position Strategy dropdown is removed in CSV mode (issue #131)', async ({ page }) => {
+    await page.getByTestId('import-schwab-btn').click();
+    await page.getByTestId('import-mode-csv').click();
+    const modal = page.getByTestId('import-modal');
+    await expect(modal.getByText('Position Strategy')).toHaveCount(0);
+
+    await page.getByTestId('csv-file-input').setInputFiles({
+      name: 'schwab-trades.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(SAMPLE_CSV, 'utf-8'),
+    });
+    await page.getByTestId('preview-csv-btn').click();
+    await expect(page.getByTestId('import-preview')).toBeVisible();
+    // Still gone after preview (the dropdown previously appeared on this view).
+    await expect(modal.getByText('Position Strategy')).toHaveCount(0);
+  });
+
+  test('CSV import POST omits position_strategy form field (issue #131)', async ({ page }) => {
+    const csvBodies = [];
+    await page.unroute('**/api/journal/import/csv');
+    await page.route('**/api/journal/import/csv', (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        const raw = req.postData() || '';
+        csvBodies.push(raw);
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(MOCK_CSV_IMPORT_RESULT),
+        });
+      }
+      return route.continue();
+    });
+
+    await page.getByTestId('import-schwab-btn').click();
+    await page.getByTestId('import-mode-csv').click();
+    await page.getByTestId('csv-file-input').setInputFiles({
+      name: 'schwab-trades.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(SAMPLE_CSV, 'utf-8'),
+    });
+    await page.getByTestId('preview-csv-btn').click();
+    await expect(page.getByTestId('import-preview')).toBeVisible();
+    await page.getByTestId('confirm-import-btn').click();
+    await expect(page.getByTestId('import-result')).toBeVisible();
+
+    expect(csvBodies.length).toBe(1);
+    // The multipart body should not contain a `position_strategy` part.
+    expect(csvBodies[0]).not.toMatch(/name="position_strategy"/);
+  });
+
   test('non-CSV file shows client-side validation error', async ({ page }) => {
     await page.getByTestId('import-schwab-btn').click();
     await page.getByTestId('import-mode-csv').click();

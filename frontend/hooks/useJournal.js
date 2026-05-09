@@ -164,10 +164,10 @@ export function useJournal() {
     }
   }, []);
 
-  const confirmImport = useCallback(async (startDate, endDate, positionStrategy = 'wheel') => {
+  const confirmImport = useCallback(async (startDate, endDate) => {
     setImportLoading(true);
     try {
-      const result = await executeSchwabImport(startDate, endDate, positionStrategy);
+      const result = await executeSchwabImport(startDate, endDate);
       toast.success(`Imported ${result.imported} trades`);
       setImportPreview(null);
       await fetchPositions();
@@ -200,10 +200,10 @@ export function useJournal() {
     }
   }, []);
 
-  const confirmCsvImport = useCallback(async (file, positionStrategy = 'wheel') => {
+  const confirmCsvImport = useCallback(async (file) => {
     setImportLoading(true);
     try {
-      const result = await executeSchwabCsvImport(file, positionStrategy);
+      const result = await executeSchwabCsvImport(file);
       toast.success(`Imported ${result.imported} trades`);
       setImportPreview(null);
       await fetchPositions();

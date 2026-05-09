@@ -215,7 +215,9 @@ class TestReconcileAll:
 
     def test_no_changes_when_state_already_correct(self, db_session, capsys):
         # Seed with correct state for a simple sell_put leg: 0 shares, open.
-        _seed_ghost_open_position(
+        # Strategy must already match the derived "csp" label, otherwise the
+        # reconciler will record a change for the label fix.
+        pos = _seed_ghost_open_position(
             db_session,
             ticker="F",
             bad_shares=0,
@@ -229,12 +231,56 @@ class TestReconcileAll:
                 },
             ],
         )
+        # Override the seed's "wheel" label to the derived value so this
+        # truly represents an "already correct" row.
+        pos.strategy = "csp"
+        db_session.commit()
 
         total, changed, errors = reconcile_all(db_session, apply=True)
 
         assert total == 1
         assert changed == 0
         assert errors == 0
+
+    def test_apply_re_derives_strategy_label(self, db_session):
+        # Bad state: stored as "wheel" but the ledger shows held shares with
+        # no open option legs → the derived label is "holding". This
+        # mirrors the real-world repro from the issue (wheel-imported batch
+        # left two equity-only positions stuck on "wheel" on the dashboard).
+        pos = _seed_ghost_open_position(
+            db_session,
+            ticker="F",
+            bad_shares=100,
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+        original_id = pos.id
+        assert pos.strategy == "wheel"  # stale seed
+
+        total, changed, errors = reconcile_all(db_session, apply=True)
+
+        assert total == 1
+        assert changed == 1
+        assert errors == 0
+
+        db_session.expire_all()
+        reloaded = (
+            db_session.query(Position).filter(Position.id == original_id).first()
+        )
+        assert reloaded.strategy == "holding"
+        assert reloaded.shares == 100
 
 
 class TestMainCli:

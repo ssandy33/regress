@@ -291,7 +291,13 @@ class OptionScanResponse(BaseModel):
 # --- Journal ---
 
 
-STRATEGY_TYPES = Literal["csp", "cc", "wheel"]
+# Strategy values are *derived* from a position's lifecycle state by
+# :func:`app.services.positions.recompute_position_state` (see issue #131).
+# ``"holding"`` joins the original {csp, cc, wheel} set to label positions
+# that hold shares with no open option legs. The literal still drives request
+# validation on legacy back-compat fields (e.g. ``ImportRequest``) but is no
+# longer accepted on position-create or position-update payloads.
+STRATEGY_TYPES = Literal["csp", "cc", "wheel", "holding"]
 POSITION_STATUS = Literal["open", "closed"]
 TRADE_TYPES = Literal[
     "sell_put",
@@ -306,17 +312,31 @@ CLOSE_REASONS = Literal["fifty_pct_target", "full_expiration", "rolled", "closed
 
 
 class PositionCreate(BaseModel):
+    """Payload for creating a position.
+
+    Per issue #131 the strategy label is derived from the position's
+    lifecycle state by ``recompute_position_state`` and is no longer
+    accepted from the client. New positions are seeded with ``"csp"``
+    server-side; the recomputer overwrites that as soon as the first
+    trade is logged.
+    """
+
     ticker: str
     shares: int = Field(default=100, ge=1)
     broker_cost_basis: float
-    strategy: STRATEGY_TYPES
     opened_at: str
     notes: Optional[str] = None
 
 
 class PositionUpdate(BaseModel):
+    """Partial-update payload for a position.
+
+    Per issue #131 ``strategy`` is no longer accepted — the recomputer is
+    authoritative. Status / closed_at / notes / shares / broker_cost_basis
+    can still be patched directly for manual corrections.
+    """
+
     status: Optional[POSITION_STATUS] = None
-    strategy: Optional[STRATEGY_TYPES] = None
     closed_at: Optional[str] = None
     notes: Optional[str] = None
     broker_cost_basis: Optional[float] = None
@@ -406,9 +426,17 @@ class ImportPreviewResponse(BaseModel):
 
 
 class ImportRequest(BaseModel):
+    """Request body for ``POST /api/journal/import``.
+
+    ``position_strategy`` is **deprecated** as of issue #131 — the recomputer
+    derives the displayed label from each position's state. The field is
+    retained on the request schema so older clients that still send it do
+    not 422; the value is silently ignored by the handler.
+    """
+
     start_date: str
     end_date: str
-    position_strategy: STRATEGY_TYPES = "wheel"
+    position_strategy: Optional[STRATEGY_TYPES] = None  # deprecated; ignored
 
     @field_validator("start_date", "end_date")
     @classmethod
@@ -470,10 +498,20 @@ class DashboardStatus(BaseModel):
 
 
 class DashboardOpenPositionsBreakdown(BaseModel):
+    """Open-positions count split by derived strategy label.
+
+    ``stock`` is a vestigial bucket from before #131 that is never
+    incremented (no position has ``strategy="stock"``); kept here for
+    response-shape stability while the frontend consumers are tracked into
+    a follow-up. ``holding`` was added in #131 for positions that hold
+    shares with no open option legs.
+    """
+
     stock: int
     csp: int
     cc: int
     wheel: int
+    holding: int
 
 
 class DashboardOpenLegsBreakdown(BaseModel):

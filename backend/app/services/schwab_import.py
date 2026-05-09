@@ -180,16 +180,20 @@ def build_preview(
 def execute_mapped_import(
     db: Session,
     mapped_trades: list[dict],
-    position_strategy: str = "wheel",
 ) -> dict:
     """Persist a list of pre-mapped trade dicts to the journal.
 
     Inserts trades onto an existing open Position for the ticker, or creates a
     new Position with neutral initial state (``shares=0``, ``broker_cost_basis=0``)
-    that the recomputer will overwrite. After all trades are inserted, the
-    finalizer calls :func:`app.services.positions.recompute_position_state` once
-    per touched ticker to derive ``status`` / ``shares`` / ``broker_cost_basis``
-    / ``closed_at`` from the trade ledger.
+    that the recomputer will overwrite. New positions are seeded with a
+    ``"csp"`` placeholder strategy; the recomputer overwrites that with the
+    correct derived label (csp / cc / wheel / holding) before this function
+    returns — see issue #131 for the truth table.
+
+    After all trades are inserted, the finalizer calls
+    :func:`app.services.positions.recompute_position_state` once per touched
+    ticker to derive ``status`` / ``shares`` / ``broker_cost_basis`` /
+    ``closed_at`` / ``strategy`` from the trade ledger.
 
     Shared between the Schwab API import path and the CSV upload import path.
     """
@@ -220,11 +224,12 @@ def execute_mapped_import(
         if position is None:
             # Neutral initial state — the recomputer below overwrites these
             # from the trade ledger once the batch finishes inserting.
+            # ``strategy`` is seeded with the journal-service default in
+            # ``create_position`` and recomputed in the finalizer.
             pos_data = PositionCreate(
                 ticker=mapped["ticker"],
                 shares=1,  # ge=1 schema constraint; real value comes from recomputer
                 broker_cost_basis=0.0,
-                strategy=position_strategy,
                 opened_at=mapped["opened_at"],
             )
             pos_result = create_position(db, pos_data)
@@ -289,10 +294,11 @@ def preview_import(db: Session, start_date: str, end_date: str) -> dict:
     return build_preview(db, mapped_trades, account_number=account_number)
 
 
-def execute_import(db: Session, start_date: str, end_date: str, position_strategy: str = "wheel") -> dict:
+def execute_import(db: Session, start_date: str, end_date: str) -> dict:
     """Import Schwab transactions into the journal.
 
-    Creates positions as needed and logs trades.
+    Creates positions as needed and logs trades. Strategy labels are derived
+    by the recomputer (issue #131) — there is no per-import strategy override.
     """
     client = SchwabClient()
     account_numbers = client.get_account_numbers()
@@ -304,4 +310,4 @@ def execute_import(db: Session, start_date: str, end_date: str, position_strateg
     account_hash = account.get("hashValue", "")
     transactions = client.get_transactions(account_hash, start_date, end_date)
     mapped_trades = [m for m in (map_schwab_transaction(t) for t in transactions) if m]
-    return execute_mapped_import(db, mapped_trades, position_strategy=position_strategy)
+    return execute_mapped_import(db, mapped_trades)

@@ -4,7 +4,9 @@ Walks the entire ``positions`` table and runs
 :func:`app.services.positions.recompute_position_state` against each row, then
 prints a per-ticker before/after diff. Provides a fix path for journals that
 were imported before issue #127 was fixed (every imported position stuck at
-``status="open"``, ``shares=100``, ``broker_cost_basis=0.0``).
+``status="open"``, ``shares=100``, ``broker_cost_basis=0.0``) and for journals
+imported before issue #131 (every imported position stuck on the
+batch-applied strategy label rather than a derived one).
 
 Usage::
 
@@ -14,7 +16,8 @@ Usage::
 
 The script is **opt-in** — it is never invoked automatically. Running it with
 ``--apply`` rewrites the ``status`` / ``shares`` / ``broker_cost_basis`` /
-``closed_at`` columns of every Position; review the dry-run diff first.
+``closed_at`` / ``strategy`` columns of every Position; review the dry-run
+diff first.
 
 Exit codes:
     0  success (or dry-run completed)
@@ -44,6 +47,7 @@ class _Snapshot:
     shares: int
     broker_cost_basis: float
     closed_at: str | None
+    strategy: str
 
 
 def _snapshot(position: Position) -> _Snapshot:
@@ -53,6 +57,7 @@ def _snapshot(position: Position) -> _Snapshot:
         shares=int(position.shares or 0),
         broker_cost_basis=float(position.broker_cost_basis or 0.0),
         closed_at=position.closed_at,
+        strategy=position.strategy or "",
     )
 
 
@@ -71,6 +76,8 @@ def _format_diff(ticker: str, before: _Snapshot, after: _Snapshot) -> str | None
         )
     if before.closed_at != after.closed_at:
         parts.append(f"closed_at {before.closed_at!r} -> {after.closed_at!r}")
+    if before.strategy != after.strategy:
+        parts.append(f"strategy {before.strategy} -> {after.strategy}")
     return f"  {ticker:<8} {', '.join(parts)}"
 
 

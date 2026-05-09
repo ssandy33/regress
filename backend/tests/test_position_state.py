@@ -17,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models.database import Base, Position, Trade
-from app.services.positions import recompute_position_state
+from app.services.positions import _derive_strategy_label, _LegKey, recompute_position_state
 
 
 # --- Fixtures ----------------------------------------------------------------
@@ -595,3 +595,252 @@ class TestEdgeCases:
         assert result.status == "open"
         assert result.shares == 200
         assert result.broker_cost_basis == pytest.approx(2700.0)
+
+
+# --- Strategy label derivation (issue #131) ----------------------------------
+
+
+class TestDeriveStrategyLabel:
+    """Pure-function unit tests for ``_derive_strategy_label``.
+
+    Each test maps one row of the issue #131 truth table to its expected
+    label. The recomputer wraps this helper; the integration cases below
+    confirm the wiring.
+    """
+
+    def _put_leg(self) -> _LegKey:
+        return _LegKey(option_type="put", strike=20.0, expiration="2026-03-20")
+
+    def _call_leg(self) -> _LegKey:
+        return _LegKey(option_type="call", strike=22.0, expiration="2026-03-20")
+
+    def test_zero_shares_only_open_puts_is_csp(self):
+        assert _derive_strategy_label(0, [self._put_leg()]) == "csp"
+
+    def test_shares_held_only_open_calls_is_cc(self):
+        assert _derive_strategy_label(100, [self._call_leg()]) == "cc"
+
+    def test_shares_held_open_puts_and_calls_is_wheel(self):
+        assert (
+            _derive_strategy_label(100, [self._put_leg(), self._call_leg()])
+            == "wheel"
+        )
+
+    def test_shares_held_no_open_legs_is_holding(self):
+        assert _derive_strategy_label(100, []) == "holding"
+
+    def test_zero_shares_no_open_legs_is_csp(self):
+        # The closed-position case: status is closed and the label is not
+        # rendered on the dashboard, but the helper still returns a defined
+        # label so callers can use it unconditionally.
+        assert _derive_strategy_label(0, []) == "csp"
+
+    def test_zero_shares_only_open_calls_is_cc_with_warning(self, caplog):
+        # Anomalous (naked-call) case: derive ``cc`` and log a warning
+        # because no shares + open calls should not occur in a wheel-only
+        # journal. The label still matches the live legs — calling this
+        # "csp" would directly contradict what the user is looking at.
+        with caplog.at_level("WARNING", logger="app.services.positions"):
+            label = _derive_strategy_label(0, [self._call_leg()])
+        assert label == "cc"
+        assert any(
+            "anomalous" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_shares_held_only_open_puts_is_csp(self):
+        # Layered-entry edge case: short put while holding shares (e.g.
+        # selling a deeper put after assignment but before the next call).
+        # csp is the closest single-side label.
+        assert _derive_strategy_label(100, [self._put_leg()]) == "csp"
+
+
+class TestRecomputeWritesDerivedStrategy:
+    """Integration: ``recompute_position_state`` must persist the derived label."""
+
+    def test_csp_flow_writes_csp_label(self, db_session):
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                }
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.shares == 0
+        assert result.strategy == "csp"
+
+    def test_holding_flow_writes_holding_label(self, db_session):
+        # sell_put → assignment leaves 100 shares, no open legs → holding.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.shares == 100
+        assert result.strategy == "holding"
+
+    def test_cc_flow_writes_cc_label(self, db_session):
+        # Hold shares + open call leg → cc.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+                {
+                    "trade_type": "sell_call",
+                    "strike": 15.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-01",
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.shares == 100
+        assert result.strategy == "cc"
+
+    def test_wheel_flow_writes_wheel_label(self, db_session):
+        # Hold shares + open call AND open put → wheel.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+                {
+                    "trade_type": "sell_call",
+                    "strike": 15.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-01",
+                },
+                {
+                    "trade_type": "sell_put",
+                    "strike": 12.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-02",
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.shares == 100
+        assert result.strategy == "wheel"
+
+    def test_closed_position_retains_last_derived_label(self, db_session):
+        # Full round trip → shares back to 0, no open legs → status closed.
+        # The label is whatever the helper says for ``(0, [])`` — currently
+        # "csp" — and the row's status flag tells the dashboard not to
+        # bucket it.
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-20",
+                },
+                {
+                    "trade_type": "sell_call",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-02-25",
+                },
+                {
+                    "trade_type": "called_away",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-03-20",
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.status == "closed"
+        assert result.shares == 0
+        assert result.strategy == "csp"
+
+    def test_recompute_overwrites_stale_label(self, db_session):
+        # Seeded with "wheel" but real ledger derives "holding". The
+        # recomputer must overwrite the stale value — this is the user-
+        # facing fix that ``make reconcile-positions`` relies on for
+        # already-imported journals.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+        # Confirm seed had stale "wheel" label.
+        assert pos.strategy == "wheel"
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.strategy == "holding"

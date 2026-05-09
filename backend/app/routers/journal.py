@@ -1,13 +1,12 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
 from app.models.schemas import (
     POSITION_STATUS,
-    STRATEGY_TYPES,
     ClearJournalResponse,
     ImportPreviewResponse,
     ImportRequest,
@@ -165,7 +164,10 @@ def import_transactions(req: ImportRequest, db: DBSession = Depends(get_db)):
     if _date_range_exceeds_limit(req.start_date, req.end_date):
         raise HTTPException(status_code=422, detail="Date range cannot exceed 1 year (365 days)")
     try:
-        return execute_import(db, req.start_date, req.end_date, req.position_strategy)
+        # ``req.position_strategy`` is accepted on the request body for
+        # backwards compatibility with old clients but ignored — the
+        # recomputer derives the label per issue #131.
+        return execute_import(db, req.start_date, req.end_date)
     except SchwabAuthError as e:
         logger.warning("Schwab auth failed during import: %s", e)
         raise HTTPException(status_code=401, detail=_schwab_auth_detail(e)) from e
@@ -200,17 +202,22 @@ async def import_csv_preview(
 @router.post("/import/csv", response_model=ImportResultResponse)
 async def import_csv(
     file: UploadFile = File(...),
-    position_strategy: STRATEGY_TYPES = Form("wheel"),
     db: DBSession = Depends(get_db),
 ):
-    """Import options trades from a Schwab transaction CSV export."""
+    """Import options trades from a Schwab transaction CSV export.
+
+    Per issue #131 the previously-required ``position_strategy`` form field
+    has been removed; the strategy label is derived from each position's
+    state by the recomputer. Stale clients that still post the field are
+    tolerated — FastAPI ignores unrecognized form parameters.
+    """
     file_bytes = await _read_csv_upload(file)
     try:
         mapped = parse_schwab_csv(file_bytes)
     except Exception:
         logger.exception("Failed to parse uploaded Schwab CSV")
         raise HTTPException(status_code=422, detail=_CSV_PARSE_DETAIL) from None
-    return execute_mapped_import(db, mapped, position_strategy=position_strategy)
+    return execute_mapped_import(db, mapped)
 
 
 async def _read_csv_upload(file: UploadFile) -> bytes:
