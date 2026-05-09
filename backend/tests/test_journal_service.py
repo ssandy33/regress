@@ -1,11 +1,19 @@
 """Unit tests for journal computation functions."""
 
+import uuid
 from types import SimpleNamespace
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.models.database import Base, Position, Trade
 from app.services.journal import (
+    clear_all_journal_data,
     compute_adjusted_basis,
     compute_min_cc_strike,
     compute_total_premiums,
+    delete_position,
 )
 
 
@@ -62,3 +70,77 @@ def test_compute_min_cc_strike_rounding():
     assert result == 52.55
     # Confirm it's actually rounded (string check)
     assert len(str(result).split(".")[-1]) <= 2
+
+
+# --- delete / clear-all service-layer tests ---
+
+
+@pytest.fixture
+def db_session():
+    """In-memory SQLite session for direct service-layer tests."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    TestSession = sessionmaker(bind=engine)
+    session = TestSession()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def _seed_position(db, ticker: str = "AAPL", trade_count: int = 0) -> Position:
+    pos = Position(
+        id=str(uuid.uuid4()),
+        ticker=ticker,
+        shares=100,
+        broker_cost_basis=10_000.0,
+        status="open",
+        strategy="csp",
+        opened_at="2025-01-01T00:00:00Z",
+    )
+    db.add(pos)
+    for i in range(trade_count):
+        db.add(
+            Trade(
+                id=str(uuid.uuid4()),
+                position_id=pos.id,
+                trade_type="sell_put",
+                strike=100.0,
+                expiration="2025-02-21",
+                premium=1.0 + i,
+                fees=0.0,
+                quantity=1,
+                opened_at="2025-01-02T00:00:00Z",
+            )
+        )
+    db.commit()
+    return pos
+
+
+def test_delete_position_cascades_trades(db_session):
+    """delete_position should also remove every child trade via ORM cascade."""
+    pos = _seed_position(db_session, trade_count=3)
+
+    assert delete_position(db_session, pos.id) is True
+    assert db_session.query(Position).count() == 0
+    assert db_session.query(Trade).count() == 0
+
+
+def test_delete_position_returns_false_for_unknown(db_session):
+    assert delete_position(db_session, "missing-id") is False
+
+
+def test_clear_all_journal_data_returns_counts(db_session):
+    _seed_position(db_session, ticker="AAPL", trade_count=2)
+    _seed_position(db_session, ticker="MSFT", trade_count=1)
+
+    result = clear_all_journal_data(db_session)
+    assert result == {"deleted_positions": 2, "deleted_trades": 3}
+    assert db_session.query(Position).count() == 0
+    assert db_session.query(Trade).count() == 0
+
+
+def test_clear_all_journal_data_empty_db(db_session):
+    result = clear_all_journal_data(db_session)
+    assert result == {"deleted_positions": 0, "deleted_trades": 0}

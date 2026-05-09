@@ -6,11 +6,14 @@ import PositionsTable from './PositionsTable';
 import TradeHistory from './TradeHistory';
 import PositionForm from './PositionForm';
 import ImportModal from './ImportModal';
+import ConfirmDialog from '../common/ConfirmDialog';
 
 export default function JournalPage() {
   const journal = useJournal();
   const [showNewPosition, setShowNewPosition] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [pendingDeletePositionId, setPendingDeletePositionId] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const searchParams = useSearchParams();
   const positionParam = searchParams?.get('position') ?? null;
   const consumedDeepLinkRef = useRef(false);
@@ -50,6 +53,21 @@ export default function JournalPage() {
     journal.clearImportPreview();
   };
 
+  const pendingDeletePosition = pendingDeletePositionId
+    ? journal.positions.find((p) => p.id === pendingDeletePositionId) || null
+    : null;
+
+  const handleConfirmDeletePosition = async () => {
+    if (!pendingDeletePositionId) return;
+    setDeleteBusy(true);
+    try {
+      await journal.removePosition(pendingDeletePositionId);
+      setPendingDeletePositionId(null);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   return (
     <div data-testid="journal-page" className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900">
       <Header sessions={[]} onLoadSession={() => {}} />
@@ -80,6 +98,7 @@ export default function JournalPage() {
           loading={journal.loading}
           onSelectPosition={journal.selectPosition}
           selectedPositionId={journal.selectedPosition?.id || null}
+          onDeletePosition={(id) => setPendingDeletePositionId(id)}
         />
 
         {journal.selectedPosition && (
@@ -106,6 +125,30 @@ export default function JournalPage() {
             onImportCsv={journal.confirmCsvImport}
             preview={journal.importPreview}
             loading={journal.importLoading}
+          />
+        )}
+
+        {pendingDeletePositionId && (
+          <ConfirmDialog
+            title="Delete position?"
+            message={
+              pendingDeletePosition ? (
+                <p>
+                  Delete{' '}
+                  <strong>{pendingDeletePosition.ticker}</strong>? This will permanently
+                  remove the position and{' '}
+                  <strong>{pendingDeletePosition.trades?.length ?? 0} trades</strong>.
+                </p>
+              ) : (
+                <p>Delete this position? This will permanently remove the position and all of its trades.</p>
+              )
+            }
+            confirmLabel="Delete"
+            busy={deleteBusy}
+            onConfirm={handleConfirmDeletePosition}
+            onCancel={() => {
+              if (!deleteBusy) setPendingDeletePositionId(null);
+            }}
           />
         )}
       </main>

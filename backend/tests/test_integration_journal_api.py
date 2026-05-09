@@ -202,6 +202,115 @@ def test_delete_trade_not_found(client):
     assert resp.status_code == 404
 
 
+# --- DELETE /api/journal/positions/{id} ---
+
+
+def test_delete_position_success_cascades_trades(client):
+    """Deleting a position removes the row and every child trade in one shot."""
+    pos = _create_position(client).json()
+    _create_trade(client, pos["id"], premium=1.5, quantity=1)
+    _create_trade(client, pos["id"], premium=2.0, quantity=2)
+
+    # Sanity check: trades exist before delete
+    pre = client.get(f"/api/journal/positions/{pos['id']}")
+    assert pre.status_code == 200
+    assert len(pre.json()["trades"]) == 2
+
+    resp = client.delete(f"/api/journal/positions/{pos['id']}")
+    assert resp.status_code == 204
+
+    # Position is gone
+    after = client.get(f"/api/journal/positions/{pos['id']}")
+    assert after.status_code == 404
+
+    # And it doesn't reappear in the list
+    listing = client.get("/api/journal/positions").json()
+    assert listing["positions"] == []
+
+
+def test_delete_position_not_found(client):
+    resp = client.delete("/api/journal/positions/does-not-exist")
+    assert resp.status_code == 404
+
+
+def test_delete_position_does_not_touch_other_positions(client):
+    """Deleting one position leaves siblings intact."""
+    keep = _create_position(client, ticker="AAPL").json()
+    drop = _create_position(client, ticker="MSFT").json()
+    _create_trade(client, keep["id"], premium=1.0)
+    _create_trade(client, drop["id"], premium=2.0)
+
+    resp = client.delete(f"/api/journal/positions/{drop['id']}")
+    assert resp.status_code == 204
+
+    surviving = client.get("/api/journal/positions").json()["positions"]
+    assert len(surviving) == 1
+    assert surviving[0]["id"] == keep["id"]
+    assert len(surviving[0]["trades"]) == 1
+
+
+def test_delete_position_500_does_not_leak_exception_text(client, monkeypatch):
+    """If the service raises, the response stays generic — no ``str(e)`` leak."""
+    from app.routers import journal as journal_router
+
+    secret = "boom-secret-leak-message"
+
+    def _raise(_db, _pid):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(journal_router, "delete_position", _raise)
+
+    pos = _create_position(client).json()
+    resp = client.delete(f"/api/journal/positions/{pos['id']}")
+    assert resp.status_code == 500
+    assert secret not in resp.text
+    assert resp.json()["detail"] == "An unexpected error occurred"
+
+
+# --- DELETE /api/journal/all ---
+
+
+def test_clear_all_journal_wipes_everything(client):
+    """Clear-all removes every position and trade and returns pre-delete counts."""
+    p1 = _create_position(client, ticker="AAPL").json()
+    p2 = _create_position(client, ticker="MSFT").json()
+    _create_trade(client, p1["id"], premium=1.0)
+    _create_trade(client, p1["id"], premium=2.0)
+    _create_trade(client, p2["id"], premium=3.0)
+
+    resp = client.delete("/api/journal/all")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"deleted_positions": 2, "deleted_trades": 3}
+
+    after = client.get("/api/journal/positions").json()
+    assert after["positions"] == []
+
+
+def test_clear_all_journal_when_already_empty(client):
+    """Empty journal still returns a well-formed zero-count payload."""
+    resp = client.delete("/api/journal/all")
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted_positions": 0, "deleted_trades": 0}
+
+
+def test_clear_all_journal_500_does_not_leak_exception_text(client, monkeypatch):
+    """Clear-all 500 errors are generic."""
+    from app.routers import journal as journal_router
+
+    secret = "another-boom-secret"
+
+    def _raise(_db):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(journal_router, "clear_all_journal_data", _raise)
+
+    resp = client.delete("/api/journal/all")
+    assert resp.status_code == 500
+    assert secret not in resp.text
+    assert resp.json()["detail"] == "An unexpected error occurred"
+
+
 # --- Computed fields via API ---
 
 

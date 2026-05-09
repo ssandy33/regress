@@ -8,6 +8,7 @@ from app.models.database import get_db
 from app.models.schemas import (
     POSITION_STATUS,
     STRATEGY_TYPES,
+    ClearJournalResponse,
     ImportPreviewResponse,
     ImportRequest,
     ImportResultResponse,
@@ -20,8 +21,10 @@ from app.models.schemas import (
     TradeUpdate,
 )
 from app.services.journal import (
+    clear_all_journal_data,
     create_position,
     create_trade,
+    delete_position,
     delete_trade,
     get_position,
     get_positions,
@@ -82,6 +85,18 @@ def update_existing_position(position_id: str, req: PositionUpdate, db: DBSessio
     return result
 
 
+@router.delete("/positions/{position_id}", status_code=204)
+def delete_existing_position(position_id: str, db: DBSession = Depends(get_db)):
+    """Remove a position and all of its child trades (cascade)."""
+    try:
+        deleted = delete_position(db, position_id)
+    except Exception:
+        logger.exception("Unexpected error while deleting position")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Position not found")
+
+
 @router.post("/trades", response_model=TradeResponse, status_code=201)
 def create_new_trade(req: TradeCreate, db: DBSession = Depends(get_db)):
     """Log a trade against a position."""
@@ -105,6 +120,21 @@ def delete_existing_trade(trade_id: str, db: DBSession = Depends(get_db)):
     """Remove a trade."""
     if not delete_trade(db, trade_id):
         raise HTTPException(status_code=404, detail="Trade not found")
+
+
+@router.delete("/all", response_model=ClearJournalResponse)
+def clear_all_journal(db: DBSession = Depends(get_db)):
+    """Hard-delete every position and trade in a single transaction.
+
+    Returns the number of rows wiped from each table. Mirrored on the Settings
+    "Danger Zone" UI behind a type-DELETE confirmation guard.
+    """
+    try:
+        result = clear_all_journal_data(db)
+    except Exception:
+        logger.exception("Unexpected error while clearing journal data")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
+    return ClearJournalResponse(**result)
 
 
 @router.get("/import/preview", response_model=ImportPreviewResponse)

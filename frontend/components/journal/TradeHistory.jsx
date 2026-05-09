@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import TradeEntryForm from './TradeEntryForm';
+import ConfirmDialog from '../common/ConfirmDialog';
 
 const TYPE_LABELS = {
   sell_put: 'Sell Put',
@@ -28,6 +29,8 @@ function formatCurrency(value) {
 
 export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
   const [showForm, setShowForm] = useState(false);
+  const [pendingDeleteTradeId, setPendingDeleteTradeId] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const handleAddTrade = async (data) => {
     try {
@@ -35,6 +38,21 @@ export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
       setShowForm(false);
     } catch {
       // Form stays open for retry; error toast handled by parent
+    }
+  };
+
+  const pendingDeleteTrade = pendingDeleteTradeId
+    ? (position.trades || []).find((t) => t.id === pendingDeleteTradeId) || null
+    : null;
+
+  const handleConfirmDeleteTrade = async () => {
+    if (!pendingDeleteTradeId) return;
+    setDeleteBusy(true);
+    try {
+      await onDeleteTrade(pendingDeleteTradeId);
+      setPendingDeleteTradeId(null);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -95,7 +113,8 @@ export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
                 <td className="px-4 py-2 text-slate-500 dark:text-slate-400">{REASON_LABELS[t.close_reason] || '--'}</td>
                 <td className="px-4 py-2">
                   <button
-                    onClick={() => onDeleteTrade(t.id)}
+                    data-testid="trade-delete-btn"
+                    onClick={() => setPendingDeleteTradeId(t.id)}
                     className="text-red-500 hover:text-red-700 text-xs font-medium"
                   >
                     Delete
@@ -105,6 +124,33 @@ export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
             ))}
           </tbody>
         </table>
+      )}
+
+      {pendingDeleteTradeId && (
+        <ConfirmDialog
+          title="Delete trade?"
+          message={
+            pendingDeleteTrade ? (
+              <p>
+                Delete this{' '}
+                <strong>
+                  {TYPE_LABELS[pendingDeleteTrade.trade_type] || pendingDeleteTrade.trade_type}
+                </strong>{' '}
+                at strike {formatCurrency(pendingDeleteTrade.strike)} on{' '}
+                {pendingDeleteTrade.expiration}? The position and its other trades remain
+                intact.
+              </p>
+            ) : (
+              <p>Delete this trade? The position and its other trades remain intact.</p>
+            )
+          }
+          confirmLabel="Delete"
+          busy={deleteBusy}
+          onConfirm={handleConfirmDeleteTrade}
+          onCancel={() => {
+            if (!deleteBusy) setPendingDeleteTradeId(null);
+          }}
+        />
       )}
     </div>
   );
