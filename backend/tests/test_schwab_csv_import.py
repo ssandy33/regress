@@ -336,11 +336,21 @@ class TestImportCsvEndpoint:
         tickers = {p["ticker"] for p in positions}
         assert tickers == {"F", "SOFI"}
 
-    def test_import_derives_strategy_label(self, client):
+    def test_import_derives_strategy_label(self, client, monkeypatch):
         # `position_strategy` form field is no longer accepted under #131.
         # The recomputer derives the label per position state. F has a single
         # short put with no shares → "csp". SOFI has a single short call
         # with no shares → "cc" (anomaly path; logged warning).
+        #
+        # The hard-coded 2026-03 expirations in SELL_*_ROW are already past
+        # relative to wall-clock time, so freeze the recomputer's clock to
+        # before those expirations — otherwise the #134 calendar fallback
+        # would close both legs and flip the labels.
+        from datetime import date
+
+        from app.services import positions as positions_module
+
+        monkeypatch.setattr(positions_module, "_utc_today", lambda: date(2026, 3, 1))
         resp = client.post(
             "/api/journal/import/csv",
             files=_csv_file(_csv([SELL_PUT_ROW, SELL_CALL_ROW])),

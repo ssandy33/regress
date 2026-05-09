@@ -7,6 +7,9 @@ import pytest
 
 MOCK_ACCOUNT_NUMBERS = [{"accountNumber": "12345678", "hashValue": "abc123"}]
 
+# Far-future expirations keep the mocked legs "live" relative to today so
+# the calendar fallback added in #134 doesn't auto-close them and skew the
+# derived strategy labels these tests rely on.
 MOCK_TRANSACTIONS = [
     {
         "transactionDate": "2025-03-01T10:00:00Z",
@@ -21,7 +24,7 @@ MOCK_TRANSACTIONS = [
                     "underlyingSymbol": "AAPL",
                     "putCall": "PUT",
                     "strikePrice": 150.0,
-                    "expirationDate": "2025-03-21T00:00:00.000+0000",
+                    "expirationDate": "2099-03-21T00:00:00.000+0000",
                 },
             }
         ],
@@ -39,7 +42,7 @@ MOCK_TRANSACTIONS = [
                     "underlyingSymbol": "MSFT",
                     "putCall": "CALL",
                     "strikePrice": 400.0,
-                    "expirationDate": "2025-04-18T00:00:00.000+0000",
+                    "expirationDate": "2099-04-18T00:00:00.000+0000",
                 },
             }
         ],

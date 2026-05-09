@@ -21,13 +21,28 @@ safe to re-run.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.models.database import Position, Trade
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_today() -> date:
+    """Return today's date in UTC.
+
+    Used as the default ``clock`` for :func:`recompute_position_state`. UTC is
+    fine at day granularity because option expirations settle at 4 PM ET; by
+    the time UTC ticks over the next calendar day, ET is well past close, so
+    "is this expiration date < today (UTC)?" never closes a leg before its
+    settlement time. Tests inject a frozen-clock callable to keep behavior
+    deterministic.
+    """
+    return datetime.now(tz=timezone.utc).date()
 
 
 # Trade types that close out an existing option leg. Each consumes one open leg
@@ -83,15 +98,28 @@ def _consume_leg(
     ticker: str,
     trade_type: str,
 ) -> bool:
-    """Remove the first matching open leg from ``open_legs``.
+    """Remove a matching open leg from ``open_legs`` using a two-pass strategy.
 
-    Match is by (option_type, strike, expiration); when ``option_type`` is None
-    (``expired`` trade type — see :func:`_option_type_for_close`) either side
-    is accepted, put first. FIFO for ties.
+    **Pass 1 (strict):** match by ``(option_type, strike, expiration)``. This
+    is the well-formed case — most resolving events match the originating leg
+    exactly and this pass picks them off without disturbing other legs.
 
-    Returns ``True`` if a leg was consumed, ``False`` if no match was found
-    (which we tolerate but log — see the partial-ledger discussion in the
-    module docstring).
+    **Pass 2 (FIFO fallback):** when no strict match exists, consume the
+    earliest-expiring open leg of the matching side (``put`` for
+    ``buy_put_close`` / ``assignment``; ``call`` for ``buy_call_close`` /
+    ``called_away``; either side for ``expired``). Ties broken by insertion
+    order, which mirrors ``opened_at`` because ``recompute_position_state``
+    replays trades in chronological order. This handles the dirty-data case
+    documented in issue #134 where strikes or expirations on a resolving
+    Schwab CSV row drift slightly from the originating short leg.
+
+    When ``option_type`` is ``None`` (``expired`` — ambiguous side) each pass
+    runs put-first then call so the worthless-expired side gets cleared
+    deterministically.
+
+    Returns ``True`` if a leg was consumed, ``False`` if both passes failed
+    (logged as a warning — caller continues, applying any shares/basis side
+    effects the resolution event still implies).
     """
     candidates: list[str]
     if option_type is None:
@@ -99,6 +127,7 @@ def _consume_leg(
     else:
         candidates = [option_type]
 
+    # Pass 1 — strict (option_type, strike, expiration) match.
     for candidate in candidates:
         for idx, leg in enumerate(open_legs):
             if (
@@ -109,6 +138,30 @@ def _consume_leg(
                 del open_legs[idx]
                 return True
 
+    # Pass 2 — FIFO fallback by expiration on the matching side.
+    for candidate in candidates:
+        side_indices = [
+            i for i, leg in enumerate(open_legs) if leg.option_type == candidate
+        ]
+        if not side_indices:
+            continue
+        fifo_idx = min(side_indices, key=lambda i: open_legs[i].expiration)
+        consumed = open_legs[fifo_idx]
+        del open_legs[fifo_idx]
+        logger.info(
+            "recompute_position_state: FIFO fallback closed %s leg "
+            "strike=%s exp=%s for %s on %s (no strict match for "
+            "strike=%s exp=%s)",
+            consumed.option_type,
+            consumed.strike,
+            consumed.expiration,
+            trade_type,
+            ticker,
+            strike,
+            expiration,
+        )
+        return True
+
     logger.warning(
         "recompute_position_state: no matching open leg for %s on %s "
         "(strike=%s, expiration=%s); ledger may be incomplete",
@@ -118,6 +171,52 @@ def _consume_leg(
         expiration,
     )
     return False
+
+
+def _apply_calendar_close(
+    open_legs: list[_LegKey],
+    ticker: str,
+    today: date,
+) -> tuple[list[_LegKey], str | None]:
+    """Close any open leg whose expiration date is in the past.
+
+    A leg whose ``expiration < today`` with no recorded resolving trade is
+    treated as expired worthless. This is the calendar fallback for the
+    Schwab-CSV gap where an "Expired" row never lands for a long-OTM
+    contract. See issue #134.
+
+    Returns a tuple of ``(still_open, latest_expiration)`` where
+    ``still_open`` is the subset of ``open_legs`` whose expiration is today
+    or later, and ``latest_expiration`` is the largest expiration string
+    among the closed legs (used by the caller as a candidate ``closed_at``
+    when no real resolving trade has stamped one). ``latest_expiration`` is
+    ``None`` if no legs were closed by this pass.
+    """
+    still_open: list[_LegKey] = []
+    closed_expirations: list[str] = []
+    for leg in open_legs:
+        try:
+            leg_exp = date.fromisoformat(leg.expiration)
+        except (TypeError, ValueError):
+            # Unparseable expiration: leave the leg alone — calendar-close
+            # only fires when we can prove the leg is past expiration.
+            still_open.append(leg)
+            continue
+        if leg_exp < today:
+            closed_expirations.append(leg.expiration)
+            logger.info(
+                "recompute_position_state: calendar fallback closing %s leg "
+                "strike=%s exp=%s on %s (past expiration, no resolving trade)",
+                leg.option_type,
+                leg.strike,
+                leg.expiration,
+                ticker,
+            )
+        else:
+            still_open.append(leg)
+
+    latest = max(closed_expirations) if closed_expirations else None
+    return still_open, latest
 
 
 def _derive_strategy_label(shares: int, open_legs: list[_LegKey]) -> str:
@@ -181,7 +280,10 @@ def _derive_strategy_label(shares: int, open_legs: list[_LegKey]) -> str:
 
 
 def recompute_position_state(
-    db: Session, position_id: str, commit: bool = True
+    db: Session,
+    position_id: str,
+    commit: bool = True,
+    clock: Callable[[], date] | None = None,
 ) -> Position | None:
     """Walk a position's trade ledger and derive its lifecycle state.
 
@@ -192,7 +294,10 @@ def recompute_position_state(
       legs remain. ``closed_at`` is set to the ``opened_at`` of the last trade
       that drove the position to a closed state (cleared again if it later
       reopens within the same Position — though "reopen-after-close" creates a
-      new Position elsewhere, so this clearing path is mostly defensive).
+      new Position elsewhere, so this clearing path is mostly defensive). When
+      the calendar fallback (below) is what drove the position to closed,
+      ``closed_at`` is the latest ``expiration`` among the calendar-closed
+      legs, since no real resolving trade exists to supply an ``opened_at``.
     * ``shares`` and ``broker_cost_basis`` are recomputed from scratch.
     * ``strategy`` is derived from ``(shares, open_legs)`` per issue #131 —
       see :func:`_derive_strategy_label` for the truth table. This makes the
@@ -201,6 +306,23 @@ def recompute_position_state(
       pipeline guessed at row-creation time. Closed positions retain their
       last-derived label for historical reading; the dashboard suppresses
       the label for closed positions.
+
+    **Leg pairing strategy (issue #134):** when a resolving trade arrives
+    (``buy_put_close`` / ``buy_call_close`` / ``assignment`` / ``called_away``
+    / ``expired``), :func:`_consume_leg` first tries a strict
+    ``(option_type, strike, expiration)`` match. If no exact match exists it
+    falls back to FIFO-by-expiration on the matching side — the
+    earliest-expiring open leg of the right side is consumed instead. This
+    fixes the dirty-data case where a Schwab CSV row's strike or expiration
+    drifts slightly from the originating short leg. After both passes fail a
+    warning is logged but the import keeps running.
+
+    **Calendar fallback (issue #134):** after replaying every trade, any open
+    leg whose ``expiration`` is strictly before ``clock()`` is treated as
+    expired worthless and removed. This covers the case where Schwab never
+    posted an "Expired" row for a long-OTM contract. The current UTC date is
+    the default cutoff; tests inject a frozen-clock callable. Future-dated
+    legs (``expiration >= today``) are never auto-closed.
 
     Per-trade-type semantics:
 
@@ -232,6 +354,13 @@ def recompute_position_state(
         commit: If True (default), commit the derived state to the database.
             Pass False from a dry-run / preview caller that wants to inspect
             the result without persisting it.
+        clock: Callable returning today's date. Defaults to ``None``, which
+            resolves to :func:`_utc_today` lazily inside the function so a
+            test can ``monkeypatch.setattr(module, "_utc_today", ...)`` and
+            have it take effect through normal call sites that don't pass
+            ``clock`` explicitly. Tests with direct access to this kwarg
+            inject a frozen-clock callable for deterministic fallback
+            behavior.
 
     Returns:
         The refreshed Position ORM object, or None if no Position with that ID
@@ -242,6 +371,12 @@ def recompute_position_state(
     position = db.query(Position).filter(Position.id == position_id).first()
     if position is None:
         return None
+
+    # Resolve ``clock`` lazily so tests that monkey-patch ``_utc_today`` see
+    # the patched callable. Default-argument binding would freeze the
+    # original module-level function at import time and defeat the patch.
+    if clock is None:
+        clock = _utc_today
 
     trades: list[Trade] = sorted(
         position.trades,
@@ -324,6 +459,21 @@ def recompute_position_state(
             ttype,
             position.ticker,
         )
+
+    # Calendar fallback: any leg past expiration with no resolving trade is
+    # treated as expired worthless. See module/function docstring (issue #134).
+    open_legs, calendar_close_at = _apply_calendar_close(
+        open_legs, position.ticker, clock()
+    )
+    if (
+        calendar_close_at is not None
+        and shares == 0
+        and not open_legs
+        and last_close_at is None
+    ):
+        # No real resolving trade stamped a closed_at — use the latest
+        # calendar-closed leg's expiration as the canonical close date.
+        last_close_at = calendar_close_at
 
     # Apply the derived state to the Position row.
     position.shares = shares
