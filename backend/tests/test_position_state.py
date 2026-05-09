@@ -639,10 +639,20 @@ class TestDeriveStrategyLabel:
     """
 
     def _put_leg(self) -> _LegKey:
-        return _LegKey(option_type="put", strike=20.0, expiration="2026-03-20")
+        return _LegKey(
+            option_type="put",
+            strike=20.0,
+            expiration="2026-03-20",
+            trade_id="test-leg-put",
+        )
 
     def _call_leg(self) -> _LegKey:
-        return _LegKey(option_type="call", strike=22.0, expiration="2026-03-20")
+        return _LegKey(
+            option_type="call",
+            strike=22.0,
+            expiration="2026-03-20",
+            trade_id="test-leg-call",
+        )
 
     def test_zero_shares_only_open_puts_is_csp(self):
         assert _derive_strategy_label(0, [self._put_leg()]) == "csp"
@@ -929,6 +939,11 @@ class TestLegPairingOnResolution:
         assert result.shares == 100
         assert result.strategy == "holding"
         assert result.status == "open"
+        # Issue #136: the consumed sell_put's Trade.closed_at must be stamped
+        # so dashboard_legs.derive_open_legs drops it from the open-legs view.
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        assert sell_put.closed_at == "2026-03-27"
 
     def test_sell_call_called_away_closes_call_leg(self, db_session):
         # AC #2: After importing ``sell_call → called_away`` the originating
@@ -1003,6 +1018,12 @@ class TestLegPairingOnResolution:
         assert result.shares == 0
         assert result.broker_cost_basis == 0.0
         assert result.closed_at == "2025-09-26"
+        # Issue #136: the consumed sell_put's Trade.closed_at must also be
+        # stamped (with the leg's expiration) so the dashboard's open-legs
+        # view drops the calendar-closed leg.
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        assert sell_put.closed_at == "2025-09-26"
 
     def test_sell_call_past_expiration_no_close_trade_closes_calendar(
         self, db_session
@@ -1301,46 +1322,101 @@ class TestCalendarCloseHelper:
     """Pure-function unit tests for ``_apply_calendar_close``."""
 
     def test_empty_open_legs_returns_empty_and_none(self):
-        still, latest = _apply_calendar_close([], "F", date(2026, 5, 8))
+        still, latest, consumed = _apply_calendar_close(
+            [], "F", date(2026, 5, 8)
+        )
         assert still == []
         assert latest is None
+        assert consumed == []
 
     def test_all_future_legs_unchanged(self):
         legs = [
-            _LegKey(option_type="put", strike=20.0, expiration="2026-08-15"),
-            _LegKey(option_type="call", strike=22.0, expiration="2026-09-19"),
+            _LegKey(
+                option_type="put",
+                strike=20.0,
+                expiration="2026-08-15",
+                trade_id="leg-a",
+            ),
+            _LegKey(
+                option_type="call",
+                strike=22.0,
+                expiration="2026-09-19",
+                trade_id="leg-b",
+            ),
         ]
-        still, latest = _apply_calendar_close(legs, "F", date(2026, 5, 8))
+        still, latest, consumed = _apply_calendar_close(
+            legs, "F", date(2026, 5, 8)
+        )
         assert still == legs
         assert latest is None
+        assert consumed == []
 
     def test_mix_of_past_and_future_legs(self):
-        past = _LegKey(option_type="put", strike=26.0, expiration="2025-09-26")
-        future = _LegKey(option_type="call", strike=22.0, expiration="2026-09-19")
-        still, latest = _apply_calendar_close(
+        past = _LegKey(
+            option_type="put",
+            strike=26.0,
+            expiration="2025-09-26",
+            trade_id="leg-past",
+        )
+        future = _LegKey(
+            option_type="call",
+            strike=22.0,
+            expiration="2026-09-19",
+            trade_id="leg-future",
+        )
+        still, latest, consumed = _apply_calendar_close(
             [past, future], "SOFI", date(2026, 5, 8)
         )
         assert still == [future]
         assert latest == "2025-09-26"
+        # Consumed list surfaces the swept legs so the caller can stamp
+        # Trade.closed_at on the originating rows (issue #136).
+        assert consumed == [past]
 
     def test_multiple_past_legs_returns_latest_expiration(self):
-        leg_a = _LegKey(option_type="put", strike=20.0, expiration="2025-09-26")
-        leg_b = _LegKey(option_type="put", strike=22.0, expiration="2025-12-19")
-        leg_c = _LegKey(option_type="call", strike=30.0, expiration="2025-11-07")
-        still, latest = _apply_calendar_close(
+        leg_a = _LegKey(
+            option_type="put",
+            strike=20.0,
+            expiration="2025-09-26",
+            trade_id="leg-a",
+        )
+        leg_b = _LegKey(
+            option_type="put",
+            strike=22.0,
+            expiration="2025-12-19",
+            trade_id="leg-b",
+        )
+        leg_c = _LegKey(
+            option_type="call",
+            strike=30.0,
+            expiration="2025-11-07",
+            trade_id="leg-c",
+        )
+        still, latest, consumed = _apply_calendar_close(
             [leg_a, leg_b, leg_c], "SOFI", date(2026, 5, 8)
         )
         assert still == []
         # Latest among the three closed legs is 2025-12-19.
         assert latest == "2025-12-19"
+        # All three legs swept; order matches input iteration order so
+        # callers can correlate consumed legs back to opening trades.
+        assert consumed == [leg_a, leg_b, leg_c]
 
     def test_unparseable_expiration_leaves_leg_alone(self):
         # Defensive: a malformed expiration string shouldn't trigger
         # calendar close (we can't prove it's past expiration).
-        leg = _LegKey(option_type="put", strike=20.0, expiration="not-a-date")
-        still, latest = _apply_calendar_close([leg], "F", date(2026, 5, 8))
+        leg = _LegKey(
+            option_type="put",
+            strike=20.0,
+            expiration="not-a-date",
+            trade_id="leg-bad-date",
+        )
+        still, latest, consumed = _apply_calendar_close(
+            [leg], "F", date(2026, 5, 8)
+        )
         assert still == [leg]
         assert latest is None
+        assert consumed == []
 
 
 class TestCalendarCloseRegressionGuard:
@@ -1391,3 +1467,389 @@ class TestCalendarCloseRegressionGuard:
         assert result.broker_cost_basis == pytest.approx(1350.0)
         assert result.strategy == "holding"
         assert result.closed_at is None
+
+
+# --- Issue #136: persist Trade.closed_at on consumed legs --------------------
+
+
+def _trade_by_type(position: Position, trade_type: str) -> Trade | None:
+    """Return the first Trade with the given ``trade_type`` on this Position.
+
+    Helper for the issue #136 tests, which need to reach back from a recompute
+    result to the originating opening row to assert ``closed_at`` was stamped.
+    Tests in this module each seed a unique trade per ``trade_type`` so the
+    "first match" semantics are sufficient.
+    """
+    for trade in position.trades:
+        if trade.trade_type == trade_type:
+            return trade
+    return None
+
+
+class TestPersistsTradeClosedAt:
+    """Issue #136: ``recompute_position_state`` must stamp ``Trade.closed_at``
+    on the originating opening row whenever the lifecycle finalizer consumes
+    its leg.
+
+    Without this stamping, ``dashboard_legs.derive_open_legs`` (which filters
+    on ``Trade.closed_at IS NULL``) shows zombie legs for every leg the
+    recomputer has already paired up. These tests assert directly on the
+    persisted ``Trade.closed_at`` column rather than on in-memory state so a
+    regression in the write-back loop is caught here.
+    """
+
+    def test_assignment_stamps_closed_at_on_consumed_put(self, db_session):
+        # AC #1 (strict-match path): ``sell_put → assignment`` stamps the
+        # consumed sell_put's closed_at to the assignment's opened_at.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        # closed_at == resolving trade's opened_at (the assignment's date).
+        assert sell_put.closed_at == "2026-03-27"
+
+    def test_called_away_stamps_closed_at_on_consumed_call(self, db_session):
+        # AC #1 (call side): ``sell_call → called_away`` stamps the consumed
+        # sell_call's closed_at to the called_away's opened_at.
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-20",
+                },
+                {
+                    "trade_type": "sell_call",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-02-25",
+                },
+                {
+                    "trade_type": "called_away",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-03-20",
+                },
+            ],
+        )
+
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+
+        sell_call = _trade_by_type(pos, "sell_call")
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_call is not None
+        assert sell_put is not None
+        # Each consumed leg gets the resolving trade's opened_at.
+        assert sell_call.closed_at == "2026-03-20"
+        assert sell_put.closed_at == "2026-02-20"
+
+    def test_buy_to_close_stamps_closed_at_on_consumed_leg(self, db_session):
+        # AC #1 (BTC variant): a ``sell_put → buy_put_close`` cycle stamps
+        # the sell_put's closed_at to the buy_put_close's opened_at.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "buy_put_close",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-05",
+                },
+            ],
+        )
+
+        recompute_position_state(db_session, pos.id)
+
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        assert sell_put.closed_at == "2026-03-05"
+
+    def test_fifo_fallback_stamps_closed_at_on_consumed_leg(self, db_session):
+        # AC #2: penny-drift assignment matches via FIFO fallback. The
+        # consumed sell_put still gets ``closed_at`` stamped to the
+        # assignment's opened_at, even though strict (strike, expiration)
+        # match failed.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.49,  # penny drift; strict match fails
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        assert sell_put.closed_at == "2026-03-27"
+
+    def test_calendar_close_stamps_closed_at_with_expiration(self, db_session):
+        # AC #3: calendar-fallback close stamps the leg's expiration on the
+        # consumed Trade (no real resolving trade exists to supply opened_at).
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-08-01",
+                }
+            ],
+        )
+
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        # No resolving trade — the leg's expiration is the canonical close.
+        assert sell_put.closed_at == "2025-09-26"
+
+    def test_recompute_idempotent_preserves_trade_closed_at(self, db_session):
+        # AC #5: a second recompute on the same ledger does NOT shift the
+        # ``closed_at`` value already written on consumed legs. Locks the
+        # idempotency contract called out in the issue plan: the recomputer
+        # rebuilds open_legs from scratch each call, so a second run produces
+        # the same consumption decisions and writes the same value.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        first_close = sell_put.closed_at
+        assert first_close == "2026-03-27"
+
+        # Second pass — same ledger, same clock, must produce identical writes.
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+        db_session.refresh(sell_put)
+        assert sell_put.closed_at == first_close
+
+    def test_existing_closed_at_not_overwritten_by_calendar_close(
+        self, db_session
+    ):
+        # Defensive guard: a Trade with a pre-existing ``closed_at`` value is
+        # never overwritten by the calendar-close pass. Real-resolution dates
+        # outrank synthetic-expiration dates per the issue plan's Q6b rule.
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-08-01",
+                }
+            ],
+        )
+
+        # Manually pre-stamp closed_at as if a previous reconcile had already
+        # written a real resolution date for this leg.
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        sell_put.closed_at = "2025-09-15"  # earlier than expiration
+        db_session.commit()
+
+        # Run recompute with a clock past the leg's expiration so the
+        # calendar fallback would otherwise overwrite the stamp.
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        db_session.refresh(sell_put)
+        assert sell_put.closed_at == "2025-09-15"
+
+    def test_orphan_assignment_does_not_stamp_anything(self, db_session):
+        # When both strict and FIFO passes fail (no matching open leg), no
+        # Trade should receive a phantom ``closed_at`` stamp — the orphan
+        # resolving trade itself stays open (it never opened a leg).
+        _reset_unpaired_warning_cache()
+        pos = _seed_position(
+            db_session,
+            ticker="ZZZ",
+            trades=[
+                {
+                    "trade_type": "assignment",
+                    "strike": 50.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-17",
+                }
+            ],
+        )
+
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        assignment = _trade_by_type(pos, "assignment")
+        assert assignment is not None
+        assert assignment.closed_at is None
+
+    def test_holding_label_yields_empty_open_legs_via_derive_open_legs(
+        self, db_session
+    ):
+        # AC #3: a position whose strategy label is "holding" must have an
+        # empty open-legs view. This crosses the two services that issue #136
+        # is reconciling — recompute_position_state writes Trade.closed_at,
+        # and derive_open_legs filters on it. Without the persistence fix,
+        # derive_open_legs returns the consumed sell_put as a zombie leg.
+        from app.services.dashboard_legs import derive_open_legs
+
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+        assert result.strategy == "holding"
+
+        # Build the dict shape derive_open_legs expects from the persisted
+        # Trade rows. ``closed_at`` is read straight off the column, so this
+        # test reflects exactly what the dashboard endpoint observes.
+        position_dict = {
+            "id": pos.id,
+            "ticker": pos.ticker,
+            "trades": [
+                {
+                    "id": t.id,
+                    "trade_type": t.trade_type,
+                    "strike": t.strike,
+                    "expiration": t.expiration,
+                    "closed_at": t.closed_at,
+                }
+                for t in pos.trades
+            ],
+        }
+        legs = derive_open_legs(
+            [position_dict],
+            quotes_by_ticker={"F": 13.0},
+            today=date(2026, 4, 1),
+        )
+        # Holding-labeled position must surface zero open legs.
+        assert legs == []
+
+    def test_buy_to_close_stamp_outranks_calendar_fallback(self, db_session):
+        # When a real ``buy_put_close`` resolves the leg, that resolution
+        # stamp must win — even when the recompute runs after the leg's
+        # expiration date (which would otherwise trigger calendar close).
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "buy_put_close",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-05",
+                },
+            ],
+        )
+
+        # Clock well past the expiration; the leg has already been consumed
+        # by the buy_to_close so the calendar-fallback pass should be a no-op.
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        # Real resolving date wins, not the synthetic expiration.
+        assert sell_put.closed_at == "2026-03-05"

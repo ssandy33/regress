@@ -78,11 +78,21 @@ _OPTION_CLOSE_TYPES = {
 
 @dataclass(frozen=True)
 class _LegKey:
-    """Identifies an open option leg for matching against a closing trade."""
+    """Identifies an open option leg for matching against a closing trade.
+
+    ``trade_id`` is the ``Trade.id`` of the originating opening row (e.g. the
+    ``sell_put`` / ``sell_call`` that created the leg). It is carried through
+    the in-memory replay so that when the leg is consumed (by a resolving
+    trade or by the calendar fallback) the recomputer can stamp
+    ``Trade.closed_at`` on the right Trade row — which is what the dashboard's
+    ``derive_open_legs`` filter reads to drop already-resolved legs from the
+    "Open option legs" view (issue #136).
+    """
 
     option_type: str  # "put" or "call"
     strike: float
     expiration: str
+    trade_id: str  # Trade.id of the originating opening row
 
 
 def _option_type_for_open(trade_type: str) -> str | None:
@@ -119,7 +129,7 @@ def _consume_leg(
     trade_type: str,
     position_id: str | None = None,
     trade_id: str | None = None,
-) -> bool:
+) -> _LegKey | None:
     """Remove a matching open leg from ``open_legs`` using a two-pass strategy.
 
     **Pass 1 (strict):** match by ``(option_type, strike, expiration)``. This
@@ -139,10 +149,12 @@ def _consume_leg(
     runs put-first then call so the worthless-expired side gets cleared
     deterministically.
 
-    Returns ``True`` if a leg was consumed, ``False`` if both passes failed.
-    The first failure for a given ``(position_id, trade_id)`` is logged at
-    WARNING; subsequent replays of the same pair (e.g., when the
-    reconciliation script is re-run) drop to INFO via the module-level
+    Returns the consumed :class:`_LegKey` if a leg was matched, or ``None``
+    when both passes fail. The caller uses ``_LegKey.trade_id`` of the
+    returned leg to stamp ``Trade.closed_at`` on the originating opening row
+    (issue #136). The first failure for a given ``(position_id, trade_id)``
+    is logged at WARNING; subsequent replays of the same pair (e.g., when
+    the reconciliation script is re-run) drop to INFO via the module-level
     :data:`_warned_unpaired` cache so the same data-integrity gap doesn't
     flood the log on every recompute. The caller continues either way,
     applying any shares/basis side effects the resolution event still implies.
@@ -161,8 +173,9 @@ def _consume_leg(
                 and leg.strike == strike
                 and leg.expiration == expiration
             ):
+                consumed = open_legs[idx]
                 del open_legs[idx]
-                return True
+                return consumed
 
     # Pass 2 — FIFO fallback by expiration on the matching side.
     for candidate in candidates:
@@ -190,7 +203,7 @@ def _consume_leg(
             strike,
             expiration,
         )
-        return True
+        return consumed
 
     # First encounter of this unpaired event is genuine signal (WARNING).
     # Subsequent recomputes of the same ``(position_id, trade_id)`` pair are
@@ -215,14 +228,14 @@ def _consume_leg(
     )
     if dedupe_key is not None:
         _warned_unpaired.add(dedupe_key)
-    return False
+    return None
 
 
 def _apply_calendar_close(
     open_legs: list[_LegKey],
     ticker: str,
     today: date,
-) -> tuple[list[_LegKey], str | None]:
+) -> tuple[list[_LegKey], str | None, list[_LegKey]]:
     """Close any open leg whose expiration date is in the past.
 
     A leg whose ``expiration < today`` with no recorded resolving trade is
@@ -230,14 +243,20 @@ def _apply_calendar_close(
     Schwab-CSV gap where an "Expired" row never lands for a long-OTM
     contract. See issue #134.
 
-    Returns a tuple of ``(still_open, latest_expiration)`` where
-    ``still_open`` is the subset of ``open_legs`` whose expiration is today
-    or later, and ``latest_expiration`` is the largest expiration string
-    among the closed legs (used by the caller as a candidate ``closed_at``
-    when no real resolving trade has stamped one). ``latest_expiration`` is
-    ``None`` if no legs were closed by this pass.
+    Returns a tuple of ``(still_open, latest_expiration, consumed_legs)``:
+
+    * ``still_open`` — subset of ``open_legs`` whose expiration is today or
+      later (legs that were not swept by the calendar fallback).
+    * ``latest_expiration`` — largest expiration string among the closed
+      legs (used by the caller as a candidate ``closed_at`` when no real
+      resolving trade has stamped one). ``None`` if no legs were closed.
+    * ``consumed_legs`` — legs swept by this pass. The caller uses each
+      consumed leg's ``trade_id`` to stamp ``Trade.closed_at`` on the
+      originating opening row (issue #136). Empty list if no legs were
+      closed.
     """
     still_open: list[_LegKey] = []
+    consumed: list[_LegKey] = []
     closed_expirations: list[str] = []
     for leg in open_legs:
         try:
@@ -248,6 +267,7 @@ def _apply_calendar_close(
             still_open.append(leg)
             continue
         if leg_exp < today:
+            consumed.append(leg)
             closed_expirations.append(leg.expiration)
             logger.info(
                 "recompute_position_state: calendar fallback closing %s leg "
@@ -261,7 +281,7 @@ def _apply_calendar_close(
             still_open.append(leg)
 
     latest = max(closed_expirations) if closed_expirations else None
-    return still_open, latest
+    return still_open, latest, consumed
 
 
 def _derive_strategy_label(shares: int, open_legs: list[_LegKey]) -> str:
@@ -432,6 +452,10 @@ def recompute_position_state(
     basis = 0.0
     open_legs: list[_LegKey] = []
     last_close_at: str | None = None
+    # (trade_id, closed_at) pairs accumulated while replaying trades and from
+    # the calendar-fallback pass. Applied to ``Trade.closed_at`` in a single
+    # pass after the replay so the helpers stay pure (issue #136).
+    closes_to_write: list[tuple[str, str]] = []
 
     for trade in trades:
         ttype = trade.trade_type
@@ -447,6 +471,7 @@ def recompute_position_state(
                         option_type=opening_side,
                         strike=float(trade.strike),
                         expiration=trade.expiration,
+                        trade_id=trade.id,
                     )
                 )
             continue
@@ -455,7 +480,7 @@ def recompute_position_state(
         if ttype in _OPTION_CLOSE_TYPES:
             close_side = _option_type_for_close(ttype)
             for _ in range(qty):
-                _consume_leg(
+                consumed = _consume_leg(
                     open_legs,
                     close_side,
                     float(trade.strike),
@@ -465,6 +490,10 @@ def recompute_position_state(
                     position_id=position.id,
                     trade_id=trade.id,
                 )
+                if consumed is not None and trade.opened_at is not None:
+                    # Stamp the resolving trade's opened_at on the consumed
+                    # leg's originating Trade row (issue #136).
+                    closes_to_write.append((consumed.trade_id, trade.opened_at))
 
             if ttype == "assignment":
                 # Put assigned: acquire shares at strike.
@@ -509,9 +538,15 @@ def recompute_position_state(
 
     # Calendar fallback: any leg past expiration with no resolving trade is
     # treated as expired worthless. See module/function docstring (issue #134).
-    open_legs, calendar_close_at = _apply_calendar_close(
+    open_legs, calendar_close_at, calendar_consumed = _apply_calendar_close(
         open_legs, position.ticker, clock()
     )
+    for leg in calendar_consumed:
+        # Synthetic worthless-expiry: stamp the leg's expiration on the
+        # originating Trade row (issue #136). No real resolving trade exists
+        # to supply an ``opened_at``, so the expiration is the canonical
+        # close date — same value the position-level ``closed_at`` would use.
+        closes_to_write.append((leg.trade_id, leg.expiration))
     if (
         calendar_close_at is not None
         and shares == 0
@@ -521,6 +556,25 @@ def recompute_position_state(
         # No real resolving trade stamped a closed_at — use the latest
         # calendar-closed leg's expiration as the canonical close date.
         last_close_at = calendar_close_at
+
+    # Persist Trade.closed_at on consumed legs so dashboard_legs.derive_open_legs
+    # (which filters on Trade.closed_at IS NULL) sees the resolved legs as
+    # closed. Build the trade map from the already-loaded ``position.trades``
+    # collection — no extra query, and the rows are tracked by the session.
+    # Skip rows that already have ``closed_at`` set so a real resolving date
+    # is never overwritten by a later synthetic-expiration stamp (issue #136).
+    if closes_to_write:
+        trade_by_id = {t.id: t for t in position.trades}
+        for trade_id, close_value in closes_to_write:
+            trade_row = trade_by_id.get(trade_id)
+            if trade_row is None:
+                # Defensive — _LegKey.trade_id always comes from a Trade
+                # currently attached to this Position, so this should not
+                # fire in practice.
+                continue
+            if trade_row.closed_at is not None:
+                continue
+            trade_row.closed_at = close_value
 
     # Apply the derived state to the Position row.
     position.shares = shares
