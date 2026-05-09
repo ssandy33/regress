@@ -215,10 +215,26 @@ test.describe('Journal data management', () => {
   });
 });
 
-test.describe('Settings → Danger Zone', () => {
-  test('clear-all confirm button is gated by exact "DELETE" text', async ({ page }) => {
-    // Stub journal endpoints so the DangerZone clear request resolves.
-    await page.route('**/api/journal/all', (route) => {
+/**
+ * Stub the minimum set of endpoints SettingsPage hits on mount so the
+ * Danger Zone tests don't see a flood of console errors before the user
+ * even reaches the disclosure. SettingsPage now also instantiates
+ * `useJournal`, which fires `GET /api/journal/positions` on mount, so we
+ * fulfil that with an empty list as well.
+ */
+function setupSettingsMocks(page) {
+  return Promise.all([
+    page.route('**/api/journal/positions', (route) => {
+      if (route.request().method() === 'GET') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ positions: [] }),
+        });
+      }
+      return route.continue();
+    }),
+    page.route('**/api/journal/all', (route) => {
       if (route.request().method() === 'DELETE') {
         return route.fulfill({
           status: 200,
@@ -227,7 +243,13 @@ test.describe('Settings → Danger Zone', () => {
         });
       }
       return route.continue();
-    });
+    }),
+  ]);
+}
+
+test.describe('Settings → Danger Zone', () => {
+  test('clear-all confirm button is gated by exact "DELETE" text', async ({ page }) => {
+    await setupSettingsMocks(page);
 
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
@@ -256,5 +278,50 @@ test.describe('Settings → Danger Zone', () => {
       clearBtn.click(),
     ]);
     expect(request.method()).toBe('DELETE');
+  });
+
+  test('reset-on-collapse: re-opening the disclosure clears the typed token', async ({ page }) => {
+    await setupSettingsMocks(page);
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    const toggle = page.getByTestId('danger-zone-toggle');
+    await toggle.click();
+
+    const input = page.getByTestId('danger-zone-confirm-input');
+    const clearBtn = page.getByTestId('clear-journal-btn');
+
+    await input.fill('DELETE');
+    await expect(clearBtn).toBeEnabled();
+
+    // Collapse — input unmounts. Re-open — fresh state, button disabled.
+    await toggle.click();
+    await expect(input).toBeHidden();
+
+    await toggle.click();
+    await expect(input).toBeVisible();
+    await expect(input).toHaveValue('');
+    await expect(clearBtn).toBeDisabled();
+  });
+
+  test('trailing whitespace keeps the confirm button disabled', async ({ page }) => {
+    await setupSettingsMocks(page);
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByTestId('danger-zone-toggle').click();
+
+    const input = page.getByTestId('danger-zone-confirm-input');
+    const clearBtn = page.getByTestId('clear-journal-btn');
+
+    // "DELETE " with a trailing space must not satisfy the exact-match gate.
+    await input.fill('DELETE ');
+    await expect(clearBtn).toBeDisabled();
+
+    // Sanity check: the same input without the trailing space arms it.
+    await input.fill('DELETE');
+    await expect(clearBtn).toBeEnabled();
   });
 });

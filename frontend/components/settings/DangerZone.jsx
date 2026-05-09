@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
-import { clearAllJournal } from '../../api/client';
 
 const REQUIRED_TOKEN = 'DELETE';
 
@@ -12,8 +11,13 @@ const REQUIRED_TOKEN = 'DELETE';
  * input that requires the user to type the exact uppercase string `DELETE`
  * before the confirm button enables. Closing the panel resets the typed
  * value so it never persists across re-opens.
+ *
+ * The clear-all action is supplied by the parent via the `onClear` prop so
+ * it can be wired through `useJournal` for parity with other destructive
+ * actions (e.g. `removePosition`). `onClear` is expected to handle its own
+ * success/failure toasts and resolve to a truthy value on success.
  */
-export default function DangerZone() {
+export default function DangerZone({ onClear }) {
   const [open, setOpen] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,16 +36,19 @@ export default function DangerZone() {
 
   const handleClear = async () => {
     if (!armed || busy) return;
+    if (typeof onClear !== 'function') {
+      toast.error('Clear action is not available');
+      return;
+    }
     setBusy(true);
     try {
-      const result = await clearAllJournal();
-      const positions = result?.deleted_positions ?? 0;
-      const trades = result?.deleted_trades ?? 0;
-      toast.success(`Deleted ${positions} positions, ${trades} trades`);
-      setConfirmText('');
-      setOpen(false);
-    } catch {
-      toast.error('Failed to clear journal data');
+      const result = await onClear();
+      // Only collapse the disclosure on a successful clear so the user can
+      // retry if the hook surfaced an error toast.
+      if (result) {
+        setConfirmText('');
+        setOpen(false);
+      }
     } finally {
       setBusy(false);
     }
