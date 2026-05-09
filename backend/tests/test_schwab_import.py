@@ -12,6 +12,7 @@ from app.services.schwab_import import (
     map_schwab_transaction,
     is_duplicate,
     _extract_fees,
+    execute_mapped_import,
     preview_import,
 )
 
@@ -240,3 +241,187 @@ class TestPreviewImportReceiveAndDeliver:
         assert result["total"] == 2
         assert result["new_count"] == 2
         assert result["account_number"] == "****5678"
+
+
+# --- Position lifecycle integration (issue #127 acceptance criteria) --------
+
+
+def _mapped(
+    ticker: str,
+    trade_type: str,
+    strike: float,
+    expiration: str,
+    opened_at: str,
+    *,
+    quantity: int = 1,
+    premium: float = 0.0,
+    fees: float = 0.0,
+) -> dict:
+    """Build the dict shape that ``execute_mapped_import`` consumes.
+
+    Mirrors the output of :func:`map_schwab_transaction` /
+    :func:`app.services.schwab_csv.parse_schwab_csv` so these integration
+    tests don't need to round-trip through the parsers.
+    """
+    return {
+        "ticker": ticker,
+        "trade_type": trade_type,
+        "strike": strike,
+        "expiration": expiration,
+        "premium": premium,
+        "fees": fees,
+        "quantity": quantity,
+        "opened_at": opened_at,
+    }
+
+
+class TestPositionLifecycleOnImport:
+    """End-to-end coverage of issue #127's four acceptance criteria.
+
+    Each test drives ``execute_mapped_import`` with a crafted mapped-trade
+    list (no Schwab parsing involved) and asserts the resulting Position has
+    the expected lifecycle state. The recomputer is invoked as part of the
+    import finalizer.
+    """
+
+    def test_ac1_called_away_closes_position(self, db_session):
+        """AC #1: full wheel cycle ending in called_away → status=closed."""
+        mapped = [
+            _mapped("MARA", "sell_put", 20.0, "2026-02-20", "2026-02-01"),
+            _mapped("MARA", "assignment", 20.0, "2026-02-20", "2026-02-20"),
+            _mapped("MARA", "sell_call", 22.0, "2026-03-20", "2026-02-25"),
+            _mapped("MARA", "called_away", 22.0, "2026-03-20", "2026-03-20"),
+        ]
+
+        result = execute_mapped_import(db_session, mapped)
+
+        assert result["imported"] == 4
+        assert result["positions_created"] == 1
+        position = db_session.query(Position).filter(Position.ticker == "MARA").first()
+        assert position is not None
+        assert position.status == "closed"
+        assert position.shares == 0
+        assert position.closed_at == "2026-03-20"
+
+    def test_ac1_expired_closes_position(self, db_session):
+        """AC #1: sell_put → expired → status=closed (no shares acquired)."""
+        mapped = [
+            _mapped("HPE", "sell_put", 18.0, "2026-04-17", "2026-03-15"),
+            _mapped("HPE", "expired", 18.0, "2026-04-17", "2026-04-17"),
+        ]
+
+        result = execute_mapped_import(db_session, mapped)
+        assert result["imported"] == 2
+
+        position = db_session.query(Position).filter(Position.ticker == "HPE").first()
+        assert position.status == "closed"
+        assert position.shares == 0
+        assert position.broker_cost_basis == 0.0
+        assert position.closed_at == "2026-04-17"
+
+    def test_ac2_assignment_sets_broker_cost_basis(self, db_session):
+        """AC #2: after assignment, broker_cost_basis = strike * shares."""
+        mapped = [
+            _mapped("F", "sell_put", 13.50, "2026-03-27", "2026-03-01"),
+            _mapped("F", "assignment", 13.50, "2026-03-27", "2026-03-27"),
+        ]
+
+        execute_mapped_import(db_session, mapped)
+
+        position = db_session.query(Position).filter(Position.ticker == "F").first()
+        assert position.status == "open"
+        assert position.shares == 100
+        assert position.broker_cost_basis == pytest.approx(13.50 * 100)
+
+    def test_ac3_double_assignment_aggregates_shares_and_basis(self, db_session):
+        """AC #3: a second assignment increments shares (no silent no-op)."""
+        mapped = [
+            _mapped("SOFI", "sell_put", 28.0, "2026-02-20", "2026-02-01"),
+            _mapped("SOFI", "assignment", 28.0, "2026-02-20", "2026-02-20"),
+            _mapped("SOFI", "sell_put", 30.0, "2026-03-20", "2026-03-01"),
+            _mapped("SOFI", "assignment", 30.0, "2026-03-20", "2026-03-20"),
+        ]
+
+        execute_mapped_import(db_session, mapped)
+
+        position = db_session.query(Position).filter(Position.ticker == "SOFI").first()
+        assert position is not None
+        assert position.status == "open"
+        assert position.shares == 200
+        assert position.broker_cost_basis == pytest.approx(2800.0 + 3000.0)
+
+    def test_ac4_buy_to_close_closes_position(self, db_session):
+        """AC #4: sell_put → buy_to_close (no reopen) → status=closed."""
+        mapped = [
+            _mapped("INTC", "sell_put", 25.0, "2026-04-17", "2026-03-15"),
+            _mapped("INTC", "buy_put_close", 25.0, "2026-04-17", "2026-03-25"),
+        ]
+
+        execute_mapped_import(db_session, mapped)
+
+        position = db_session.query(Position).filter(Position.ticker == "INTC").first()
+        assert position.status == "closed"
+        assert position.shares == 0
+        assert position.closed_at == "2026-03-25"
+
+    def test_reopen_after_close_creates_new_position(self, db_session):
+        """A new sell_put on a previously-closed ticker creates a new Position.
+
+        The closed cycle's history (trades, dates, P&L) must remain immutable.
+        """
+        first_cycle = [
+            _mapped("F", "sell_put", 13.50, "2026-03-27", "2026-03-01"),
+            _mapped("F", "buy_put_close", 13.50, "2026-03-27", "2026-03-05"),
+        ]
+        execute_mapped_import(db_session, first_cycle)
+
+        second_cycle = [
+            _mapped("F", "sell_put", 13.50, "2026-04-17", "2026-04-01"),
+        ]
+        execute_mapped_import(db_session, second_cycle)
+
+        positions = (
+            db_session.query(Position)
+            .filter(Position.ticker == "F")
+            .order_by(Position.opened_at.asc())
+            .all()
+        )
+        assert len(positions) == 2
+        assert positions[0].status == "closed"
+        assert positions[1].status == "open"
+
+    def test_ghost_open_positions_no_longer_appear_after_called_away(self, db_session):
+        """Regression for the real-world repro in issue #127 (Schwab ****885).
+
+        Tickers MARA / HPE / INTC whose full cycles end in called_away or
+        expired must NOT appear in ``status=open`` queries, and only F (still
+        open with 100 shares from assignment) should remain.
+        """
+        mapped = [
+            # F: assigned, still open with 100 shares.
+            _mapped("F", "sell_put", 13.50, "2026-03-27", "2026-03-01"),
+            _mapped("F", "assignment", 13.50, "2026-03-27", "2026-03-27"),
+            # MARA: full wheel cycle ending in called_away.
+            _mapped("MARA", "sell_put", 20.0, "2026-02-20", "2026-02-01"),
+            _mapped("MARA", "assignment", 20.0, "2026-02-20", "2026-02-20"),
+            _mapped("MARA", "sell_call", 22.0, "2026-03-20", "2026-02-25"),
+            _mapped("MARA", "called_away", 22.0, "2026-03-20", "2026-03-20"),
+            # HPE: expired worthless.
+            _mapped("HPE", "sell_put", 18.0, "2026-04-17", "2026-03-15"),
+            _mapped("HPE", "expired", 18.0, "2026-04-17", "2026-04-17"),
+            # INTC: closed via buy-to-close.
+            _mapped("INTC", "sell_put", 25.0, "2026-04-17", "2026-03-15"),
+            _mapped("INTC", "buy_put_close", 25.0, "2026-04-17", "2026-03-25"),
+        ]
+
+        execute_mapped_import(db_session, mapped)
+
+        open_positions = (
+            db_session.query(Position).filter(Position.status == "open").all()
+        )
+        open_tickers = {p.ticker for p in open_positions}
+        assert open_tickers == {"F"}
+
+        f_position = next(p for p in open_positions if p.ticker == "F")
+        assert f_position.shares == 100
+        assert f_position.broker_cost_basis == pytest.approx(1350.0)
