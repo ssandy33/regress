@@ -32,6 +32,26 @@ from app.models.database import Position, Trade
 logger = logging.getLogger(__name__)
 
 
+# Module-level dedupe set for unpaired-resolution warnings. Reconciliation can
+# replay the entire journal repeatedly (e.g., backend/scripts/reconcile_positions
+# runs across the whole DB and a user may run it more than once); the first
+# encounter of an unpaired resolving event is genuine signal, but subsequent
+# replays of the same ``(position_id, trade_id)`` are noise. We log the first
+# at WARNING and any later replay at INFO. The set is process-local — that is
+# good enough for the dev/reconciliation workflow this guards, and it resets
+# cleanly on process restart.
+_warned_unpaired: set[tuple[str, str]] = set()
+
+
+def _reset_unpaired_warning_cache() -> None:
+    """Clear the unpaired-resolution warning de-dup cache.
+
+    Exposed for tests that need a deterministic starting state. Production
+    callers should not need to invoke this.
+    """
+    _warned_unpaired.clear()
+
+
 def _utc_today() -> date:
     """Return today's date in UTC.
 
@@ -97,6 +117,8 @@ def _consume_leg(
     expiration: str,
     ticker: str,
     trade_type: str,
+    position_id: str | None = None,
+    trade_id: str | None = None,
 ) -> bool:
     """Remove a matching open leg from ``open_legs`` using a two-pass strategy.
 
@@ -117,9 +139,13 @@ def _consume_leg(
     runs put-first then call so the worthless-expired side gets cleared
     deterministically.
 
-    Returns ``True`` if a leg was consumed, ``False`` if both passes failed
-    (logged as a warning — caller continues, applying any shares/basis side
-    effects the resolution event still implies).
+    Returns ``True`` if a leg was consumed, ``False`` if both passes failed.
+    The first failure for a given ``(position_id, trade_id)`` is logged at
+    WARNING; subsequent replays of the same pair (e.g., when the
+    reconciliation script is re-run) drop to INFO via the module-level
+    :data:`_warned_unpaired` cache so the same data-integrity gap doesn't
+    flood the log on every recompute. The caller continues either way,
+    applying any shares/basis side effects the resolution event still implies.
     """
     candidates: list[str]
     if option_type is None:
@@ -145,6 +171,10 @@ def _consume_leg(
         ]
         if not side_indices:
             continue
+        # NOTE: ``expiration`` is stored as an ISO ``YYYY-MM-DD`` string, which
+        # sorts lexicographically the same as chronologically — but only because
+        # of that fixed format. If the storage format ever changes (e.g., to a
+        # date object or a different string layout), parse to ``date`` here.
         fifo_idx = min(side_indices, key=lambda i: open_legs[i].expiration)
         consumed = open_legs[fifo_idx]
         del open_legs[fifo_idx]
@@ -162,7 +192,20 @@ def _consume_leg(
         )
         return True
 
-    logger.warning(
+    # First encounter of this unpaired event is genuine signal (WARNING).
+    # Subsequent recomputes of the same ``(position_id, trade_id)`` pair are
+    # noise — reconciliation re-runs would otherwise spam identical warnings —
+    # so demote to INFO. When ``position_id`` or ``trade_id`` are unknown
+    # (defensive default), fall back to the original WARNING behavior.
+    dedupe_key: tuple[str, str] | None = None
+    if position_id is not None and trade_id is not None:
+        dedupe_key = (position_id, trade_id)
+    log_fn = (
+        logger.info
+        if dedupe_key is not None and dedupe_key in _warned_unpaired
+        else logger.warning
+    )
+    log_fn(
         "recompute_position_state: no matching open leg for %s on %s "
         "(strike=%s, expiration=%s); ledger may be incomplete",
         trade_type,
@@ -170,6 +213,8 @@ def _consume_leg(
         strike,
         expiration,
     )
+    if dedupe_key is not None:
+        _warned_unpaired.add(dedupe_key)
     return False
 
 
@@ -417,6 +462,8 @@ def recompute_position_state(
                     trade.expiration,
                     position.ticker,
                     ttype,
+                    position_id=position.id,
+                    trade_id=trade.id,
                 )
 
             if ttype == "assignment":

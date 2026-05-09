@@ -22,6 +22,7 @@ from app.services.positions import (
     _apply_calendar_close,
     _derive_strategy_label,
     _LegKey,
+    _reset_unpaired_warning_cache,
     recompute_position_state,
 )
 
@@ -1199,6 +1200,11 @@ class TestFifoFallbackForDirtyData:
 class TestUnpairedResolvingEvent:
     """When both strict and FIFO passes fail, log a warning and continue."""
 
+    def setup_method(self) -> None:
+        # Module-level dedupe cache must start empty so each test gets the
+        # genuine first-warning behavior regardless of test order.
+        _reset_unpaired_warning_cache()
+
     def test_assignment_with_no_matching_put_leg_warns_but_no_error(
         self, db_session, caplog
     ):
@@ -1231,6 +1237,64 @@ class TestUnpairedResolvingEvent:
         )
         assert result.shares == 100
         assert result.broker_cost_basis == pytest.approx(5000.0)
+
+    def test_repeat_recompute_does_not_re_emit_warning(
+        self, db_session, caplog
+    ):
+        # The recomputer is idempotent and is called both after every Schwab
+        # import and from the reconcile_positions script (which a user may run
+        # repeatedly). The first encounter of an unpaired resolving event is
+        # genuine signal; subsequent recomputes of the same trade should not
+        # spam the same WARNING. Confirm the second run drops to INFO so log
+        # consumers (and tests asserting on WARNING records) stay clean.
+        pos = _seed_position(
+            db_session,
+            ticker="REPEAT",
+            trades=[
+                {
+                    "trade_type": "assignment",
+                    "strike": 50.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-17",
+                }
+            ],
+        )
+
+        # First recompute: genuine WARNING.
+        with caplog.at_level("INFO", logger="app.services.positions"):
+            recompute_position_state(
+                db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+            )
+        first_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "no matching open leg" in r.getMessage()
+        ]
+        assert len(first_warnings) == 1
+
+        # Second recompute on the exact same ledger: no new WARNING; the
+        # repeat is demoted to INFO so the data-integrity gap stays visible
+        # without flooding the log.
+        caplog.clear()
+        with caplog.at_level("INFO", logger="app.services.positions"):
+            recompute_position_state(
+                db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+            )
+        repeat_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "no matching open leg" in r.getMessage()
+        ]
+        repeat_infos = [
+            r
+            for r in caplog.records
+            if r.levelname == "INFO"
+            and "no matching open leg" in r.getMessage()
+        ]
+        assert repeat_warnings == []
+        assert len(repeat_infos) == 1
 
 
 class TestCalendarCloseHelper:
