@@ -22,7 +22,7 @@ const POPULATED_PAYLOAD = {
   },
   kpis: {
     open_positions: 3,
-    open_positions_breakdown: { stock: 2, csp: 0, cc: 0, wheel: 1 },
+    open_positions_breakdown: { stock: 0, csp: 1, cc: 0, wheel: 1, holding: 1 },
     notional_value: 48210.0,
     notional_change_pct: 0.021,
     open_legs: 3,
@@ -155,7 +155,7 @@ const EMPTY_PAYLOAD = {
   },
   kpis: {
     open_positions: 0,
-    open_positions_breakdown: { stock: 0, csp: 0, cc: 0, wheel: 0 },
+    open_positions_breakdown: { stock: 0, csp: 0, cc: 0, wheel: 0, holding: 0 },
     notional_value: 0,
     notional_change_pct: null,
     open_legs: 0,
@@ -234,6 +234,12 @@ test.describe('Dashboard route', () => {
     const kpis = page.getByTestId('dashboard-kpi-row');
     await expect(kpis.getByTestId('kpi-open-positions')).toContainText('3');
     await expect(kpis.getByTestId('kpi-open-legs')).toContainText('3');
+    // Issue #131 — derived breakdown subtext renders the new "holding"
+    // bucket alongside csp / wheel.
+    const openPosTile = kpis.getByTestId('kpi-open-positions');
+    await expect(openPosTile).toContainText('1 CSP');
+    await expect(openPosTile).toContainText('1 wheel');
+    await expect(openPosTile).toContainText('1 holding');
 
     // Decision row — AAPL roll-or-assign
     const expirationCard = page.getByTestId('dashboard-expirations-card');

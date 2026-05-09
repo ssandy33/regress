@@ -99,6 +99,49 @@ test.describe('Schwab Import', () => {
     await expect(page.getByText('MSFT')).toBeVisible();
   });
 
+  test('Position Strategy dropdown is removed (issue #131)', async ({ page }) => {
+    // Issue #131 removed the user-facing strategy picker; the recomputer
+    // derives the label from each position's lifecycle state. The label
+    // (and its select) must not appear in the modal in either pre-preview
+    // or post-preview state.
+    await page.getByTestId('import-schwab-btn').click();
+    const modal = page.getByTestId('import-modal');
+    await expect(modal.getByText('Position Strategy')).toHaveCount(0);
+
+    await page.getByTestId('preview-import-btn').click();
+    await expect(modal.getByTestId('import-preview')).toBeVisible();
+    await expect(modal.getByText('Position Strategy')).toHaveCount(0);
+  });
+
+  test('confirm import POST body omits position_strategy (issue #131)', async ({ page }) => {
+    const importBodies = [];
+    await page.unroute('**/api/journal/import');
+    await page.route('**/api/journal/import', (route) => {
+      const req = route.request();
+      if (req.method() === 'POST') {
+        try {
+          importBodies.push(JSON.parse(req.postData() || '{}'));
+        } catch {
+          importBodies.push({});
+        }
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(MOCK_IMPORT_RESULT),
+        });
+      }
+      return route.continue();
+    });
+
+    await page.getByTestId('import-schwab-btn').click();
+    await page.getByTestId('preview-import-btn').click();
+    await page.getByTestId('confirm-import-btn').click();
+    await expect(page.getByTestId('import-result')).toBeVisible();
+
+    expect(importBodies.length).toBe(1);
+    expect(importBodies[0]).not.toHaveProperty('position_strategy');
+  });
+
   test('duplicate badge is visible', async ({ page }) => {
     await page.getByTestId('import-schwab-btn').click();
     await page.getByTestId('preview-import-btn').click();

@@ -25,11 +25,16 @@ function plColor(value) {
 export default function KpiRow({ kpis }) {
   if (!kpis) return null;
   const breakdown = kpis.open_positions_breakdown || {};
+  // Issue #131 added the ``holding`` bucket — equity-only positions with no
+  // open option legs. Order: csp -> cc -> wheel -> holding mirrors the
+  // wheel lifecycle progression. ``stock`` remains for response-shape
+  // stability; cleanup is tracked as a follow-up.
   const positionSubtext = [
     breakdown.stock ? `${breakdown.stock} stock` : null,
     breakdown.csp ? `${breakdown.csp} CSP` : null,
     breakdown.cc ? `${breakdown.cc} CC` : null,
     breakdown.wheel ? `${breakdown.wheel} wheel` : null,
+    breakdown.holding ? `${breakdown.holding} holding` : null,
   ]
     .filter(Boolean)
     .join(' · ');

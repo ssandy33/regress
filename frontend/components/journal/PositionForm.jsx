@@ -1,17 +1,15 @@
 import { useState } from 'react';
 
-const STRATEGIES = [
-  { value: 'csp', label: 'Cash Secured Put' },
-  { value: 'cc', label: 'Covered Call' },
-  { value: 'wheel', label: 'Wheel' },
-];
+// Strategy is no longer set by the user — issue #131 made it a derived
+// label that ``recompute_position_state`` writes from the trade ledger.
+// Manually-created positions are seeded as "csp" server-side and the
+// recomputer overwrites that on the first import / trade.
 
 export default function PositionForm({ onSubmit, onCancel }) {
   const [form, setForm] = useState({
     ticker: '',
     shares: '100',
     broker_cost_basis: '',
-    strategy: 'csp',
     opened_at: new Date().toISOString().split('T')[0],
     notes: '',
   });
@@ -28,7 +26,6 @@ export default function PositionForm({ onSubmit, onCancel }) {
       ticker: form.ticker.toUpperCase().trim(),
       shares: parseInt(form.shares) || 100,
       broker_cost_basis: parseFloat(form.broker_cost_basis),
-      strategy: form.strategy,
       opened_at: date.toISOString(),
       notes: form.notes || null,
     });
@@ -55,17 +52,9 @@ export default function PositionForm({ onSubmit, onCancel }) {
             <input name="broker_cost_basis" type="number" step="0.01" value={form.broker_cost_basis} onChange={handleChange} required placeholder="15000.00" className={inputClass} />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>Strategy</label>
-            <select name="strategy" value={form.strategy} onChange={handleChange} className={inputClass}>
-              {STRATEGIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={labelClass}>Opened Date</label>
-            <input name="opened_at" type="date" value={form.opened_at} onChange={handleChange} required className={inputClass} />
-          </div>
+        <div>
+          <label className={labelClass}>Opened Date</label>
+          <input name="opened_at" type="date" value={form.opened_at} onChange={handleChange} required className={inputClass} />
         </div>
         <div>
           <label className={labelClass}>Notes (optional)</label>

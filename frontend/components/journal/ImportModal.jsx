@@ -1,11 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 
-const STRATEGIES = [
-  { value: 'csp', label: 'Cash Secured Put' },
-  { value: 'cc', label: 'Covered Call' },
-  { value: 'wheel', label: 'Wheel' },
-];
-
 const MODES = {
   API: 'api',
   CSV: 'csv',
@@ -45,7 +39,6 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
   const [mode, setMode] = useState(MODES.API);
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
-  const [strategy, setStrategy] = useState('wheel');
   const [csvFile, setCsvFile] = useState(null);
   const [csvError, setCsvError] = useState(null);
   const [result, setResult] = useState(null);
@@ -71,9 +64,9 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
   const handleImport = async () => {
     let res = null;
     if (mode === MODES.CSV && csvFile && onImportCsv) {
-      res = await onImportCsv(csvFile, strategy);
+      res = await onImportCsv(csvFile);
     } else {
-      res = await onImport(startDate, endDate, strategy);
+      res = await onImport(startDate, endDate);
     }
     if (res) setResult(res);
   };
@@ -234,15 +227,6 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                 </table>
               </div>
             )}
-
-            <div className="flex items-center gap-4">
-              <div>
-                <label className={labelClass}>Position Strategy</label>
-                <select value={strategy} onChange={(e) => setStrategy(e.target.value)} className={inputClass}>
-                  {STRATEGIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </div>
-            </div>
 
             <div className="flex gap-2">
               <button

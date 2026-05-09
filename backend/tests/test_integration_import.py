@@ -96,10 +96,11 @@ class TestImportExecute:
         assert resp.status_code == 422
 
     def test_import_creates_trades(self, client, mock_schwab):
+        # Body omits ``position_strategy`` — the field is deprecated under
+        # issue #131 and the recomputer derives the label from state.
         resp = client.post("/api/journal/import", json={
             "start_date": "2025-03-01",
             "end_date": "2025-03-31",
-            "position_strategy": "wheel",
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -113,6 +114,28 @@ class TestImportExecute:
         assert len(positions) == 2
         tickers = {p["ticker"] for p in positions}
         assert tickers == {"AAPL", "MSFT"}
+        # Both mock transactions are short-only legs (no shares ever
+        # acquired), so the derived label is "csp" for both — the
+        # AAPL sell_put has 0 shares + 1 open put, and the MSFT
+        # sell_call has 0 shares + 1 open call (anomaly path → "cc").
+        labels = {p["ticker"]: p["strategy"] for p in positions}
+        assert labels["AAPL"] == "csp"
+        assert labels["MSFT"] == "cc"
+
+    def test_import_accepts_legacy_strategy_field_but_ignores_it(self, client, mock_schwab):
+        """Backwards-compat: old clients sending ``position_strategy`` still
+        get a 200, but the value is ignored and the recomputer wins."""
+        resp = client.post("/api/journal/import", json={
+            "start_date": "2025-03-01",
+            "end_date": "2025-03-31",
+            "position_strategy": "wheel",  # legacy — ignored
+        })
+        assert resp.status_code == 200
+        positions = client.get("/api/journal/positions").json()["positions"]
+        # Even though the client requested "wheel", the derived labels win.
+        labels = {p["ticker"]: p["strategy"] for p in positions}
+        assert labels["AAPL"] == "csp"
+        assert labels["MSFT"] == "cc"
 
     def test_import_skips_duplicates(self, client, mock_schwab):
         # First import
@@ -132,12 +155,13 @@ class TestImportExecute:
         assert data["positions_created"] == 0
 
     def test_import_reuses_existing_position(self, client, mock_schwab):
-        # Create a position for AAPL first
+        # Create a position for AAPL first.
+        # ``strategy`` is no longer accepted on PositionCreate (#131); it
+        # gets derived/seeded server-side.
         client.post("/api/journal/positions", json={
             "ticker": "AAPL",
             "shares": 100,
             "broker_cost_basis": 15000.0,
-            "strategy": "wheel",
             "opened_at": "2025-01-01T00:00:00Z",
         })
 

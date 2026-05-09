@@ -50,12 +50,17 @@ def db_session():
 
 
 def _create_sample_position(db_session, **overrides):
-    """Helper to create a position with sensible defaults."""
+    """Helper to create a position with sensible defaults.
+
+    ``strategy`` was dropped from PositionCreate in #131 — the recomputer
+    derives the displayed label, and manual creates seed with "csp" until
+    a trade is logged. Callers passing a ``strategy`` override are silently
+    ignored by Pydantic (extras-allowed by default).
+    """
     defaults = {
         "ticker": "AAPL",
         "shares": 100,
         "broker_cost_basis": 5000.0,
-        "strategy": "csp",
         "opened_at": "2025-01-15T10:00:00Z",
         "notes": None,
     }
@@ -281,15 +286,20 @@ def test_min_compliant_cc_strike(db_session):
 # --- Input validation ---
 
 
-def test_invalid_strategy_rejected():
-    """Invalid strategy value should be rejected by Pydantic."""
-    with pytest.raises(ValidationError):
-        PositionCreate(
-            ticker="AAPL",
-            broker_cost_basis=5000.0,
-            strategy="invalid",
-            opened_at="2025-01-15T10:00:00Z",
-        )
+def test_strategy_field_silently_ignored_on_create():
+    """Issue #131: ``strategy`` is no longer a PositionCreate field.
+
+    Pydantic v2 ignores unknown fields by default, so a payload that still
+    includes ``strategy`` must build cleanly — proving the back-compat
+    contract for stale clients.
+    """
+    pos = PositionCreate(
+        ticker="AAPL",
+        broker_cost_basis=5000.0,
+        strategy="invalid",  # silently dropped — no longer a declared field
+        opened_at="2025-01-15T10:00:00Z",
+    )
+    assert not hasattr(pos, "strategy")
 
 
 def test_invalid_trade_type_rejected():
@@ -312,7 +322,6 @@ def test_zero_shares_rejected():
             ticker="AAPL",
             shares=0,
             broker_cost_basis=5000.0,
-            strategy="csp",
             opened_at="2025-01-15T10:00:00Z",
         )
 

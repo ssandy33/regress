@@ -319,6 +319,8 @@ class TestImportCsvEndpoint:
     """Cover ``POST /api/journal/import/csv`` write path + duplicate handling."""
 
     def test_import_creates_trades_and_positions(self, client):
+        # Stale clients may still post `position_strategy`; the field is
+        # ignored by FastAPI under #131 but the request must still succeed.
         resp = client.post(
             "/api/journal/import/csv",
             files=_csv_file(_csv([SELL_PUT_ROW, SELL_CALL_ROW])),
@@ -334,15 +336,20 @@ class TestImportCsvEndpoint:
         tickers = {p["ticker"] for p in positions}
         assert tickers == {"F", "SOFI"}
 
-    def test_import_default_strategy_is_wheel(self, client):
-        # `position_strategy` form field omitted — should default to "wheel".
+    def test_import_derives_strategy_label(self, client):
+        # `position_strategy` form field is no longer accepted under #131.
+        # The recomputer derives the label per position state. F has a single
+        # short put with no shares → "csp". SOFI has a single short call
+        # with no shares → "cc" (anomaly path; logged warning).
         resp = client.post(
             "/api/journal/import/csv",
-            files=_csv_file(_csv([SELL_PUT_ROW])),
+            files=_csv_file(_csv([SELL_PUT_ROW, SELL_CALL_ROW])),
         )
         assert resp.status_code == 200
         positions = client.get("/api/journal/positions").json()["positions"]
-        assert positions[0]["strategy"] == "wheel"
+        labels = {p["ticker"]: p["strategy"] for p in positions}
+        assert labels["F"] == "csp"
+        assert labels["SOFI"] == "cc"
 
     def test_import_skips_duplicates_on_second_upload(self, client):
         body = _csv([SELL_PUT_ROW, SELL_CALL_ROW])
@@ -355,14 +362,17 @@ class TestImportCsvEndpoint:
         assert data["skipped_duplicates"] == 2
         assert data["positions_created"] == 0
 
-    def test_import_rejects_invalid_strategy(self, client):
+    def test_import_ignores_legacy_strategy_field(self, client):
+        # Stale clients may still post `position_strategy`; under #131 the
+        # field is no longer declared on the handler so FastAPI silently
+        # ignores it. A bogus value must therefore *succeed*, not 422 — this
+        # locks in the back-compat contract called out in the issue.
         resp = client.post(
             "/api/journal/import/csv",
             files=_csv_file(_csv([SELL_PUT_ROW])),
             data={"position_strategy": "not-a-strategy"},
         )
-        # Pydantic Literal validation -> 422 before any DB writes.
-        assert resp.status_code == 422
+        assert resp.status_code == 200
 
     def test_import_rejects_oversized_file(self, client):
         oversized = b"Date,Action,Symbol,Description,Quantity,Price,Fees & Comm,Amount\n"

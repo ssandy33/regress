@@ -120,6 +120,66 @@ def _consume_leg(
     return False
 
 
+def _derive_strategy_label(shares: int, open_legs: list[_LegKey]) -> str:
+    """Derive the displayed strategy label from a position's current state.
+
+    Maps ``(shares, open_put_count, open_call_count)`` to one of
+    ``"csp" | "cc" | "wheel" | "holding"`` per issue #131:
+
+    ====================================  =========
+    state                                 label
+    ====================================  =========
+    0 shares, only open puts              ``csp``
+    shares held, only open calls          ``cc``
+    shares held, open puts AND calls      ``wheel``
+    shares held, no open option legs      ``holding``
+    0 shares, no open option legs         ``csp`` (caller-handled "closed")
+    0 shares, only open calls (anomaly)   ``cc`` (logged warning — naked
+                                          call has no place in a wheel flow
+                                          but the label that matches the
+                                          live legs is the least-misleading
+                                          choice)
+    0 shares, both open puts and calls    ``csp`` (puts dominate when no
+                                          shares are held)
+    ====================================  =========
+
+    Pure function — no DB access — to keep the mapping unit-testable in
+    isolation from the trade-replay machinery in
+    :func:`recompute_position_state`. The caller is responsible for
+    short-circuiting on the closed state (``shares == 0`` and no open legs);
+    this function still returns a defensible label for that input so it is
+    safe to call unconditionally.
+    """
+    open_puts = sum(1 for leg in open_legs if leg.option_type == "put")
+    open_calls = sum(1 for leg in open_legs if leg.option_type == "call")
+
+    if shares > 0:
+        if open_puts > 0 and open_calls > 0:
+            return "wheel"
+        if open_calls > 0:
+            return "cc"
+        if open_puts > 0:
+            # Short put while holding shares — uncommon (mid-cycle layered
+            # entry) but valid; csp is the closest single-side label.
+            return "csp"
+        return "holding"
+
+    # shares == 0 below
+    if open_calls > 0 and open_puts == 0:
+        # Naked calls without shares should not occur in a wheel-only flow.
+        # Surface the anomaly via a warning but return ``"cc"`` because that
+        # is the label that best matches the live legs — the alternative
+        # ("csp") would directly contradict what the user is looking at.
+        logger.warning(
+            "_derive_strategy_label: 0 shares with %d open call leg(s) and "
+            "no open puts; returning 'cc' but this state is anomalous in a "
+            "wheel-only journal",
+            open_calls,
+        )
+        return "cc"
+    return "csp"
+
+
 def recompute_position_state(
     db: Session, position_id: str, commit: bool = True
 ) -> Position | None:
@@ -134,6 +194,13 @@ def recompute_position_state(
       reopens within the same Position — though "reopen-after-close" creates a
       new Position elsewhere, so this clearing path is mostly defensive).
     * ``shares`` and ``broker_cost_basis`` are recomputed from scratch.
+    * ``strategy`` is derived from ``(shares, open_legs)`` per issue #131 —
+      see :func:`_derive_strategy_label` for the truth table. This makes the
+      label authoritative on what the position is actually doing right now
+      (csp / cc / wheel / holding) instead of trusting whatever the import
+      pipeline guessed at row-creation time. Closed positions retain their
+      last-derived label for historical reading; the dashboard suppresses
+      the label for closed positions.
 
     Per-trade-type semantics:
 
@@ -261,6 +328,7 @@ def recompute_position_state(
     # Apply the derived state to the Position row.
     position.shares = shares
     position.broker_cost_basis = round(basis, 4)
+    position.strategy = _derive_strategy_label(shares, open_legs)
     if shares == 0 and not open_legs:
         position.status = "closed"
         position.closed_at = last_close_at or position.closed_at

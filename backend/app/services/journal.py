@@ -93,14 +93,21 @@ def get_position(db: Session, position_id: str) -> dict | None:
 
 
 def create_position(db: Session, data: PositionCreate) -> dict:
-    """Create a new Position."""
+    """Create a new Position.
+
+    The ``strategy`` column is seeded with the placeholder ``"csp"``; the
+    label is *derived* from each position's lifecycle state by
+    ``recompute_position_state`` (issue #131). The placeholder is overwritten
+    as soon as the first trade is logged and the recomputer runs — until
+    then, manually-created positions display as "csp" by default.
+    """
     position = Position(
         id=str(uuid.uuid4()),
         ticker=data.ticker,
         shares=data.shares,
         broker_cost_basis=data.broker_cost_basis,
         status="open",
-        strategy=data.strategy,
+        strategy="csp",
         opened_at=data.opened_at,
         notes=data.notes,
     )

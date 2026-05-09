@@ -281,11 +281,12 @@ export async function previewSchwabImport(startDate, endDate) {
   return data;
 }
 
-export async function executeSchwabImport(startDate, endDate, positionStrategy = 'wheel') {
+export async function executeSchwabImport(startDate, endDate) {
+  // ``position_strategy`` is no longer sent — issue #131 derives the
+  // displayed label from each position's lifecycle state.
   const { data } = await api.post('/api/journal/import', {
     start_date: startDate,
     end_date: endDate,
-    position_strategy: positionStrategy,
   });
   return data;
 }
@@ -297,10 +298,10 @@ export async function previewSchwabCsvImport(file) {
   return data;
 }
 
-export async function executeSchwabCsvImport(file, positionStrategy = 'wheel') {
+export async function executeSchwabCsvImport(file) {
+  // ``position_strategy`` form field removed in issue #131.
   const form = new FormData();
   form.append('file', file);
-  form.append('position_strategy', positionStrategy);
   const { data } = await api.post('/api/journal/import/csv', form);
   return data;
 }

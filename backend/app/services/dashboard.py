@@ -209,7 +209,11 @@ def _build_kpis(
 ) -> dict:
     """Aggregate KPI tiles from already-built row data."""
     open_positions_count = len(position_rows)
-    breakdown = {"stock": 0, "csp": 0, "cc": 0, "wheel": 0}
+    # ``stock`` is a vestigial bucket retained for response-shape stability
+    # (see DashboardOpenPositionsBreakdown docstring); ``holding`` is the
+    # new bucket added for issue #131. Unknown labels (closed positions or
+    # raw values from pre-recompute imports) are silently dropped.
+    breakdown = {"stock": 0, "csp": 0, "cc": 0, "wheel": 0, "holding": 0}
     for position in open_positions:
         strategy = position["strategy"]
         if strategy in breakdown:

@@ -2,12 +2,17 @@
 
 
 def _create_position(client, **overrides):
-    """Helper to POST a position with sensible defaults."""
+    """Helper to POST a position with sensible defaults.
+
+    Per issue #131 the ``strategy`` field is no longer accepted on
+    PositionCreate; the server seeds it with "csp" and the recomputer
+    overwrites it on the first import. Tests that still want to override
+    the seeded strategy can do so via direct ORM manipulation.
+    """
     payload = {
         "ticker": "AAPL",
         "shares": 100,
         "broker_cost_basis": 5000.0,
-        "strategy": "csp",
         "opened_at": "2025-01-15T10:00:00Z",
     }
     payload.update(overrides)
@@ -95,14 +100,22 @@ def test_create_position(client):
     assert data["ticker"] == "AAPL"
     assert data["shares"] == 100
     assert data["broker_cost_basis"] == 5000.0
+    # Per #131, manually-created positions seed with "csp" until a trade
+    # is logged and the recomputer derives the real label.
     assert data["strategy"] == "csp"
     assert data["status"] == "open"
     assert len(data["id"]) == 36
 
 
-def test_create_position_invalid_strategy(client):
-    resp = _create_position(client, strategy="invalid")
-    assert resp.status_code == 422
+def test_create_position_ignores_strategy_field(client):
+    """Issue #131: ``strategy`` is no longer accepted on PositionCreate.
+
+    Pydantic ignores unknown fields by default, so a payload that still
+    sends ``strategy`` must succeed and the seeded "csp" label must win.
+    """
+    resp = _create_position(client, strategy="wheel")
+    assert resp.status_code == 201
+    assert resp.json()["strategy"] == "csp"
 
 
 def test_create_position_zero_shares(client):
@@ -387,20 +400,17 @@ def test_update_trade_zero_quantity(client):
     assert resp.status_code == 422
 
 
-def test_update_position_strategy(client):
-    """Strategy can be corrected via update."""
-    pos = _create_position(client, strategy="csp").json()
+def test_update_position_ignores_strategy_field(client):
+    """Issue #131: ``strategy`` is no longer accepted on PositionUpdate.
+
+    The recomputer is authoritative for the displayed label, so a PUT that
+    still includes ``strategy`` must succeed (Pydantic ignores unknown
+    fields) and the existing strategy must remain unchanged.
+    """
+    pos = _create_position(client).json()
     resp = client.put(
         f"/api/journal/positions/{pos['id']}", json={"strategy": "wheel"}
     )
     assert resp.status_code == 200
-    assert resp.json()["strategy"] == "wheel"
-
-
-def test_update_position_invalid_strategy(client):
-    """Invalid strategy in update should return 422."""
-    pos = _create_position(client).json()
-    resp = client.put(
-        f"/api/journal/positions/{pos['id']}", json={"strategy": "invalid"}
-    )
-    assert resp.status_code == 422
+    # Seeded label persists because recomputer was not invoked from PUT.
+    assert resp.json()["strategy"] == "csp"
