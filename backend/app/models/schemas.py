@@ -424,6 +424,13 @@ class ImportResultResponse(BaseModel):
     positions_created: int
 
 
+class ClearJournalResponse(BaseModel):
+    """Pre-delete row counts returned by ``DELETE /api/journal/all``."""
+
+    deleted_positions: int
+    deleted_trades: int
+
+
 # --- Dashboard ---
 
 

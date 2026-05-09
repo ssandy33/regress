@@ -6,7 +6,8 @@ import {
   checkSchwabHealth, checkSourceHealth, getBackups, restoreBackup, getCacheFreshness,
   refreshAllCache, refreshStaleCache, getSchwabAuthUrl, exchangeSchwabCallback,
 } from '../../api/client';
-import { formatNumber } from '../../utils/formatters';
+import DangerZone from './DangerZone';
+import { useJournal } from '../../hooks/useJournal';
 
 function freshnessColor(freshness) {
   if (freshness === 'fresh') return 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30';
@@ -21,6 +22,10 @@ function statusDot(available) {
 }
 
 export default function SettingsPage() {
+  // Pull `clearAllData` out of the journal hook so the Danger Zone wipe goes
+  // through the same plumbing (toasts, fetchPositions refresh, selection
+  // reset) as `removePosition` instead of calling `api/client` directly.
+  const { clearAllData } = useJournal();
   const [settings, setSettings] = useState(null);
   const [cacheStats, setCacheStats] = useState(null);
   const [fredKey, setFredKey] = useState('');
@@ -571,6 +576,9 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* Danger Zone — destructive cross-cutting actions (clear all journal data) */}
+          <DangerZone onClear={clearAllData} />
         </div>
       </div>
     </div>

@@ -8,6 +8,8 @@ import {
   createTrade,
   updateTrade,
   deleteTrade,
+  deletePosition,
+  clearAllJournal,
   previewSchwabImport,
   executeSchwabImport,
   previewSchwabCsvImport,
@@ -113,6 +115,36 @@ export function useJournal() {
     }
   }, [selectedPosition, fetchPositions]);
 
+  const removePosition = useCallback(async (id) => {
+    try {
+      await deletePosition(id);
+      toast.success('Position deleted');
+      // Clear the selection if the deleted position was open in the detail pane
+      // — otherwise TradeHistory would render against a stale id.
+      if (selectedPosition?.id === id) {
+        setSelectedPosition(null);
+      }
+      await fetchPositions();
+    } catch {
+      toast.error('Failed to delete position');
+    }
+  }, [selectedPosition, fetchPositions]);
+
+  const clearAllData = useCallback(async () => {
+    try {
+      const result = await clearAllJournal();
+      const positions = result?.deleted_positions ?? 0;
+      const trades = result?.deleted_trades ?? 0;
+      toast.success(`Deleted ${positions} positions, ${trades} trades`);
+      setSelectedPosition(null);
+      await fetchPositions();
+      return result;
+    } catch {
+      toast.error('Failed to clear journal data');
+      return null;
+    }
+  }, [fetchPositions]);
+
   const previewImport = useCallback(async (startDate, endDate) => {
     setImportLoading(true);
     try {
@@ -208,6 +240,8 @@ export function useJournal() {
     addTrade,
     editTrade,
     removeTrade,
+    removePosition,
+    clearAllData,
     previewImport,
     confirmImport,
     previewCsvImport,

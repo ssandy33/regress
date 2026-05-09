@@ -199,3 +199,55 @@ def delete_trade(db: Session, trade_id: str) -> bool:
         raise
     logger.info("Deleted trade %s", trade_id)
     return True
+
+
+def delete_position(db: Session, position_id: str) -> bool:
+    """Delete a position and cascade-delete its trades.
+
+    Relies on the ``Position.trades`` SQLAlchemy ``cascade="all, delete-orphan"``
+    relationship declared on the model — a single ``db.delete(position)``
+    removes the position and every child trade in the same transaction.
+    Returns False if the position is not found.
+    """
+    position = db.query(Position).filter(Position.id == position_id).first()
+    if position is None:
+        return False
+
+    db.delete(position)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    logger.info("Deleted position %s (cascade)", position_id)
+    return True
+
+
+def clear_all_journal_data(db: Session) -> dict:
+    """Delete every position and trade in a single transaction.
+
+    Captures the pre-delete row counts so the caller can report exactly how
+    much was wiped. Trades are deleted explicitly first to avoid relying on
+    the ORM cascade flushing per-position when the parent set is large.
+    Returns ``{"deleted_positions": int, "deleted_trades": int}``.
+    """
+    trade_count = db.query(Trade).count()
+    position_count = db.query(Position).count()
+
+    try:
+        db.query(Trade).delete(synchronize_session=False)
+        db.query(Position).delete(synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    logger.info(
+        "Cleared journal: %d positions, %d trades",
+        position_count,
+        trade_count,
+    )
+    return {
+        "deleted_positions": position_count,
+        "deleted_trades": trade_count,
+    }

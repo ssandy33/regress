@@ -263,6 +263,15 @@ export async function deleteTrade(id) {
   await api.delete(`/api/journal/trades/${encodeURIComponent(id)}`);
 }
 
+export async function deletePosition(id) {
+  await api.delete(`/api/journal/positions/${encodeURIComponent(id)}`);
+}
+
+export async function clearAllJournal() {
+  const { data } = await api.delete('/api/journal/all');
+  return data;
+}
+
 // --- Schwab Import ---
 
 export async function previewSchwabImport(startDate, endDate) {
