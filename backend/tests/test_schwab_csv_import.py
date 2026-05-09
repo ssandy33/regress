@@ -101,10 +101,33 @@ class TestParseSchwabCsv:
         assert len(result) == 1
         assert result[0]["trade_type"] == "assignment"
 
-    def test_expired_call_maps_to_called_away(self):
+    def test_expired_call_maps_to_expired(self):
+        """An expired call must map to ``trade_type="expired"``, not ``called_away``.
+
+        Pre-#127, ``Action="Expired"`` was conflated with ``Assigned`` /
+        ``Exercised`` and incorrectly moved shares + broker basis on the
+        position. The recomputer treats ``expired`` as a leg-only close: no
+        share movement, no basis change.
+        """
         result = parse_schwab_csv(_csv([EXPIRED_CALL_ROW]))
         assert len(result) == 1
-        assert result[0]["trade_type"] == "called_away"
+        assert result[0]["trade_type"] == "expired"
+
+    def test_expired_put_maps_to_expired(self):
+        """An expired put also maps to ``trade_type="expired"`` — not ``assignment``.
+
+        This is the real-world repro from issue #127 (HPE / INTC / VZ on
+        Schwab ****885): pre-fix, expired-worthless puts were silently
+        recorded as assignments and moved nonexistent shares onto the position.
+        """
+        expired_put_row = (
+            '03/20/2026,Expired,SOFI 03/20/2026 28.00 P,'
+            'PUT SOFI EXPIRATION,1,,0.00,0.00'
+        )
+        result = parse_schwab_csv(_csv([expired_put_row]))
+        assert len(result) == 1
+        assert result[0]["trade_type"] == "expired"
+        assert result[0]["ticker"] == "SOFI"
 
     def test_occ_format_symbol_parses(self):
         result = parse_schwab_csv(_csv([OCC_SELL_PUT_ROW]))
@@ -130,10 +153,12 @@ class TestParseSchwabCsv:
         # Five options rows survive; three non-options skipped silently.
         assert len(result) == 5
         trade_types = sorted(r["trade_type"] for r in result)
+        # "Expired" now maps to its own trade_type (issue #127); previously
+        # an expired call was conflated with called_away.
         assert trade_types == [
             "assignment",
             "buy_put_close",
-            "called_away",
+            "expired",
             "sell_call",
             "sell_put",
         ]

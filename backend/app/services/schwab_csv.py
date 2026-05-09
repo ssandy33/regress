@@ -36,14 +36,26 @@ logger = logging.getLogger(__name__)
 # Map Schwab CSV "Action" column values to the (instruction, putCall) pair the
 # rest of the import pipeline uses. The putCall component is filled in from the
 # parsed Symbol; the keys below are case-insensitive and always trimmed.
+#
+# ``Expired`` is intentionally absent here — :func:`_map_csv_row` short-circuits
+# the literal action ``"expired"`` to ``trade_type="expired"`` regardless of
+# putCall. That fixes a Schwab CSV bug where an expired-worthless put would
+# otherwise be mapped to ``RECEIVE_DELIVER`` → ``assignment``, incorrectly
+# moving shares and broker basis on the position. See issue #127.
 _ACTION_TO_INSTRUCTION: dict[str, str] = {
     "sell to open": "SELL_TO_OPEN",
     "buy to close": "BUY_TO_CLOSE",
     "assigned": "RECEIVE_DELIVER",
-    "expired": "RECEIVE_DELIVER",
     # Schwab uses different phrasing for called-away exercises depending on
     # account type. Both map to RECEIVE_DELIVER on the call side.
     "exercised": "RECEIVE_DELIVER",
+}
+
+# CSV ``Action`` values that should bypass the (instruction, putCall) lookup
+# because their journal trade_type is determined by the Action alone, not by
+# the option side.
+_ACTION_DIRECT_TRADE_TYPE: dict[str, str] = {
+    "expired": "expired",
 }
 
 
@@ -122,10 +134,23 @@ def _decode_csv_bytes(file_bytes: bytes) -> str:
 
 
 def _map_csv_row(raw_row: dict, header_map: dict[str, str]) -> dict | None:
-    """Map a single CSV row dict to a journal trade dict, or None to skip."""
+    """Map a single CSV row dict to a journal trade dict, or None to skip.
+
+    Equity-leg rows that pair with an option assignment (e.g. ``Action="Buy"``
+    on the underlying ticker) are silently skipped because their Action does
+    not appear in :data:`_ACTION_TO_INSTRUCTION` / :data:`_ACTION_DIRECT_TRADE_TYPE`.
+    Broker cost basis is therefore derived from the option's strike at the
+    finalizer (see :mod:`app.services.positions`), not parsed from the equity
+    row.
+    """
     action_raw = (raw_row.get(header_map.get("action", ""), "") or "").strip().lower()
-    instruction = _ACTION_TO_INSTRUCTION.get(action_raw)
-    if instruction is None:
+
+    # Action values whose journal trade_type is determined by the Action alone
+    # (currently just "Expired"). These bypass the (instruction, putCall) lookup
+    # because, for example, an expired-worthless put must NOT map to assignment.
+    direct_trade_type = _ACTION_DIRECT_TRADE_TYPE.get(action_raw)
+    instruction = _ACTION_TO_INSTRUCTION.get(action_raw) if direct_trade_type is None else None
+    if direct_trade_type is None and instruction is None:
         return None
 
     symbol = (raw_row.get(header_map.get("symbol", ""), "") or "").strip()
@@ -134,7 +159,10 @@ def _map_csv_row(raw_row: dict, header_map: dict[str, str]) -> dict | None:
         return None
 
     ticker, expiration, strike, put_call = parsed
-    trade_type = _INSTRUCTION_MAP.get((instruction, put_call))
+    if direct_trade_type is not None:
+        trade_type: str | None = direct_trade_type
+    else:
+        trade_type = _INSTRUCTION_MAP.get((instruction, put_call))
     if trade_type is None:
         return None
 

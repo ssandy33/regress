@@ -6,14 +6,22 @@ import re
 from sqlalchemy.orm import Session
 
 from app.models.database import Position, Trade
-from app.models.schemas import TradeCreate
-from app.services.journal import create_trade, create_position
-from app.models.schemas import PositionCreate
+from app.models.schemas import PositionCreate, TradeCreate
+from app.services.journal import create_position, create_trade
+from app.services.positions import recompute_position_state
 from app.services.schwab_client import SchwabClient
 
 logger = logging.getLogger(__name__)
 
-# Schwab instruction + putCall → journal trade_type
+# Schwab instruction + putCall → journal trade_type.
+#
+# Note: the API path does **not** currently emit ``"expired"`` — Schwab's API
+# delivers expired-worthless options as a ``RECEIVE_DELIVER`` transaction with
+# ``netAmount == 0``, which we still surface as ``assignment`` / ``called_away``.
+# Distinguishing expired from assigned on the API path requires inspecting the
+# paired equity transferItem and is deferred to a follow-up issue. The CSV path
+# (see :mod:`app.services.schwab_csv`) uses the literal ``Action="Expired"`` and
+# already maps to ``"expired"`` for both puts and calls.
 _INSTRUCTION_MAP = {
     ("SELL_TO_OPEN", "PUT"): "sell_put",
     ("SELL_TO_OPEN", "CALL"): "sell_call",
@@ -176,13 +184,20 @@ def execute_mapped_import(
 ) -> dict:
     """Persist a list of pre-mapped trade dicts to the journal.
 
-    Reuses ``is_duplicate`` for skip detection and creates open positions on
-    demand for tickers without one. Shared between the Schwab API import path
-    and the CSV upload import path.
+    Inserts trades onto an existing open Position for the ticker, or creates a
+    new Position with neutral initial state (``shares=0``, ``broker_cost_basis=0``)
+    that the recomputer will overwrite. After all trades are inserted, the
+    finalizer calls :func:`app.services.positions.recompute_position_state` once
+    per touched ticker to derive ``status`` / ``shares`` / ``broker_cost_basis``
+    / ``closed_at`` from the trade ledger.
+
+    Shared between the Schwab API import path and the CSV upload import path.
     """
     imported = 0
     skipped = 0
     positions_created = 0
+    touched_position_ids: list[str] = []
+    seen_position_ids: set[str] = set()
 
     for mapped in mapped_trades:
         if is_duplicate(
@@ -199,12 +214,15 @@ def execute_mapped_import(
         position = (
             db.query(Position)
             .filter(Position.ticker == mapped["ticker"], Position.status == "open")
+            .order_by(Position.opened_at.desc())
             .first()
         )
         if position is None:
+            # Neutral initial state — the recomputer below overwrites these
+            # from the trade ledger once the batch finishes inserting.
             pos_data = PositionCreate(
                 ticker=mapped["ticker"],
-                shares=100,
+                shares=1,  # ge=1 schema constraint; real value comes from recomputer
                 broker_cost_basis=0.0,
                 strategy=position_strategy,
                 opened_at=mapped["opened_at"],
@@ -225,6 +243,18 @@ def execute_mapped_import(
         )
         create_trade(db, trade_data)
         imported += 1
+
+        if position.id not in seen_position_ids:
+            seen_position_ids.add(position.id)
+            touched_position_ids.append(position.id)
+
+    # Finalizer: recompute lifecycle state for every touched position so the
+    # journal reflects the trade ledger we just appended (closed cycles flip
+    # to status="closed", assignments set broker_cost_basis = strike * shares,
+    # double assignments aggregate share counts, etc.). See
+    # :mod:`app.services.positions` for the full state machine.
+    for pos_id in touched_position_ids:
+        recompute_position_state(db, pos_id)
 
     return {
         "imported": imported,
