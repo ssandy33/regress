@@ -61,7 +61,7 @@ class Trade(Base):
 
     id = Column(String, primary_key=True)  # UUID4
     position_id = Column(String, ForeignKey("positions.id"), nullable=False)
-    trade_type = Column(String, nullable=False)  # "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away"
+    trade_type = Column(String, nullable=False)  # "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired"
     strike = Column(Float, nullable=False)
     expiration = Column(String, nullable=False)  # date string
     premium = Column(Float, nullable=False)  # per-share, positive for credits, negative for debits

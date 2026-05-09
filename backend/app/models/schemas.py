@@ -293,7 +293,15 @@ class OptionScanResponse(BaseModel):
 
 STRATEGY_TYPES = Literal["csp", "cc", "wheel"]
 POSITION_STATUS = Literal["open", "closed"]
-TRADE_TYPES = Literal["sell_put", "buy_put_close", "assignment", "sell_call", "buy_call_close", "called_away"]
+TRADE_TYPES = Literal[
+    "sell_put",
+    "buy_put_close",
+    "assignment",
+    "sell_call",
+    "buy_call_close",
+    "called_away",
+    "expired",
+]
 CLOSE_REASONS = Literal["fifty_pct_target", "full_expiration", "rolled", "closed_early", "assigned", "called_away"]
 
 
