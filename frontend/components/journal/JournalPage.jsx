@@ -102,6 +102,8 @@ export default function JournalPage() {
             onClose={handleCloseImport}
             onPreview={journal.previewImport}
             onImport={journal.confirmImport}
+            onPreviewCsv={journal.previewCsvImport}
+            onImportCsv={journal.confirmCsvImport}
             preview={journal.importPreview}
             loading={journal.importLoading}
           />

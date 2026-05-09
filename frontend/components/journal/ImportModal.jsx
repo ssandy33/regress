@@ -1,10 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const STRATEGIES = [
   { value: 'csp', label: 'Cash Secured Put' },
   { value: 'cc', label: 'Covered Call' },
   { value: 'wheel', label: 'Wheel' },
 ];
+
+const MODES = {
+  API: 'api',
+  CSV: 'csv',
+};
 
 function toLocalDate(d) {
   const tzOffsetMs = d.getTimezoneOffset() * 60_000;
@@ -15,6 +20,7 @@ function toLocalDate(d) {
 // without exceeding the server-side 365-day cap from issue #75.
 const DEFAULT_LOOKBACK_DAYS = 90;
 const MAX_LOOKBACK_DAYS = 365;
+const MAX_CSV_BYTES = 5 * 1024 * 1024;
 
 function defaultDates() {
   const end = new Date();
@@ -26,7 +32,7 @@ function defaultDates() {
   };
 }
 
-export default function ImportModal({ onClose, onPreview, onImport, preview, loading }) {
+export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv, onImportCsv, preview, loading }) {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && !loading) onClose();
@@ -36,10 +42,16 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
   }, [onClose, loading]);
 
   const defaults = defaultDates();
+  const [mode, setMode] = useState(MODES.API);
   const [startDate, setStartDate] = useState(defaults.startDate);
   const [endDate, setEndDate] = useState(defaults.endDate);
   const [strategy, setStrategy] = useState('wheel');
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvError, setCsvError] = useState(null);
   const [result, setResult] = useState(null);
+  const fileInputRef = useRef(null);
+  const apiTabRef = useRef(null);
+  const csvTabRef = useRef(null);
 
   const handlePreview = async () => {
     await onPreview(startDate, endDate);
@@ -57,8 +69,62 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
   };
 
   const handleImport = async () => {
-    const res = await onImport(startDate, endDate, strategy);
+    let res = null;
+    if (mode === MODES.CSV && csvFile && onImportCsv) {
+      res = await onImportCsv(csvFile, strategy);
+    } else {
+      res = await onImport(startDate, endDate, strategy);
+    }
     if (res) setResult(res);
+  };
+
+  const handleCsvChange = (e) => {
+    const file = e.target.files?.[0] || null;
+    setCsvError(null);
+    if (!file) {
+      setCsvFile(null);
+      return;
+    }
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setCsvError('Only .csv files are accepted');
+      setCsvFile(null);
+      return;
+    }
+    if (file.size > MAX_CSV_BYTES) {
+      setCsvError('CSV file is larger than the 5 MB limit');
+      setCsvFile(null);
+      return;
+    }
+    setCsvFile(file);
+  };
+
+  const handleCsvPreview = async () => {
+    if (!csvFile || !onPreviewCsv) return;
+    await onPreviewCsv(csvFile);
+  };
+
+  const handleSwitchMode = (next, { focus = false } = {}) => {
+    if (next === mode) {
+      if (focus) {
+        const ref = next === MODES.API ? apiTabRef : csvTabRef;
+        ref.current?.focus();
+      }
+      return;
+    }
+    setMode(next);
+    setCsvError(null);
+    setCsvFile(null);
+    if (focus) {
+      const ref = next === MODES.API ? apiTabRef : csvTabRef;
+      ref.current?.focus();
+    }
+  };
+
+  const handleTabKeyDown = (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = mode === MODES.API ? MODES.CSV : MODES.API;
+    handleSwitchMode(next, { focus: true });
   };
 
   const allDuplicates = preview && preview.new_count === 0;
@@ -66,6 +132,9 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
 
   const inputClass = 'w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white';
   const labelClass = 'block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1';
+  const tabBaseClass = 'px-3 py-1.5 text-sm font-medium rounded-lg border';
+  const tabActiveClass = 'bg-blue-600 text-white border-blue-600';
+  const tabInactiveClass = 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-600';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" data-testid="import-backdrop" aria-label="Close modal" onClick={loading ? undefined : onClose}>
@@ -89,10 +158,11 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
         ) : preview ? (
           <div data-testid="import-preview" className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-400">
-              Account: {preview.account_number} | {preview.total} trades found | {preview.duplicates} duplicates | {preview.new_count} new
+              {preview.account_number ? `Account: ${preview.account_number} | ` : ''}
+              {preview.total} trades found | {preview.duplicates} duplicates | {preview.new_count} new
             </p>
 
-            {emptyPreview && (
+            {emptyPreview && mode === MODES.API && (
               <div
                 data-testid="empty-preview-banner"
                 className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 space-y-2"
@@ -109,6 +179,18 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
                 >
                   {loading ? 'Loading...' : 'Look back 365 days'}
                 </button>
+              </div>
+            )}
+
+            {emptyPreview && mode === MODES.CSV && (
+              <div
+                data-testid="empty-csv-banner"
+                className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4"
+              >
+                <p className="text-sm text-amber-800 dark:text-amber-200">
+                  No options trades found in this CSV. Make sure the export is from
+                  Schwab.com Activity & Statements and includes options activity.
+                </p>
               </div>
             )}
 
@@ -178,29 +260,103 @@ export default function ImportModal({ onClose, onPreview, onImport, preview, loa
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={labelClass}>Start Date</label>
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
-              </div>
-              <div>
-                <label className={labelClass}>End Date</label>
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
-              </div>
-            </div>
-            <div className="flex gap-2">
+            <div role="tablist" aria-label="Import source" data-testid="import-mode-toggle" className="flex gap-2" onKeyDown={handleTabKeyDown}>
               <button
-                data-testid="preview-import-btn"
-                onClick={handlePreview}
-                disabled={loading}
-                className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                ref={apiTabRef}
+                id="import-tab-api"
+                role="tab"
+                aria-selected={mode === MODES.API}
+                aria-controls="import-panel-api"
+                tabIndex={mode === MODES.API ? 0 : -1}
+                data-testid="import-mode-api"
+                onClick={() => handleSwitchMode(MODES.API)}
+                className={`${tabBaseClass} ${mode === MODES.API ? tabActiveClass : tabInactiveClass}`}
               >
-                {loading ? 'Loading...' : 'Preview'}
+                Schwab API
               </button>
-              <button onClick={onClose} className="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600">
-                Cancel
+              <button
+                ref={csvTabRef}
+                id="import-tab-csv"
+                role="tab"
+                aria-selected={mode === MODES.CSV}
+                aria-controls="import-panel-csv"
+                tabIndex={mode === MODES.CSV ? 0 : -1}
+                data-testid="import-mode-csv"
+                onClick={() => handleSwitchMode(MODES.CSV)}
+                className={`${tabBaseClass} ${mode === MODES.CSV ? tabActiveClass : tabInactiveClass}`}
+              >
+                CSV Upload
               </button>
             </div>
+
+            {mode === MODES.API ? (
+              <div id="import-panel-api" role="tabpanel" aria-labelledby="import-tab-api" tabIndex={0}>
+                <div data-testid="import-api-fields" className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelClass}>Start Date</label>
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>End Date</label>
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    data-testid="preview-import-btn"
+                    onClick={handlePreview}
+                    disabled={loading}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {loading ? 'Loading...' : 'Preview'}
+                  </button>
+                  <button onClick={onClose} className="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div id="import-panel-csv" role="tabpanel" aria-labelledby="import-tab-csv" tabIndex={0}>
+                <div data-testid="import-csv-fields" className="space-y-2">
+                  <label className={labelClass} htmlFor="csv-file-input">Schwab CSV export</label>
+                  <input
+                    id="csv-file-input"
+                    ref={fileInputRef}
+                    data-testid="csv-file-input"
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleCsvChange}
+                    className="block text-sm text-slate-700 dark:text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-slate-700 dark:file:text-slate-300"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Export from Schwab.com -&gt; Activity &amp; Statements -&gt; Transactions -&gt; Export. Maximum 5 MB.
+                  </p>
+                  {csvFile && (
+                    <p data-testid="csv-file-name" className="text-xs text-slate-700 dark:text-slate-300">
+                      Selected: {csvFile.name} ({Math.round(csvFile.size / 1024)} KB)
+                    </p>
+                  )}
+                  {csvError && (
+                    <p data-testid="csv-error" className="text-xs text-red-600 dark:text-red-400">
+                      {csvError}
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    data-testid="preview-csv-btn"
+                    onClick={handleCsvPreview}
+                    disabled={loading || !csvFile}
+                    className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? 'Loading...' : 'Preview'}
+                  </button>
+                  <button onClick={onClose} className="px-4 py-2 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-300 dark:hover:bg-slate-600">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

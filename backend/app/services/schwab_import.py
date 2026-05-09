@@ -131,44 +131,33 @@ def is_duplicate(
     return result is not None
 
 
-def preview_import(db: Session, start_date: str, end_date: str) -> dict:
-    """Preview Schwab transactions for import.
+def build_preview(
+    db: Session,
+    mapped_trades: list[dict],
+    account_number: str = "",
+) -> dict:
+    """Build a preview response from a list of pre-mapped trade dicts.
 
-    Returns dict with account info, trade list, and duplicate counts.
+    Shared between the API preview path (``preview_import``) and the CSV
+    preview path so both produce identical response shapes and apply the same
+    duplicate-detection logic.
     """
-    client = SchwabClient()
-    account_numbers = client.get_account_numbers()
-
-    if not account_numbers:
-        return {
-            "account_number": "",
-            "trades": [],
-            "total": 0,
-            "duplicates": 0,
-            "new_count": 0,
-        }
-
-    account = account_numbers[0]
-    account_hash = account.get("hashValue", "")
-    account_number = account.get("accountNumber", "")
-    masked_account = f"****{account_number[-4:]}" if len(account_number) >= 4 else account_number
-
-    transactions = client.get_transactions(account_hash, start_date, end_date)
-
-    trades = []
+    masked_account = (
+        f"****{account_number[-4:]}" if len(account_number) >= 4 else account_number
+    )
+    trades: list[dict] = []
     duplicates = 0
-    for txn in transactions:
-        mapped = map_schwab_transaction(txn)
-        if mapped is None:
-            continue
-
+    for mapped in mapped_trades:
         dup = is_duplicate(
-            db, mapped["ticker"], mapped["strike"], mapped["expiration"],
-            mapped["trade_type"], mapped["opened_at"],
+            db,
+            mapped["ticker"],
+            mapped["strike"],
+            mapped["expiration"],
+            mapped["trade_type"],
+            mapped["opened_at"],
         )
         if dup:
             duplicates += 1
-
         trades.append({**mapped, "is_duplicate": dup})
 
     return {
@@ -180,38 +169,33 @@ def preview_import(db: Session, start_date: str, end_date: str) -> dict:
     }
 
 
-def execute_import(db: Session, start_date: str, end_date: str, position_strategy: str = "wheel") -> dict:
-    """Import Schwab transactions into the journal.
+def execute_mapped_import(
+    db: Session,
+    mapped_trades: list[dict],
+    position_strategy: str = "wheel",
+) -> dict:
+    """Persist a list of pre-mapped trade dicts to the journal.
 
-    Creates positions as needed and logs trades.
+    Reuses ``is_duplicate`` for skip detection and creates open positions on
+    demand for tickers without one. Shared between the Schwab API import path
+    and the CSV upload import path.
     """
-    client = SchwabClient()
-    account_numbers = client.get_account_numbers()
-
-    if not account_numbers:
-        return {"imported": 0, "skipped_duplicates": 0, "positions_created": 0}
-
-    account = account_numbers[0]
-    account_hash = account.get("hashValue", "")
-    transactions = client.get_transactions(account_hash, start_date, end_date)
-
     imported = 0
     skipped = 0
     positions_created = 0
 
-    for txn in transactions:
-        mapped = map_schwab_transaction(txn)
-        if mapped is None:
-            continue
-
+    for mapped in mapped_trades:
         if is_duplicate(
-            db, mapped["ticker"], mapped["strike"], mapped["expiration"],
-            mapped["trade_type"], mapped["opened_at"],
+            db,
+            mapped["ticker"],
+            mapped["strike"],
+            mapped["expiration"],
+            mapped["trade_type"],
+            mapped["opened_at"],
         ):
             skipped += 1
             continue
 
-        # Find or create position for this ticker
         position = (
             db.query(Position)
             .filter(Position.ticker == mapped["ticker"], Position.status == "open")
@@ -247,3 +231,47 @@ def execute_import(db: Session, start_date: str, end_date: str, position_strateg
         "skipped_duplicates": skipped,
         "positions_created": positions_created,
     }
+
+
+def preview_import(db: Session, start_date: str, end_date: str) -> dict:
+    """Preview Schwab transactions for import.
+
+    Returns dict with account info, trade list, and duplicate counts.
+    """
+    client = SchwabClient()
+    account_numbers = client.get_account_numbers()
+
+    if not account_numbers:
+        return {
+            "account_number": "",
+            "trades": [],
+            "total": 0,
+            "duplicates": 0,
+            "new_count": 0,
+        }
+
+    account = account_numbers[0]
+    account_hash = account.get("hashValue", "")
+    account_number = account.get("accountNumber", "")
+
+    transactions = client.get_transactions(account_hash, start_date, end_date)
+    mapped_trades = [m for m in (map_schwab_transaction(t) for t in transactions) if m]
+    return build_preview(db, mapped_trades, account_number=account_number)
+
+
+def execute_import(db: Session, start_date: str, end_date: str, position_strategy: str = "wheel") -> dict:
+    """Import Schwab transactions into the journal.
+
+    Creates positions as needed and logs trades.
+    """
+    client = SchwabClient()
+    account_numbers = client.get_account_numbers()
+
+    if not account_numbers:
+        return {"imported": 0, "skipped_duplicates": 0, "positions_created": 0}
+
+    account = account_numbers[0]
+    account_hash = account.get("hashValue", "")
+    transactions = client.get_transactions(account_hash, start_date, end_date)
+    mapped_trades = [m for m in (map_schwab_transaction(t) for t in transactions) if m]
+    return execute_mapped_import(db, mapped_trades, position_strategy=position_strategy)
