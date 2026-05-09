@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
+from datetime import date
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -17,7 +18,25 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models.database import Base, Position, Trade
-from app.services.positions import _derive_strategy_label, _LegKey, recompute_position_state
+from app.services.positions import (
+    _apply_calendar_close,
+    _derive_strategy_label,
+    _LegKey,
+    _reset_unpaired_warning_cache,
+    recompute_position_state,
+)
+
+
+# Stable "today" used by tests that exercise the calendar fallback. Picked to
+# be after every expiration date in the issue #134 reproduction journal so
+# real past-expiration legs close, while leaving room for future-dated tests
+# (e.g., 2026-08-15) to stay open.
+_FROZEN_TODAY = date(2026, 5, 8)
+
+
+def _frozen_clock(today: date = _FROZEN_TODAY):
+    """Return a callable that always reports ``today`` as the current date."""
+    return lambda: today
 
 
 # --- Fixtures ----------------------------------------------------------------
@@ -118,7 +137,11 @@ class TestSingleTrades:
             ],
         )
 
-        result = recompute_position_state(db_session, pos.id)
+        # Freeze clock before the leg's expiration so the calendar-fallback
+        # added in #134 doesn't auto-close this still-live leg.
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 3, 1))
+        )
 
         assert result is not None
         assert result.status == "open"
@@ -140,7 +163,9 @@ class TestSingleTrades:
             ],
         )
 
-        result = recompute_position_state(db_session, pos.id)
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 3, 1))
+        )
 
         assert result.status == "open"
         assert result.shares == 0
@@ -335,7 +360,12 @@ class TestLifecycleScenarios:
             ],
         )
 
-        result = recompute_position_state(db_session, pos.id)
+        # Frozen pre-expiration to keep the surviving 195P open after the
+        # 200P is bought-to-close — calendar fallback would otherwise close
+        # the still-live leg.
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 3, 18))
+        )
 
         assert result.status == "open"
         assert result.shares == 0
@@ -672,7 +702,11 @@ class TestRecomputeWritesDerivedStrategy:
             ],
         )
 
-        result = recompute_position_state(db_session, pos.id)
+        # Frozen before expiration so the still-live put leg isn't swept by
+        # the #134 calendar fallback.
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 3, 1))
+        )
 
         assert result.shares == 0
         assert result.strategy == "csp"
@@ -730,7 +764,11 @@ class TestRecomputeWritesDerivedStrategy:
             ],
         )
 
-        result = recompute_position_state(db_session, pos.id)
+        # Freeze before the call's expiration so the still-live call leg
+        # isn't swept by the #134 calendar fallback.
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 5))
+        )
 
         assert result.shares == 100
         assert result.strategy == "cc"
@@ -768,7 +806,9 @@ class TestRecomputeWritesDerivedStrategy:
             ],
         )
 
-        result = recompute_position_state(db_session, pos.id)
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 5))
+        )
 
         assert result.shares == 100
         assert result.strategy == "wheel"
@@ -844,3 +884,510 @@ class TestRecomputeWritesDerivedStrategy:
         result = recompute_position_state(db_session, pos.id)
 
         assert result.strategy == "holding"
+
+
+# --- Issue #134: leg-pairing on resolution + calendar fallback ---------------
+
+
+class TestLegPairingOnResolution:
+    """ACs from issue #134: assignment / called_away / past-expiration close legs.
+
+    The recomputer must close the originating short leg when a resolving
+    trade arrives (strict match first, FIFO fallback for dirty data) and
+    must close any past-expiration leg that has no resolving trade at all
+    (calendar fallback).
+    """
+
+    def test_sell_put_assignment_closes_put_leg(self, db_session):
+        # AC #1: After importing a wheel cycle ``sell_put → assignment`` the
+        # originating ``sell_put`` leg is closed and does not appear in the
+        # open-option-legs count.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+
+        # Shares acquired, no open legs left, status open (still holding).
+        assert result.shares == 100
+        assert result.strategy == "holding"
+        assert result.status == "open"
+
+    def test_sell_call_called_away_closes_call_leg(self, db_session):
+        # AC #2: After importing ``sell_call → called_away`` the originating
+        # ``sell_call`` leg is closed.
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-20",
+                },
+                {
+                    "trade_type": "sell_call",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-02-25",
+                },
+                {
+                    "trade_type": "called_away",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-03-20",
+                },
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+
+        # Full wheel cycle resolved: shares back to zero, no open legs,
+        # status closed.
+        assert result.status == "closed"
+        assert result.shares == 0
+
+    def test_sell_put_past_expiration_no_close_trade_closes_calendar(
+        self, db_session
+    ):
+        # AC #3: An option leg whose ``expiration < today`` and has no
+        # closing trade is treated as expired worthless and closed by the
+        # recomputer.
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-08-01",
+                }
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        # Past expiration, no resolving trade → closed via calendar
+        # fallback. closed_at is the leg's expiration (no real trade
+        # opened_at exists to use).
+        assert result.status == "closed"
+        assert result.shares == 0
+        assert result.broker_cost_basis == 0.0
+        assert result.closed_at == "2025-09-26"
+
+    def test_sell_call_past_expiration_no_close_trade_closes_calendar(
+        self, db_session
+    ):
+        # AC #3 (call side): same calendar fallback for an OTM short call
+        # whose Expired row never landed in the CSV.
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_call",
+                    "strike": 31.0,
+                    "expiration": "2025-12-19",
+                    "opened_at": "2025-11-01",
+                }
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        assert result.status == "closed"
+        assert result.shares == 0
+        assert result.closed_at == "2025-12-19"
+
+    def test_three_stacked_assignments_aggregate_to_300_shares(self, db_session):
+        # AC #5: Multiple stacked assignments (the user's reported SOFI case)
+        # all close their puts and shares accumulate to 300.
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-08-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-09-26",
+                },
+                {
+                    "trade_type": "sell_put",
+                    "strike": 27.5,
+                    "expiration": "2025-10-10",
+                    "opened_at": "2025-09-15",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 27.5,
+                    "expiration": "2025-10-10",
+                    "opened_at": "2025-10-10",
+                },
+                {
+                    "trade_type": "sell_put",
+                    "strike": 30.0,
+                    "expiration": "2025-11-21",
+                    "opened_at": "2025-10-20",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 30.0,
+                    "expiration": "2025-11-21",
+                    "opened_at": "2025-11-21",
+                },
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        # All three assignments resolved their originating puts; shares
+        # stack to 300; basis sums each strike * 100; no open legs remain;
+        # label flips to "holding".
+        assert result.status == "open"
+        assert result.shares == 300
+        assert result.broker_cost_basis == pytest.approx(
+            26.0 * 100 + 27.5 * 100 + 30.0 * 100
+        )
+        assert result.strategy == "holding"
+
+    def test_future_expiration_no_close_trade_stays_open(self, db_session):
+        # AC #4: Open legs whose expiration is today or later with no
+        # closing trade must remain open — calendar fallback must not
+        # close future-dated legs.
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 28.0,
+                    "expiration": "2026-08-15",
+                    "opened_at": "2026-04-01",
+                }
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        # Future-dated leg with no close: stays open.
+        assert result.status == "open"
+        assert result.shares == 0
+        assert result.strategy == "csp"
+        assert result.closed_at is None
+
+
+class TestFifoFallbackForDirtyData:
+    """Strict-then-FIFO pairing covers Schwab CSV rows whose strike or
+    expiration drifts slightly from the originating short leg."""
+
+    def test_assignment_with_mismatched_strike_closes_via_fifo(self, db_session):
+        # Resolving ``assignment`` strike differs from the open ``sell_put``
+        # by a penny. Strict match fails; FIFO fallback consumes the only
+        # open put leg.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.49,  # <-- penny drift, no strict match
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+
+        # FIFO fallback closed the leg; shares acquired at the
+        # assignment row's strike (13.49 * 100).
+        assert result.status == "open"
+        assert result.shares == 100
+        assert result.broker_cost_basis == pytest.approx(1349.0)
+        assert result.strategy == "holding"
+
+    def test_called_away_with_mismatched_strike_closes_via_fifo(self, db_session):
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-20",
+                },
+                {
+                    "trade_type": "sell_call",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-02-25",
+                },
+                {
+                    "trade_type": "called_away",
+                    "strike": 21.99,  # <-- penny drift
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-03-20",
+                },
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+
+        # FIFO fallback closed the call leg; full wheel cycle resolved.
+        assert result.status == "closed"
+        assert result.shares == 0
+
+
+class TestUnpairedResolvingEvent:
+    """When both strict and FIFO passes fail, log a warning and continue."""
+
+    def setup_method(self) -> None:
+        # Module-level dedupe cache must start empty so each test gets the
+        # genuine first-warning behavior regardless of test order.
+        _reset_unpaired_warning_cache()
+
+    def test_assignment_with_no_matching_put_leg_warns_but_no_error(
+        self, db_session, caplog
+    ):
+        # Bare ``assignment`` row with no preceding ``sell_put`` — neither
+        # the strict pass nor the FIFO pass can find a matching leg. The
+        # recomputer must log a warning and apply the shares/basis side
+        # effects; it must not raise.
+        pos = _seed_position(
+            db_session,
+            ticker="ZZZ",
+            trades=[
+                {
+                    "trade_type": "assignment",
+                    "strike": 50.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-17",
+                }
+            ],
+        )
+
+        with caplog.at_level("WARNING", logger="app.services.positions"):
+            result = recompute_position_state(
+                db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+            )
+
+        # Warning surfaced the data-integrity gap; shares still updated.
+        assert any(
+            "no matching open leg" in record.getMessage()
+            for record in caplog.records
+        )
+        assert result.shares == 100
+        assert result.broker_cost_basis == pytest.approx(5000.0)
+
+    def test_repeat_recompute_does_not_re_emit_warning(
+        self, db_session, caplog
+    ):
+        # The recomputer is idempotent and is called both after every Schwab
+        # import and from the reconcile_positions script (which a user may run
+        # repeatedly). The first encounter of an unpaired resolving event is
+        # genuine signal; subsequent recomputes of the same trade should not
+        # spam the same WARNING. Confirm the second run drops to INFO so log
+        # consumers (and tests asserting on WARNING records) stay clean.
+        pos = _seed_position(
+            db_session,
+            ticker="REPEAT",
+            trades=[
+                {
+                    "trade_type": "assignment",
+                    "strike": 50.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-17",
+                }
+            ],
+        )
+
+        # First recompute: genuine WARNING.
+        with caplog.at_level("INFO", logger="app.services.positions"):
+            recompute_position_state(
+                db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+            )
+        first_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "no matching open leg" in r.getMessage()
+        ]
+        assert len(first_warnings) == 1
+
+        # Second recompute on the exact same ledger: no new WARNING; the
+        # repeat is demoted to INFO so the data-integrity gap stays visible
+        # without flooding the log.
+        caplog.clear()
+        with caplog.at_level("INFO", logger="app.services.positions"):
+            recompute_position_state(
+                db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+            )
+        repeat_warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "no matching open leg" in r.getMessage()
+        ]
+        repeat_infos = [
+            r
+            for r in caplog.records
+            if r.levelname == "INFO"
+            and "no matching open leg" in r.getMessage()
+        ]
+        assert repeat_warnings == []
+        assert len(repeat_infos) == 1
+
+
+class TestCalendarCloseHelper:
+    """Pure-function unit tests for ``_apply_calendar_close``."""
+
+    def test_empty_open_legs_returns_empty_and_none(self):
+        still, latest = _apply_calendar_close([], "F", date(2026, 5, 8))
+        assert still == []
+        assert latest is None
+
+    def test_all_future_legs_unchanged(self):
+        legs = [
+            _LegKey(option_type="put", strike=20.0, expiration="2026-08-15"),
+            _LegKey(option_type="call", strike=22.0, expiration="2026-09-19"),
+        ]
+        still, latest = _apply_calendar_close(legs, "F", date(2026, 5, 8))
+        assert still == legs
+        assert latest is None
+
+    def test_mix_of_past_and_future_legs(self):
+        past = _LegKey(option_type="put", strike=26.0, expiration="2025-09-26")
+        future = _LegKey(option_type="call", strike=22.0, expiration="2026-09-19")
+        still, latest = _apply_calendar_close(
+            [past, future], "SOFI", date(2026, 5, 8)
+        )
+        assert still == [future]
+        assert latest == "2025-09-26"
+
+    def test_multiple_past_legs_returns_latest_expiration(self):
+        leg_a = _LegKey(option_type="put", strike=20.0, expiration="2025-09-26")
+        leg_b = _LegKey(option_type="put", strike=22.0, expiration="2025-12-19")
+        leg_c = _LegKey(option_type="call", strike=30.0, expiration="2025-11-07")
+        still, latest = _apply_calendar_close(
+            [leg_a, leg_b, leg_c], "SOFI", date(2026, 5, 8)
+        )
+        assert still == []
+        # Latest among the three closed legs is 2025-12-19.
+        assert latest == "2025-12-19"
+
+    def test_unparseable_expiration_leaves_leg_alone(self):
+        # Defensive: a malformed expiration string shouldn't trigger
+        # calendar close (we can't prove it's past expiration).
+        leg = _LegKey(option_type="put", strike=20.0, expiration="not-a-date")
+        still, latest = _apply_calendar_close([leg], "F", date(2026, 5, 8))
+        assert still == [leg]
+        assert latest is None
+
+
+class TestCalendarCloseRegressionGuard:
+    """Calendar fallback must not regress the covered-call-with-shares case
+    introduced in PR #130 (``test_covered_call_expires_keeps_shares``)."""
+
+    def test_calendar_close_does_not_regress_covered_call_with_shares(
+        self, db_session
+    ):
+        # Same flow as ``test_covered_call_expires_keeps_shares`` but with
+        # NO explicit "expired" row and the clock frozen *after* the call's
+        # expiration. The calendar fallback should close the call leg, but
+        # shares and basis must stay intact and the position must remain
+        # open with the "holding" label.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+                # Now 100 shares held at $1350 basis.
+                {
+                    "trade_type": "sell_call",
+                    "strike": 15.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-01",
+                },
+                # No "expired" row for the call — calendar fallback closes.
+            ],
+        )
+
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+
+        assert result.status == "open"
+        assert result.shares == 100
+        assert result.broker_cost_basis == pytest.approx(1350.0)
+        assert result.strategy == "holding"
+        assert result.closed_at is None

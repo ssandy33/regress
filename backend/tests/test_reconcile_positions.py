@@ -213,10 +213,21 @@ class TestReconcileAll:
         assert reloaded.shares == 200
         assert reloaded.broker_cost_basis == pytest.approx(2800.0 + 3000.0)
 
-    def test_no_changes_when_state_already_correct(self, db_session, capsys):
+    def test_no_changes_when_state_already_correct(
+        self, db_session, capsys, monkeypatch
+    ):
         # Seed with correct state for a simple sell_put leg: 0 shares, open.
         # Strategy must already match the derived "csp" label, otherwise the
         # reconciler will record a change for the label fix.
+        #
+        # Freeze the recomputer's clock to before the leg's expiration so the
+        # #134 calendar fallback doesn't auto-close the still-live leg and
+        # turn this into a "changed" row.
+        from datetime import date
+
+        from app.services import positions as positions_module
+
+        monkeypatch.setattr(positions_module, "_utc_today", lambda: date(2026, 3, 1))
         pos = _seed_ghost_open_position(
             db_session,
             ticker="F",

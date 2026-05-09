@@ -364,11 +364,22 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 0
         assert position.closed_at == "2026-03-25"
 
-    def test_reopen_after_close_creates_new_position(self, db_session):
+    def test_reopen_after_close_creates_new_position(
+        self, db_session, monkeypatch
+    ):
         """A new sell_put on a previously-closed ticker creates a new Position.
 
         The closed cycle's history (trades, dates, P&L) must remain immutable.
         """
+        # Freeze the recomputer's clock to before the second-cycle leg's
+        # expiration so the #134 calendar fallback doesn't auto-close the
+        # still-live 2026-04-17 leg.
+        from datetime import date
+
+        from app.services import positions as positions_module
+
+        monkeypatch.setattr(positions_module, "_utc_today", lambda: date(2026, 4, 1))
+
         first_cycle = [
             _mapped("F", "sell_put", 13.50, "2026-03-27", "2026-03-01"),
             _mapped("F", "buy_put_close", 13.50, "2026-03-27", "2026-03-05"),
