@@ -50,6 +50,8 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
   const [csvError, setCsvError] = useState(null);
   const [result, setResult] = useState(null);
   const fileInputRef = useRef(null);
+  const apiTabRef = useRef(null);
+  const csvTabRef = useRef(null);
 
   const handlePreview = async () => {
     await onPreview(startDate, endDate);
@@ -101,11 +103,28 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
     await onPreviewCsv(csvFile);
   };
 
-  const handleSwitchMode = (next) => {
-    if (next === mode) return;
+  const handleSwitchMode = (next, { focus = false } = {}) => {
+    if (next === mode) {
+      if (focus) {
+        const ref = next === MODES.API ? apiTabRef : csvTabRef;
+        ref.current?.focus();
+      }
+      return;
+    }
     setMode(next);
     setCsvError(null);
     setCsvFile(null);
+    if (focus) {
+      const ref = next === MODES.API ? apiTabRef : csvTabRef;
+      ref.current?.focus();
+    }
+  };
+
+  const handleTabKeyDown = (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = mode === MODES.API ? MODES.CSV : MODES.API;
+    handleSwitchMode(next, { focus: true });
   };
 
   const allDuplicates = preview && preview.new_count === 0;
@@ -241,10 +260,14 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
           </div>
         ) : (
           <div className="space-y-4">
-            <div role="tablist" aria-label="Import source" data-testid="import-mode-toggle" className="flex gap-2">
+            <div role="tablist" aria-label="Import source" data-testid="import-mode-toggle" className="flex gap-2" onKeyDown={handleTabKeyDown}>
               <button
+                ref={apiTabRef}
+                id="import-tab-api"
                 role="tab"
                 aria-selected={mode === MODES.API}
+                aria-controls="import-panel-api"
+                tabIndex={mode === MODES.API ? 0 : -1}
                 data-testid="import-mode-api"
                 onClick={() => handleSwitchMode(MODES.API)}
                 className={`${tabBaseClass} ${mode === MODES.API ? tabActiveClass : tabInactiveClass}`}
@@ -252,8 +275,12 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                 Schwab API
               </button>
               <button
+                ref={csvTabRef}
+                id="import-tab-csv"
                 role="tab"
                 aria-selected={mode === MODES.CSV}
+                aria-controls="import-panel-csv"
+                tabIndex={mode === MODES.CSV ? 0 : -1}
                 data-testid="import-mode-csv"
                 onClick={() => handleSwitchMode(MODES.CSV)}
                 className={`${tabBaseClass} ${mode === MODES.CSV ? tabActiveClass : tabInactiveClass}`}
@@ -263,7 +290,7 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
             </div>
 
             {mode === MODES.API ? (
-              <>
+              <div id="import-panel-api" role="tabpanel" aria-labelledby="import-tab-api" tabIndex={0}>
                 <div data-testid="import-api-fields" className="grid grid-cols-2 gap-4">
                   <div>
                     <label className={labelClass}>Start Date</label>
@@ -287,9 +314,9 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                     Cancel
                   </button>
                 </div>
-              </>
+              </div>
             ) : (
-              <>
+              <div id="import-panel-csv" role="tabpanel" aria-labelledby="import-tab-csv" tabIndex={0}>
                 <div data-testid="import-csv-fields" className="space-y-2">
                   <label className={labelClass} htmlFor="csv-file-input">Schwab CSV export</label>
                   <input
@@ -328,7 +355,7 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                     Cancel
                   </button>
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
