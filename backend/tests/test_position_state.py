@@ -2015,9 +2015,29 @@ class TestPersistsTradeClosedAt:
         first_close = sell_put.closed_at
         assert first_close == "2025-09-26"
 
-        # Second pass: candidate is identical, no mutation expected.
+        # Second pass: candidate is identical, no mutation expected. Pass
+        # ``commit=False`` so the write loop's session state is preserved
+        # for inspection — a default ``commit=True`` run would flush+commit
+        # on the way out and clear ``db_session.dirty``, hiding any
+        # redundant write the equality-skip is meant to prevent.
         recompute_position_state(
-            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+            db_session,
+            pos.id,
+            commit=False,
+            clock=_frozen_clock(date(2026, 5, 8)),
         )
+        # Snapshot ``dirty`` inside ``no_autoflush`` so an implicit
+        # autoflush can't clear the set between the recompute returning
+        # and the assertion running.
+        with db_session.no_autoflush:
+            dirty_snapshot = set(db_session.dirty)
+        assert not any(
+            isinstance(obj, Trade) and obj.id == sell_put.id
+            for obj in dirty_snapshot
+        ), (
+            "equality-skip did not fire: sell_put Trade row was marked dirty "
+            "on a no-op recompute"
+        )
+
         db_session.refresh(sell_put)
         assert sell_put.closed_at == first_close
