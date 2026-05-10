@@ -1700,41 +1700,6 @@ class TestPersistsTradeClosedAt:
         db_session.refresh(sell_put)
         assert sell_put.closed_at == first_close
 
-    def test_existing_closed_at_not_overwritten_by_calendar_close(
-        self, db_session
-    ):
-        # Defensive guard: a Trade with a pre-existing ``closed_at`` value is
-        # never overwritten by the calendar-close pass. Real-resolution dates
-        # outrank synthetic-expiration dates per the issue plan's Q6b rule.
-        pos = _seed_position(
-            db_session,
-            ticker="SOFI",
-            trades=[
-                {
-                    "trade_type": "sell_put",
-                    "strike": 26.0,
-                    "expiration": "2025-09-26",
-                    "opened_at": "2025-08-01",
-                }
-            ],
-        )
-
-        # Manually pre-stamp closed_at as if a previous reconcile had already
-        # written a real resolution date for this leg.
-        sell_put = _trade_by_type(pos, "sell_put")
-        assert sell_put is not None
-        sell_put.closed_at = "2025-09-15"  # earlier than expiration
-        db_session.commit()
-
-        # Run recompute with a clock past the leg's expiration so the
-        # calendar fallback would otherwise overwrite the stamp.
-        recompute_position_state(
-            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
-        )
-
-        db_session.refresh(sell_put)
-        assert sell_put.closed_at == "2025-09-15"
-
     def test_orphan_assignment_does_not_stamp_anything(self, db_session):
         # When both strict and FIFO passes fail (no matching open leg), no
         # Trade should receive a phantom ``closed_at`` stamp — the orphan
@@ -1853,3 +1818,226 @@ class TestPersistsTradeClosedAt:
         assert sell_put is not None
         # Real resolving date wins, not the synthetic expiration.
         assert sell_put.closed_at == "2026-03-05"
+
+    def test_real_resolution_overwrites_synthetic_calendar_stamp(
+        self, db_session
+    ):
+        # Issue #138 regression: a synthetic calendar stamp written by an
+        # earlier reconcile pass must be overwritten by a real BTC resolution
+        # added to the ledger before the next reconcile.
+        #
+        # Reproduces the user-reported scenario:
+        # 1. Reconcile runs while the BTC has not yet been imported. The
+        #    ``sell_put`` is past expiration and gets calendar-closed; its
+        #    ``closed_at`` is stamped synthetically as the leg's expiration.
+        # 2. The user imports the missing ``buy_put_close`` row, which has an
+        #    earlier ``opened_at`` than the expiration.
+        # 3. Reconcile runs again. The real resolution candidate
+        #    (``buy_put_close.opened_at``) must overwrite the synthetic stamp.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                }
+            ],
+        )
+
+        # First pass: no resolving trade yet, calendar-close stamps the
+        # leg's expiration on the originating sell_put row.
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        assert sell_put.closed_at == "2026-03-27"  # synthetic
+
+        # Mutate ledger: the missing buy_put_close arrives. Persist before
+        # the next reconcile so it shows up in ``position.trades``.
+        db_session.add(
+            _make_trade(
+                pos.id,
+                trade_type="buy_put_close",
+                strike=13.50,
+                expiration="2026-03-27",
+                opened_at="2026-03-15",
+            )
+        )
+        db_session.commit()
+        db_session.refresh(pos)
+
+        # Second pass: real resolution candidate (2026-03-15) must overwrite
+        # the prior synthetic stamp (2026-03-27).
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+        db_session.refresh(sell_put)
+        assert sell_put.closed_at == "2026-03-15"
+
+    def test_called_away_overwrites_synthetic_calendar_stamp(self, db_session):
+        # Symmetric variant of the issue #138 regression: synthetic calendar
+        # stamp on a sell_call must be overwritten by a real ``called_away``
+        # row appearing in a later reconcile. A prior ``sell_put → assignment``
+        # is included so the recomputer has shares to remove when the late
+        # ``called_away`` row arrives in the second pass.
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-20",
+                },
+                {
+                    "trade_type": "sell_call",
+                    "strike": 22.0,
+                    "expiration": "2026-03-20",
+                    "opened_at": "2026-02-25",
+                },
+            ],
+        )
+
+        # First pass: no called_away yet — calendar-close stamps the
+        # sell_call's expiration synthetically.
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+        sell_call = _trade_by_type(pos, "sell_call")
+        assert sell_call is not None
+        assert sell_call.closed_at == "2026-03-20"  # synthetic
+
+        # Mutate ledger: the missing called_away arrives, dated before the
+        # leg's expiration so the real value differs from the synthetic one.
+        db_session.add(
+            _make_trade(
+                pos.id,
+                trade_type="called_away",
+                strike=22.0,
+                expiration="2026-03-20",
+                opened_at="2026-03-18",
+            )
+        )
+        db_session.commit()
+        db_session.refresh(pos)
+
+        # Second pass: real resolving date (2026-03-18) overwrites the
+        # synthetic stamp (2026-03-20).
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 4, 1))
+        )
+        db_session.refresh(sell_call)
+        assert sell_call.closed_at == "2026-03-18"
+
+    def test_real_resolution_value_preserved_when_already_stamped(
+        self, db_session
+    ):
+        # Replaces the prior ``test_existing_closed_at_not_overwritten_by_calendar_close``
+        # which locked in the bug fixed by issue #138 (it pre-stamped a
+        # ``closed_at`` value with no supporting ledger row and relied on the
+        # blanket guard to preserve it). The corrected test seeds a ledger
+        # that *contains* the resolving trade, so the candidate produced on
+        # every recompute is the real value — and the equality-skip in the
+        # write loop preserves the row without dirty-marking it.
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-08-01",
+                },
+                {
+                    "trade_type": "buy_put_close",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-09-15",
+                },
+            ],
+        )
+
+        # First reconcile produces the real resolution stamp.
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        assert sell_put.closed_at == "2025-09-15"
+
+        # Second reconcile: same ledger, same clock. The candidate equals the
+        # stored value, so the equality-skip in the write loop fires and the
+        # stored value is preserved.
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+        db_session.refresh(sell_put)
+        assert sell_put.closed_at == "2025-09-15"
+
+    def test_calendar_close_recompute_is_idempotent_under_equality_skip(
+        self, db_session
+    ):
+        # Calendar-fallback variant of the idempotency contract. Re-running
+        # recompute with no ledger changes must not flip the synthetic stamp
+        # on subsequent passes — the candidate equals the stored value, so
+        # the equality-skip in the write loop fires and ``closed_at`` is
+        # left exactly as stored.
+        pos = _seed_position(
+            db_session,
+            ticker="SOFI",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 26.0,
+                    "expiration": "2025-09-26",
+                    "opened_at": "2025-08-01",
+                }
+            ],
+        )
+
+        recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+        )
+        sell_put = _trade_by_type(pos, "sell_put")
+        assert sell_put is not None
+        first_close = sell_put.closed_at
+        assert first_close == "2025-09-26"
+
+        # Second pass: candidate is identical, no mutation expected. Pass
+        # ``commit=False`` so the write loop's session state is preserved
+        # for inspection — a default ``commit=True`` run would flush+commit
+        # on the way out and clear ``db_session.dirty``, hiding any
+        # redundant write the equality-skip is meant to prevent.
+        recompute_position_state(
+            db_session,
+            pos.id,
+            commit=False,
+            clock=_frozen_clock(date(2026, 5, 8)),
+        )
+        # Snapshot ``dirty`` inside ``no_autoflush`` so an implicit
+        # autoflush can't clear the set between the recompute returning
+        # and the assertion running.
+        with db_session.no_autoflush:
+            dirty_snapshot = set(db_session.dirty)
+        assert not any(
+            isinstance(obj, Trade) and obj.id == sell_put.id
+            for obj in dirty_snapshot
+        ), (
+            "equality-skip did not fire: sell_put Trade row was marked dirty "
+            "on a no-op recompute"
+        )
+
+        db_session.refresh(sell_put)
+        assert sell_put.closed_at == first_close
