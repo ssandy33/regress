@@ -7,6 +7,7 @@ import {
   refreshAllCache, refreshStaleCache, getSchwabAuthUrl, exchangeSchwabCallback,
 } from '../../api/client';
 import DangerZone from './DangerZone';
+import ReconcileJournal from './ReconcileJournal';
 import { useJournal } from '../../hooks/useJournal';
 
 function freshnessColor(freshness) {
@@ -25,7 +26,9 @@ export default function SettingsPage() {
   // Pull `clearAllData` out of the journal hook so the Danger Zone wipe goes
   // through the same plumbing (toasts, fetchPositions refresh, selection
   // reset) as `removePosition` instead of calling `api/client` directly.
-  const { clearAllData } = useJournal();
+  // ``positions`` is also used as the gate for the Reconcile journal section
+  // (issue #139) so it disables both buttons on an empty journal.
+  const { clearAllData, reconcilePreview, reconcileApply, positions } = useJournal();
   const [settings, setSettings] = useState(null);
   const [cacheStats, setCacheStats] = useState(null);
   const [fredKey, setFredKey] = useState('');
@@ -576,6 +579,14 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* Reconcile journal — non-destructive escape hatch that re-derives
+              every position's lifecycle state from the trade ledger (#139). */}
+          <ReconcileJournal
+            previewReconcile={reconcilePreview}
+            applyReconcile={reconcileApply}
+            positionCount={positions.length}
+          />
 
           {/* Danger Zone — destructive cross-cutting actions (clear all journal data) */}
           <DangerZone onClear={clearAllData} />

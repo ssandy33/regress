@@ -15,6 +15,9 @@ from app.models.schemas import (
     PositionListResponse,
     PositionResponse,
     PositionUpdate,
+    ReconcilePositionDiff,
+    ReconcileRequest,
+    ReconcileResponse,
     TradeCreate,
     TradeResponse,
     TradeUpdate,
@@ -30,6 +33,7 @@ from app.services.journal import (
     update_position,
     update_trade,
 )
+from app.services.reconcile import reconcile as reconcile_journal_state
 from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
 from app.services.schwab_client import SchwabClientError
 from app.services.schwab_csv import parse_schwab_csv
@@ -134,6 +138,56 @@ def clear_all_journal(db: DBSession = Depends(get_db)):
         logger.exception("Unexpected error while clearing journal data")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
     return ClearJournalResponse(**result)
+
+
+@router.post("/reconcile", response_model=ReconcileResponse)
+def reconcile_journal(
+    req: ReconcileRequest | None = None,
+    db: DBSession = Depends(get_db),
+):
+    """Re-derive every Position's lifecycle state from the trade ledger.
+
+    Backs the Settings → Reconcile journal action (issue #139). When
+    ``req.dry_run`` is True (default) the recompute pass is rolled back at
+    the end so the database is byte-for-byte unchanged; the response is a
+    "what would change" preview. When ``dry_run`` is False, changes are
+    committed and the response reports the actual writes performed.
+    """
+    request = req or ReconcileRequest()
+    try:
+        result = reconcile_journal_state(db, apply=not request.dry_run)
+    except Exception:
+        logger.exception("Unexpected error during journal reconciliation")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
+
+    per_position = [
+        ReconcilePositionDiff(
+            ticker=diff.ticker,
+            status_before=diff.status_before,
+            status_after=diff.status_after,
+            shares_before=diff.shares_before,
+            shares_after=diff.shares_after,
+            basis_before=diff.basis_before,
+            basis_after=diff.basis_after,
+            strategy_before=diff.strategy_before,
+            strategy_after=diff.strategy_after,
+            closed_at_before=diff.closed_at_before,
+            closed_at_after=diff.closed_at_after,
+            legs_consumed=diff.legs_consumed,
+        )
+        for diff in result.per_position
+    ]
+    return ReconcileResponse(
+        dry_run=request.dry_run,
+        positions_processed=result.positions_processed,
+        trades_stamped=result.trades_stamped,
+        status_changes=result.status_changes,
+        share_corrections=result.share_corrections,
+        basis_corrections=result.basis_corrections,
+        strategy_changes=result.strategy_changes,
+        errors=result.errors,
+        per_position=per_position,
+    )
 
 
 @router.get("/import/preview", response_model=ImportPreviewResponse)

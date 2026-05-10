@@ -10,6 +10,7 @@ import {
   deleteTrade,
   deletePosition,
   clearAllJournal,
+  reconcileJournal,
   previewSchwabImport,
   executeSchwabImport,
   previewSchwabCsvImport,
@@ -145,6 +146,37 @@ export function useJournal() {
     }
   }, [fetchPositions]);
 
+  const reconcilePreview = useCallback(async () => {
+    // Non-destructive dry-run; the component renders the per_position diff
+    // returned here. No toast on preview — the inline table is the feedback.
+    try {
+      const data = await reconcileJournal(true);
+      return data;
+    } catch {
+      toast.error('Failed to preview reconcile');
+      return null;
+    }
+  }, []);
+
+  const reconcileApply = useCallback(async () => {
+    try {
+      const data = await reconcileJournal(false);
+      const positions = data?.positions_processed ?? 0;
+      const stamped = data?.trades_stamped ?? 0;
+      const statusChanges = data?.status_changes ?? 0;
+      toast.success(
+        `Reconciled ${positions} positions, stamped ${stamped} trade closed_at values, ${statusChanges} status changes`,
+      );
+      // Refresh the position list so dashboards / journal page see the
+      // recomputed state immediately (issue #139).
+      await fetchPositions();
+      return data;
+    } catch {
+      toast.error('Failed to reconcile journal');
+      return null;
+    }
+  }, [fetchPositions]);
+
   const previewImport = useCallback(async (startDate, endDate) => {
     setImportLoading(true);
     try {
@@ -242,6 +274,8 @@ export function useJournal() {
     removeTrade,
     removePosition,
     clearAllData,
+    reconcilePreview,
+    reconcileApply,
     previewImport,
     confirmImport,
     previewCsvImport,

@@ -19,6 +19,11 @@ The script is **opt-in** — it is never invoked automatically. Running it with
 ``closed_at`` / ``strategy`` columns of every Position; review the dry-run
 diff first.
 
+The looping/diff logic lives in :func:`app.services.reconcile.reconcile` so
+the same pass backs the in-app Settings → Reconcile journal action (issue
+#139). This module is a thin CLI wrapper that renders the structured
+``ReconcileResult`` to stdout in the format users have come to expect.
+
 Exit codes:
     0  success (or dry-run completed)
     1  one or more positions raised during recomputation; details logged
@@ -29,110 +34,87 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from app.models.database import Position, SessionLocal
-from app.services.positions import recompute_position_state
+from app.services.reconcile import ReconcilePositionDiff, reconcile
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class _Snapshot:
-    """Capture of a Position's derived state at a point in time."""
+def _format_diff(diff: ReconcilePositionDiff) -> str | None:
+    """Return a one-line diff string, or None if before == after.
 
-    status: str
-    shares: int
-    broker_cost_basis: float
-    closed_at: str | None
-    strategy: str
-
-
-def _snapshot(position: Position) -> _Snapshot:
-    """Capture the derived columns of a Position into a comparable record."""
-    return _Snapshot(
-        status=position.status,
-        shares=int(position.shares or 0),
-        broker_cost_basis=float(position.broker_cost_basis or 0.0),
-        closed_at=position.closed_at,
-        strategy=position.strategy or "",
-    )
-
-
-def _format_diff(ticker: str, before: _Snapshot, after: _Snapshot) -> str | None:
-    """Return a one-line diff string, or None if the snapshots are equal."""
-    if before == after:
-        return None
+    Mirrors the pre-#139 stdout format so users (and the CLI tests) see the
+    exact same output as before the service-layer extraction.
+    """
     parts: list[str] = []
-    if before.status != after.status:
-        parts.append(f"status {before.status} -> {after.status}")
-    if before.shares != after.shares:
-        parts.append(f"shares {before.shares} -> {after.shares}")
-    if before.broker_cost_basis != after.broker_cost_basis:
+    if diff.status_before != diff.status_after:
+        parts.append(f"status {diff.status_before} -> {diff.status_after}")
+    if diff.shares_before != diff.shares_after:
+        parts.append(f"shares {diff.shares_before} -> {diff.shares_after}")
+    if diff.basis_before != diff.basis_after:
         parts.append(
-            f"basis ${before.broker_cost_basis:.2f} -> ${after.broker_cost_basis:.2f}"
+            f"basis ${diff.basis_before:.2f} -> ${diff.basis_after:.2f}"
         )
-    if before.closed_at != after.closed_at:
-        parts.append(f"closed_at {before.closed_at!r} -> {after.closed_at!r}")
-    if before.strategy != after.strategy:
-        parts.append(f"strategy {before.strategy} -> {after.strategy}")
-    return f"  {ticker:<8} {', '.join(parts)}"
+    if diff.closed_at_before != diff.closed_at_after:
+        parts.append(
+            f"closed_at {diff.closed_at_before!r} -> {diff.closed_at_after!r}"
+        )
+    if diff.strategy_before != diff.strategy_after:
+        parts.append(f"strategy {diff.strategy_before} -> {diff.strategy_after}")
+    if not parts:
+        return None
+    return f"  {diff.ticker:<8} {', '.join(parts)}"
 
 
 def reconcile_all(db: Session, apply: bool) -> tuple[int, int, int]:
     """Recompute every Position and report changes.
 
+    Thin wrapper around :func:`app.services.reconcile.reconcile` that
+    renders the structured result to stdout and returns the legacy tuple
+    shape ``(total, changed, errors)`` so existing callers / tests continue
+    to work unchanged.
+
     Args:
         db: SQLAlchemy session bound to the journal database.
-        apply: If True, commit all changes. If False, roll back at the end so
-            the database is untouched.
+        apply: If True, commit all changes. If False, the service rolls
+            back at the end so the database is untouched.
 
     Returns:
-        ``(total, changed, errors)`` — count of positions walked, count whose
-        derived state differed from before, and count that raised during
-        recomputation.
+        ``(total, changed, errors)`` — count of positions walked, count
+        whose derived state differed from before, and count that raised
+        during recomputation.
     """
-    positions = db.query(Position).all()
-    total = len(positions)
-    changed = 0
-    errors = 0
-
+    # Count positions up front so the header line ("Reconciling N
+    # positions...") matches the historical output even though the loop
+    # itself now lives in the service.
+    total = db.query(Position).count()
     print(f"Reconciling {total} positions{' (DRY RUN)' if not apply else ''}...")
 
-    for position in positions:
-        ticker = position.ticker
-        before = _snapshot(position)
-        try:
-            recompute_position_state(db, position.id, commit=apply)
-        except Exception:
-            errors += 1
-            logger.exception(
-                "Failed to recompute position %s (%s)", position.id, ticker
-            )
-            continue
-        # In dry-run mode the recomputer left the changes uncommitted on the
-        # ORM object; we can read them directly. In apply mode it already
-        # refreshed the row.
-        after = _snapshot(position)
-        diff = _format_diff(ticker, before, after)
-        if diff is not None:
-            changed += 1
-            print(diff)
+    result = reconcile(db, apply=apply)
+
+    for diff in result.per_position:
+        line = _format_diff(diff)
+        if line is not None:
+            print(line)
+
+    changed = result.changed
+    errors = result.errors
 
     if apply:
-        print(f"\n{total} positions, {changed} changed, {errors} errors. Applied.")
-    else:
-        # Discard all uncommitted in-memory mutations so the database is
-        # untouched. Each recompute call set position.shares / .status / ...
-        # without committing — rollback drops them.
-        db.rollback()
         print(
-            f"\n{total} positions, {changed} would change, {errors} errors.\n"
+            f"\n{result.positions_processed} positions, {changed} changed, "
+            f"{errors} errors. Applied."
+        )
+    else:
+        print(
+            f"\n{result.positions_processed} positions, {changed} would change, "
+            f"{errors} errors.\n"
             "Re-run with --apply to commit."
         )
-    return total, changed, errors
+    return result.positions_processed, changed, errors
 
 
 def main(argv: list[str] | None = None) -> int:

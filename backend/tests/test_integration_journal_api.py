@@ -324,6 +324,156 @@ def test_clear_all_journal_500_does_not_leak_exception_text(client, monkeypatch)
     assert resp.json()["detail"] == "An unexpected error occurred"
 
 
+# --- POST /api/journal/reconcile (issue #139) ---
+
+
+def _seed_full_cycle(client):
+    """Seed a position whose stored state is stale relative to its ledger.
+
+    Pre-fix imports (issue #127) left ``shares=100`` even after assignment
+    plus called_away should have driven the position to closed/0 shares.
+    Returns the created position dict.
+    """
+    pos = _create_position(client, ticker="MARA", broker_cost_basis=0.0).json()
+    pid = pos["id"]
+    _create_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=20.0,
+        expiration="2026-02-20",
+        opened_at="2026-02-01",
+    )
+    _create_trade(
+        client,
+        pid,
+        trade_type="assignment",
+        strike=20.0,
+        expiration="2026-02-20",
+        opened_at="2026-02-20",
+    )
+    _create_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=22.0,
+        expiration="2026-03-20",
+        opened_at="2026-02-25",
+    )
+    _create_trade(
+        client,
+        pid,
+        trade_type="called_away",
+        strike=22.0,
+        expiration="2026-03-20",
+        opened_at="2026-03-20",
+    )
+    return pos
+
+
+def _trade_close_map(client, position_id):
+    """Return {trade_id: closed_at} for every trade on a position."""
+    pos = client.get(f"/api/journal/positions/{position_id}").json()
+    return {t["id"]: t["closed_at"] for t in pos["trades"]}
+
+
+def test_reconcile_dry_run_returns_summary_without_writes(client):
+    """``dry_run=true`` returns a structured summary and writes nothing."""
+    pos = _seed_full_cycle(client)
+    pid = pos["id"]
+
+    before_position = client.get(f"/api/journal/positions/{pid}").json()
+    before_trade_closes = _trade_close_map(client, pid)
+
+    resp = client.post("/api/journal/reconcile", json={"dry_run": True})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["dry_run"] is True
+    assert body["positions_processed"] == 1
+    assert isinstance(body["per_position"], list)
+    assert len(body["per_position"]) == 1
+    diff = body["per_position"][0]
+    assert diff["ticker"] == "MARA"
+    # The recomputer would close the position — preview shows it.
+    assert diff["status_after"] == "closed"
+    assert diff["shares_after"] == 0
+
+    # No writes: re-query and compare.
+    after_position = client.get(f"/api/journal/positions/{pid}").json()
+    assert after_position["status"] == before_position["status"]
+    assert after_position["shares"] == before_position["shares"]
+    assert after_position["broker_cost_basis"] == before_position["broker_cost_basis"]
+    after_trade_closes = _trade_close_map(client, pid)
+    assert after_trade_closes == before_trade_closes
+
+
+def test_reconcile_apply_persists_changes(client):
+    """``dry_run=false`` commits the recomputed state to the database."""
+    pos = _seed_full_cycle(client)
+    pid = pos["id"]
+
+    resp = client.post("/api/journal/reconcile", json={"dry_run": False})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["dry_run"] is False
+    assert body["positions_processed"] == 1
+    assert body["status_changes"] == 1
+    assert body["trades_stamped"] >= 2  # sell_put + sell_call openers stamped
+
+    # Position is now closed at the called_away date.
+    after = client.get(f"/api/journal/positions/{pid}").json()
+    assert after["status"] == "closed"
+    assert after["shares"] == 0
+    assert after["closed_at"] == "2026-03-20"
+
+    # Trade.closed_at has been stamped on the openers (issue #136 invariant).
+    closed_trade_ids = [t["id"] for t in after["trades"] if t["closed_at"]]
+    assert len(closed_trade_ids) >= 2
+
+
+def test_reconcile_default_is_dry_run(client):
+    """Empty body / missing field defaults to ``dry_run=true`` — never mutates."""
+    pos = _seed_full_cycle(client)
+    pid = pos["id"]
+
+    resp = client.post("/api/journal/reconcile", json={})
+    assert resp.status_code == 200
+    assert resp.json()["dry_run"] is True
+
+    after = client.get(f"/api/journal/positions/{pid}").json()
+    # Stored state is unchanged from the seed because dry-run is the default.
+    assert after["shares"] == 100
+    assert after["status"] == "open"
+
+
+def test_reconcile_empty_journal_returns_zero_counts(client):
+    """No positions in DB returns positions_processed=0 with empty diff list."""
+    resp = client.post("/api/journal/reconcile", json={"dry_run": True})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["positions_processed"] == 0
+    assert body["per_position"] == []
+    assert body["trades_stamped"] == 0
+    assert body["errors"] == 0
+
+
+def test_reconcile_500_does_not_leak_exception_text(client, monkeypatch):
+    """If the service raises, the response stays generic — no ``str(e)`` leak."""
+    from app.routers import journal as journal_router
+
+    secret = "reconcile-secret-leak-payload"
+
+    def _raise(_db, apply):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(journal_router, "reconcile_journal_state", _raise)
+
+    resp = client.post("/api/journal/reconcile", json={"dry_run": True})
+    assert resp.status_code == 500
+    assert secret not in resp.text
+    assert resp.json()["detail"] == "An unexpected error occurred"
+
+
 # --- Computed fields via API ---
 
 
