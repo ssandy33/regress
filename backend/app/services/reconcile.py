@@ -196,17 +196,3 @@ def reconcile(db: Session, apply: bool) -> ReconcileResult:
         db.rollback()
 
     return result
-
-
-def count_unstamped_legs(db: Session, position_id: str) -> int:
-    """Return the number of Trades on a position whose ``closed_at`` is NULL.
-
-    Helper retained for tests and any future callers that want to assert
-    pre/post-reconcile leg counts. Not used by :func:`reconcile` itself —
-    that path inspects the in-memory ORM state directly.
-    """
-    return (
-        db.query(Trade)
-        .filter(Trade.position_id == position_id, Trade.closed_at.is_(None))
-        .count()
-    )
