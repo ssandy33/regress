@@ -272,6 +272,11 @@ export async function clearAllJournal() {
   return data;
 }
 
+export async function reconcileJournal(dryRun) {
+  const { data } = await api.post('/api/journal/reconcile', { dry_run: dryRun });
+  return data;
+}
+
 // --- Schwab Import ---
 
 export async function previewSchwabImport(startDate, endDate) {

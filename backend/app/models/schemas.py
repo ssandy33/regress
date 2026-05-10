@@ -459,6 +459,55 @@ class ClearJournalResponse(BaseModel):
     deleted_trades: int
 
 
+# --- Reconcile journal (issue #139) ---
+
+
+class ReconcileRequest(BaseModel):
+    """Request body for ``POST /api/journal/reconcile``.
+
+    ``dry_run`` defaults to ``True`` so an accidental empty body never
+    mutates state — the user must opt in to ``apply=True`` semantics by
+    setting ``dry_run=False``.
+    """
+
+    dry_run: bool = True
+
+
+class ReconcilePositionDiff(BaseModel):
+    """Per-position before/after snapshot for the reconcile result.
+
+    Field shape mirrors :class:`app.services.reconcile.ReconcilePositionDiff`
+    so the route handler can do a trivial dataclass→model conversion.
+    """
+
+    ticker: str
+    status_before: str
+    status_after: str
+    shares_before: int
+    shares_after: int
+    basis_before: float
+    basis_after: float
+    strategy_before: str
+    strategy_after: str
+    closed_at_before: Optional[str] = None
+    closed_at_after: Optional[str] = None
+    legs_consumed: int
+
+
+class ReconcileResponse(BaseModel):
+    """Response body for ``POST /api/journal/reconcile``."""
+
+    dry_run: bool
+    positions_processed: int
+    trades_stamped: int
+    status_changes: int
+    share_corrections: int
+    basis_corrections: int
+    strategy_changes: int
+    errors: int
+    per_position: list[ReconcilePositionDiff] = []
+
+
 # --- Dashboard ---
 
 
