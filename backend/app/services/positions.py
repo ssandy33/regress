@@ -389,6 +389,12 @@ def recompute_position_state(
     the default cutoff; tests inject a frozen-clock callable. Future-dated
     legs (``expiration >= today``) are never auto-closed.
 
+    **Trade.closed_at write policy (issue #138):** the candidate produced by
+    the current replay is the source of truth. A real resolution from this
+    run overwrites a prior synthetic calendar stamp; identical writes are
+    no-oped to keep re-runs free of dirty-session churn; ``None`` candidates
+    never clobber an existing stamp.
+
     Per-trade-type semantics:
 
     ====================  ============  ===================================  ============
@@ -561,8 +567,17 @@ def recompute_position_state(
     # (which filters on Trade.closed_at IS NULL) sees the resolved legs as
     # closed. Build the trade map from the already-loaded ``position.trades``
     # collection — no extra query, and the rows are tracked by the session.
-    # Skip rows that already have ``closed_at`` set so a real resolving date
-    # is never overwritten by a later synthetic-expiration stamp (issue #136).
+    #
+    # Write policy (issue #138): trust the candidate produced by the current
+    # ledger replay over any value already on the row. The replay-then-calendar
+    # pass order guarantees at most one candidate per leg per run, and the real
+    # resolution is preferred over the synthetic expiration when both could
+    # apply (the resolving trade removes the leg from ``open_legs`` before the
+    # calendar pass sees it, so a synthetic candidate never gets generated for
+    # a leg that has a real one in the same run). Across runs, a real
+    # resolution from the current replay therefore overwrites a prior synthetic
+    # calendar stamp. Skip identical-value writes to keep the run a no-op when
+    # nothing changed; never overwrite an existing stamp with ``None``.
     if closes_to_write:
         trade_by_id = {t.id: t for t in position.trades}
         for trade_id, close_value in closes_to_write:
@@ -572,7 +587,11 @@ def recompute_position_state(
                 # currently attached to this Position, so this should not
                 # fire in practice.
                 continue
-            if trade_row.closed_at is not None:
+            if close_value is None:
+                # Defensive: never clobber an existing stamp with None.
+                continue
+            if trade_row.closed_at == close_value:
+                # Idempotent no-op — avoids dirty-session churn on re-runs.
                 continue
             trade_row.closed_at = close_value
 
