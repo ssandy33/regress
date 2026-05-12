@@ -515,6 +515,27 @@ DASHBOARD_OPTION_TYPE = Literal["put", "call"]
 DASHBOARD_MONEYNESS_STATE = Literal["ITM", "ATM", "OTM"]
 DASHBOARD_DECISION_TAG = Literal["roll-or-assign", "manage", "watch", "hold"]
 DASHBOARD_ACTIVITY_KIND = Literal["session_saved", "trade_added"]
+DASHBOARD_PROFIT_TARGET_STATE = Literal[
+    "captured_50", "in_progress", "underwater", "unknown"
+]
+DASHBOARD_ASSIGNMENT_RISK = Literal["high", "watch", "low"]
+# Per spec §14.5: V0.5 never emits "close" (live option-chain integration
+# deferred). Frontend renders "—" when state == "unknown". The Literal
+# enumerates every legal value the field may eventually carry.
+DASHBOARD_SUGGESTED_ACTION = Literal["roll", "close", "hold", "manage"]
+DASHBOARD_WHEEL_STATUS = Literal["CSP", "CC", "Wheel", "Holding"]
+DASHBOARD_ACTION_ID = Literal[
+    "data.schwab_disconnected",
+    "data.cache_very_stale",
+    "data.schwab_token_expiring",
+    "position.large_loser",
+    "expiration.itm_short_dte",
+    "expiration.short_dte",
+    "position.cc_candidate",
+    "journal.no_open_legs",
+]
+DASHBOARD_ACTION_PRIORITY = Literal["P0", "P1", "P2"]
+DASHBOARD_ACTION_CTA_KIND = Literal["link", "inline"]
 
 
 class DashboardSchwabStatus(BaseModel):
@@ -568,6 +589,22 @@ class DashboardOpenLegsBreakdown(BaseModel):
     calls: int
 
 
+class DashboardKpiLargestRisk(BaseModel):
+    """Tile payload for the "Largest risk" KPI (worst unrealized loser)."""
+
+    ticker: str
+    unrealized_pl: float
+    unrealized_pl_pct: Optional[float] = None
+
+
+class DashboardKpiLargestLoser(BaseModel):
+    """Tile payload for the largest realized loser across closed positions."""
+
+    ticker: str
+    realized_pl: float
+    realized_pl_pct: Optional[float] = None
+
+
 class DashboardKpis(BaseModel):
     open_positions: int
     open_positions_breakdown: DashboardOpenPositionsBreakdown
@@ -577,6 +614,14 @@ class DashboardKpis(BaseModel):
     open_legs_breakdown: DashboardOpenLegsBreakdown
     unrealized_pl: Optional[float] = None
     unrealized_pl_pct: Optional[float] = None
+    # New in V0.5.4 — see decision-dashboard-v05.md §2.3 / §14.4
+    largest_risk: Optional[DashboardKpiLargestRisk] = None
+    largest_loser: Optional[DashboardKpiLargestLoser] = None
+    premium_collected_total: float = 0.0
+    premium_collected_ytd: float = 0.0
+    premium_collected_trades: int = 0
+    realized_pl: float = 0.0
+    realized_pl_pct: Optional[float] = None
 
 
 class DashboardPositionRow(BaseModel):
@@ -589,12 +634,28 @@ class DashboardPositionRow(BaseModel):
     notional: Optional[float] = None
     unrealized_pl: Optional[float] = None
     open_legs_count: int
+    # New in V0.5.4 — see decision-dashboard-v05.md §14.6
+    wheel_status: DASHBOARD_WHEEL_STATUS
+    next_suggested_action: str = "hold"
+    pl_pct: Optional[float] = None
 
 
 class DashboardMoneyness(BaseModel):
     state: DASHBOARD_MONEYNESS_STATE
     distance_pct: float
     distance_dollars: float
+
+
+class DashboardProfitTargetStatus(BaseModel):
+    """Per-leg profit-target signal.
+
+    V0.5 always sets ``state == "unknown"`` because live option-chain data
+    is not yet integrated. The field shape ships so frontend renderers and
+    the V0.7 live-chain work have a stable contract.
+    """
+
+    captured_pct: Optional[float] = None
+    state: DASHBOARD_PROFIT_TARGET_STATE
 
 
 class DashboardOpenLeg(BaseModel):
@@ -606,11 +667,52 @@ class DashboardOpenLeg(BaseModel):
     dte: int
     moneyness: Optional[DashboardMoneyness] = None
     position_id: str
+    # New in V0.5.4 — see decision-dashboard-v05.md §14.5
+    profit_target_status: DashboardProfitTargetStatus
+    assignment_risk: DASHBOARD_ASSIGNMENT_RISK
+    suggested_action: DASHBOARD_SUGGESTED_ACTION
+    earnings_in_window: bool = False
 
 
 class DashboardUpcomingExpiration(DashboardOpenLeg):
     decision_tag: DASHBOARD_DECISION_TAG
     decision_reason: str
+
+
+class DashboardNextActionSubject(BaseModel):
+    """Structured subject identifier for a Next Action card.
+
+    Both fields are optional — the engine emits whichever signals are
+    available for the action type. ``amount`` is a preformatted display
+    string (e.g. ``"-$1,420 (-7.2%)"``) so the frontend renders it verbatim.
+    """
+
+    ticker: Optional[str] = None
+    amount: Optional[str] = None
+
+
+class DashboardNextActionCta(BaseModel):
+    """CTA on a Next Action card.
+
+    ``kind == "link"`` navigates to ``href``; ``kind == "inline"`` invokes
+    a known client-side handler keyed by ``action_id`` (e.g. cache-refresh).
+    """
+
+    label: str
+    href: str
+    kind: DASHBOARD_ACTION_CTA_KIND = "link"
+
+
+class DashboardNextAction(BaseModel):
+    """One entry in the dashboard's ranked action engine output."""
+
+    id: str  # stable React key, derived from "{action_id}.{subject_id}"
+    action_id: DASHBOARD_ACTION_ID
+    priority: DASHBOARD_ACTION_PRIORITY
+    title: str
+    subject: DashboardNextActionSubject = DashboardNextActionSubject()
+    reason: str
+    cta: DashboardNextActionCta
 
 
 class DashboardActivity(BaseModel):
@@ -640,3 +742,6 @@ class DashboardResponse(BaseModel):
     upcoming_expirations: list[DashboardUpcomingExpiration]
     recent_activity: list[DashboardActivity]
     data_meta: DashboardDataMeta
+    # New in V0.5.4 — server-side ranked action engine output. See
+    # decision-dashboard-v05.md §2.2 / §14.7.
+    next_actions: list[DashboardNextAction] = []

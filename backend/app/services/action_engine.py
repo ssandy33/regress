@@ -1,0 +1,496 @@
+"""Decision Dashboard action engine — Next Actions ranking.
+
+The engine is a pure function: given the already-composed status, KPI,
+positions, and open-legs slices of a dashboard payload, it returns a
+deterministically ranked list of action cards for the frontend to render.
+
+Determinism matters because the section is e2e-tested and the rendering
+order is part of the user-visible contract. Sort keys (see
+``_sort_key_for``) include the action's stable ``id`` as the final tie
+breaker so the engine is bit-for-bit reproducible across runs.
+
+Design rules (per ``frontend/design-specs/decision-dashboard-v05.md`` §2.2
+and §14.7):
+- Server-side; the frontend renders what it receives.
+- No memoization — recomputed on every dashboard load. Cost is one pass
+  over already-loaded arrays.
+- Cap the output at 8 entries; the frontend hides past 3 behind
+  ``[Show N more]``.
+- Each action's ``id`` is ``"{action_id}.{subject_id}"`` so React keys are
+  stable.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Iterable
+from urllib.parse import quote
+
+# Cap from spec §2.2: anything beyond 8 cards is noise; the user should
+# triage in the destination tool.
+MAX_ACTIONS = 8
+
+# How soon a Schwab refresh-token expiry should trigger a P1 warning
+# action. Aligns with the 7-day token lifetime documented in
+# ``schwab_auth.py``.
+TOKEN_EXPIRING_DAYS = 7
+
+# Large-loser thresholds (spec §2.2 / Q1). Whichever fires first.
+LARGE_LOSER_PCT_THRESHOLD = -0.05  # -5%
+LARGE_LOSER_DOLLAR_THRESHOLD = -1000.0  # -$1,000
+
+# Cap on per-leg ITM short-DTE cards. Spec §2.2: "one card per leg, capped
+# at 3 most-urgent".
+ITM_SHORT_DTE_CAP = 3
+ITM_SHORT_DTE_MAX_DTE = 7
+
+# Sort priority bases per spec §14.7. Lower number = ranked first inside
+# the priority bucket. Two sub-bucket keys live alongside these to break
+# ties within a single severity bucket (see ``_sub_bucket_for``).
+_PRIORITY_RANK: dict[str, int] = {"P0": 0, "P1": 1, "P2": 2}
+
+
+def _slugify_ticker(ticker: str | None) -> str:
+    """Lowercase ticker stub used in stable action IDs."""
+    return (ticker or "unknown").lower()
+
+
+def _format_dollar(amount: float) -> str:
+    """Render a signed dollar amount with comma grouping (e.g. ``-$1,420``)."""
+    sign = "-" if amount < 0 else "+"
+    return f"{sign}${abs(amount):,.0f}"
+
+
+def _format_signed_pct(pct: float) -> str:
+    """Render a signed percentage at one decimal place (e.g. ``-7.2%``)."""
+    return f"{pct * 100:+.1f}%"
+
+
+def _parse_iso_to_utc(value: str | None) -> datetime | None:
+    """Best-effort ISO timestamp parser; returns ``None`` on failure."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _sub_bucket_for(action: dict) -> int:
+    """Within-bucket ordering key. Lower sorts first.
+
+    Rules per spec §14.7:
+    - Within P0: ``data.*`` ranks above ``position.*`` (trust data before
+      losses).
+    - Within P1: data issues rank above expiration issues, which rank
+      above other position issues.
+    - Within P2: covered-call candidates rank above the no-open-legs
+      scanner card (revenue before lowest-urgency).
+    """
+    action_id = action["action_id"]
+    if action_id.startswith("data."):
+        return 0
+    if action_id.startswith("expiration."):
+        return 1
+    if action_id == "position.cc_candidate":
+        # P2 tiebreaker: CC candidates outrank the scanner.
+        return 0
+    if action_id == "journal.no_open_legs":
+        return 9
+    return 5
+
+
+def _tie_breaker_for(action: dict) -> tuple:
+    """Tail-end deterministic ordering tuple.
+
+    - P1 expiration cards sort by DTE ascending (closest deadline first).
+    - P2 covered-call candidates sort by ticker A→Z.
+    - All others fall back to the action ID for a stable lexical order.
+    """
+    action_id = action["action_id"]
+    subject_ticker = (action.get("subject") or {}).get("ticker") or ""
+    if action_id == "expiration.itm_short_dte":
+        return (action.get("_dte", 0), subject_ticker)
+    if action_id == "expiration.short_dte":
+        return (action.get("_dte", 0), subject_ticker)
+    if action_id == "position.cc_candidate":
+        return (0, subject_ticker)
+    return (0, action["id"])
+
+
+def _sort_key_for(action: dict) -> tuple:
+    """Composite deterministic sort key. Lower sorts first.
+
+    Components, in priority order:
+    1. priority bucket (P0 < P1 < P2)
+    2. within-bucket sub-bucket (e.g. data > position inside P0)
+    3. action-type tie breaker (DTE asc / ticker A→Z)
+    4. action id (final lexical fallback so equal-priority duplicates
+       remain stable)
+    """
+    return (
+        _PRIORITY_RANK[action["priority"]],
+        _sub_bucket_for(action),
+        _tie_breaker_for(action),
+        action["id"],
+    )
+
+
+# --- Action builders --------------------------------------------------------
+
+
+def _schwab_disconnected_action(schwab_status: dict) -> dict | None:
+    """Build a ``data.schwab_disconnected`` card when Schwab is unusable."""
+    configured = schwab_status.get("configured")
+    valid = schwab_status.get("valid")
+    if configured is False or valid is False:
+        return {
+            "id": "data.schwab_disconnected.schwab",
+            "action_id": "data.schwab_disconnected",
+            "priority": "P0",
+            "title": "Reconnect Schwab",
+            "subject": {},
+            "reason": (
+                "Schwab is disconnected — live prices and trade import are unavailable."
+            ),
+            "cta": {
+                "label": "Open Schwab settings",
+                "href": "/settings#schwab",
+                "kind": "link",
+            },
+        }
+    return None
+
+
+def _cache_very_stale_action(cache_status: dict) -> dict | None:
+    """Build a ``data.cache_very_stale`` card when very-stale entries exist."""
+    very_stale = int(cache_status.get("very_stale") or 0)
+    if very_stale <= 0:
+        return None
+    return {
+        "id": "data.cache_very_stale.cache",
+        "action_id": "data.cache_very_stale",
+        "priority": "P0",
+        "title": "Refresh stale market data",
+        "subject": {"amount": f"{very_stale} item{'s' if very_stale != 1 else ''}"},
+        "reason": (
+            f"{very_stale} cached item{'s are' if very_stale != 1 else ' is'} "
+            f"over 90 days old. Refresh before trusting downstream metrics."
+        ),
+        "cta": {
+            "label": "Refresh stale data",
+            "href": "#refresh-stale-cache",
+            "kind": "inline",
+        },
+    }
+
+
+def _schwab_token_expiring_action(
+    schwab_status: dict, now: datetime | None = None
+) -> dict | None:
+    """Build a ``data.schwab_token_expiring`` card when expiry is < 7 days."""
+    if schwab_status.get("configured") is not True or schwab_status.get("valid") is False:
+        # Disconnected cases are handled by the P0 card above; don't
+        # double-emit.
+        return None
+    expiry_iso = schwab_status.get("expires_at")
+    expires_at = _parse_iso_to_utc(expiry_iso)
+    if expires_at is None:
+        return None
+    now = now or datetime.now(timezone.utc)
+    delta = expires_at - now
+    if delta.total_seconds() < 0:
+        # Already expired — `data.schwab_disconnected` handles that case
+        # via `valid == False`; this builder is for soon-to-expire only.
+        return None
+    if delta.days > TOKEN_EXPIRING_DAYS:
+        return None
+    days = max(delta.days, 0)
+    when = "today" if days == 0 else f"in {days} day{'s' if days != 1 else ''}"
+    return {
+        "id": "data.schwab_token_expiring.schwab",
+        "action_id": "data.schwab_token_expiring",
+        "priority": "P1",
+        "title": "Renew Schwab token",
+        "subject": {"amount": when},
+        "reason": (
+            f"Schwab refresh token expires {when} — renew before the next session."
+        ),
+        "cta": {
+            "label": "Open Schwab settings",
+            "href": "/settings#schwab",
+            "kind": "link",
+        },
+    }
+
+
+def _largest_loser_action(positions: Iterable[dict]) -> dict | None:
+    """Build a ``position.large_loser`` card for the single worst loser.
+
+    Spec §2.2: surface only the single largest loser per cycle, even when
+    multiple positions breach the threshold. Trigger is whichever-fires-first
+    between ``unrealized_pl_pct <= -5%`` and ``unrealized_pl <= -$1,000``.
+    """
+    candidates: list[tuple[float, dict]] = []
+    for row in positions:
+        unrealized_pl = row.get("unrealized_pl")
+        if unrealized_pl is None or unrealized_pl >= 0:
+            continue
+        pct = row.get("pl_pct")
+        triggered = unrealized_pl <= LARGE_LOSER_DOLLAR_THRESHOLD or (
+            pct is not None and pct <= LARGE_LOSER_PCT_THRESHOLD
+        )
+        if not triggered:
+            continue
+        candidates.append((unrealized_pl, row))
+    if not candidates:
+        return None
+    # Most negative unrealized_pl wins; ticker A→Z is the deterministic tie
+    # breaker so equal-loss positions don't shuffle between runs.
+    candidates.sort(key=lambda pair: (pair[0], pair[1]["ticker"]))
+    _, worst = candidates[0]
+    ticker = worst["ticker"]
+    amount_dollars = _format_dollar(worst["unrealized_pl"])
+    pct = worst.get("pl_pct")
+    amount_pct = _format_signed_pct(pct) if pct is not None else ""
+    amount = (
+        f"{ticker}  {amount_dollars} ({amount_pct})"
+        if amount_pct
+        else f"{ticker}  {amount_dollars}"
+    )
+    return {
+        "id": f"position.large_loser.{worst['id']}",
+        "action_id": "position.large_loser",
+        "priority": "P0",
+        "title": f"Review {ticker}",
+        "subject": {"ticker": ticker, "amount": amount},
+        "reason": "Position is below your review threshold (-5% or -$1,000).",
+        "cta": {
+            "label": f"Review {ticker}",
+            "href": f"/journal?position={quote(str(worst['id']), safe='')}",
+            "kind": "link",
+        },
+    }
+
+
+def _itm_short_dte_actions(open_legs: Iterable[dict]) -> list[dict]:
+    """Build up to ``ITM_SHORT_DTE_CAP`` per-leg ``expiration.itm_short_dte`` cards."""
+    cards: list[dict] = []
+    for leg in open_legs:
+        dte = leg.get("dte")
+        moneyness = leg.get("moneyness") or {}
+        if dte is None or dte > ITM_SHORT_DTE_MAX_DTE:
+            continue
+        if moneyness.get("state") != "ITM":
+            continue
+        ticker = leg["ticker"]
+        strike = leg["strike"]
+        option_letter = "P" if leg.get("type") == "put" else "C"
+        cards.append(
+            {
+                "id": f"expiration.itm_short_dte.{leg['id']}",
+                "action_id": "expiration.itm_short_dte",
+                "priority": "P1",
+                "title": f"Roll {ticker} {strike:g}{option_letter}",
+                "subject": {
+                    "ticker": ticker,
+                    "amount": f"{int(dte)} DTE · ITM",
+                },
+                "reason": (
+                    f"Short {leg.get('type', 'put')} is ITM with {int(dte)} day"
+                    f"{'s' if dte != 1 else ''} to expiration."
+                ),
+                "cta": {
+                    "label": "Manage in Journal",
+                    "href": f"/journal?position={quote(str(leg['position_id']), safe='')}",
+                    "kind": "link",
+                },
+                # Sort metadata consumed by `_tie_breaker_for`.
+                "_dte": int(dte),
+            }
+        )
+    cards.sort(key=lambda c: (c["_dte"], c["subject"]["ticker"], c["id"]))
+    return cards[:ITM_SHORT_DTE_CAP]
+
+
+def _short_dte_aggregate_actions(open_legs: Iterable[dict]) -> list[dict]:
+    """Build aggregated ``expiration.short_dte`` cards — one per ticker.
+
+    Aggregated because a 7-DTE OTM book often contains the same ticker
+    repeatedly, and per-leg cards would crowd out higher-priority signals.
+    """
+    by_ticker: dict[str, dict] = {}
+    for leg in open_legs:
+        dte = leg.get("dte")
+        moneyness = leg.get("moneyness") or {}
+        if dte is None or dte > ITM_SHORT_DTE_MAX_DTE:
+            continue
+        if moneyness.get("state") == "ITM":
+            # ITM legs are handled by the per-leg card.
+            continue
+        ticker = leg["ticker"]
+        entry = by_ticker.get(ticker)
+        if entry is None or dte < entry["min_dte"]:
+            by_ticker[ticker] = {
+                "ticker": ticker,
+                "min_dte": int(dte),
+                "position_id": leg["position_id"],
+                "leg_count": (entry["leg_count"] + 1) if entry else 1,
+            }
+        else:
+            entry["leg_count"] += 1
+    cards: list[dict] = []
+    for ticker, entry in by_ticker.items():
+        count = entry["leg_count"]
+        leg_word = "leg" if count == 1 else "legs"
+        cards.append(
+            {
+                "id": f"expiration.short_dte.{ticker.lower()}",
+                "action_id": "expiration.short_dte",
+                "priority": "P1",
+                "title": f"Review {ticker} legs",
+                "subject": {
+                    "ticker": ticker,
+                    "amount": f"{count} {leg_word} ≤ {ITM_SHORT_DTE_MAX_DTE} DTE",
+                },
+                "reason": (
+                    f"{count} open {leg_word} on {ticker} expire within "
+                    f"{ITM_SHORT_DTE_MAX_DTE} days."
+                ),
+                "cta": {
+                    "label": f"Manage {ticker}",
+                    "href": f"/journal?position={quote(str(entry['position_id']), safe='')}",
+                    "kind": "link",
+                },
+                "_dte": entry["min_dte"],
+            }
+        )
+    cards.sort(key=lambda c: (c["_dte"], c["subject"]["ticker"], c["id"]))
+    return cards
+
+
+def _cc_candidate_actions(
+    positions: Iterable[dict],
+    open_legs: Iterable[dict],
+) -> list[dict]:
+    """Build ``position.cc_candidate`` cards for unsold-call positions.
+
+    Trigger per spec §2.2: ``shares >= 100`` AND no open call leg on that
+    ticker. V0.5 assumes every ticker is options-tradable (spec §10 Q6).
+    """
+    tickers_with_open_calls = {
+        leg["ticker"] for leg in open_legs if leg.get("type") == "call"
+    }
+    cards: list[dict] = []
+    for row in positions:
+        if (row.get("shares") or 0) < 100:
+            continue
+        ticker = row["ticker"]
+        if ticker in tickers_with_open_calls:
+            continue
+        cards.append(
+            {
+                "id": f"position.cc_candidate.{_slugify_ticker(ticker)}",
+                "action_id": "position.cc_candidate",
+                "priority": "P2",
+                "title": f"Consider covered call on {ticker}",
+                "subject": {
+                    "ticker": ticker,
+                    "amount": f"{int(row['shares'])} shares",
+                },
+                "reason": (
+                    f"You hold {int(row['shares'])} {ticker} shares with no open "
+                    "call leg — consider writing a covered call."
+                ),
+                "cta": {
+                    "label": f"Scan {ticker}",
+                    "href": f"/options?ticker={quote(ticker, safe='')}",
+                    "kind": "link",
+                },
+            }
+        )
+    cards.sort(key=lambda c: c["subject"]["ticker"] or "")
+    return cards
+
+
+def _no_open_legs_action(kpis: dict) -> dict | None:
+    """Build the single ``journal.no_open_legs`` card when no legs are open.
+
+    Per locked decision: emit even when there are no positions at all — the
+    scanner card directs the user to start there.
+    """
+    if int(kpis.get("open_legs") or 0) != 0:
+        return None
+    return {
+        "id": "journal.no_open_legs.scanner",
+        "action_id": "journal.no_open_legs",
+        "priority": "P2",
+        "title": "Run scanner — no open legs",
+        "subject": {},
+        "reason": "No open option legs across the journal — run the scanner to find new ideas.",
+        "cta": {
+            "label": "Open Options",
+            "href": "/options",
+            "kind": "link",
+        },
+    }
+
+
+def _strip_internal_keys(action: dict) -> dict:
+    """Drop sort-only metadata (``_dte`` etc.) before emitting to the client."""
+    return {k: v for k, v in action.items() if not k.startswith("_")}
+
+
+def compute_next_actions(
+    *,
+    status: dict,
+    kpis: dict,
+    positions: list[dict],
+    open_legs: list[dict],
+    now: datetime | None = None,
+) -> list[dict]:
+    """Compute the ranked Next Actions list for the dashboard payload.
+
+    Pure function: every input is plain in-memory data already loaded by
+    :func:`app.services.dashboard.build_dashboard_payload`. Output is
+    deterministic for any given input — same input, same order, byte for
+    byte.
+
+    Returns at most :data:`MAX_ACTIONS` entries.
+    """
+    candidates: list[dict] = []
+
+    schwab = status.get("schwab", {}) or {}
+    cache = status.get("cache", {}) or {}
+
+    schwab_card = _schwab_disconnected_action(schwab)
+    if schwab_card is not None:
+        candidates.append(schwab_card)
+
+    cache_card = _cache_very_stale_action(cache)
+    if cache_card is not None:
+        candidates.append(cache_card)
+
+    # Token-expiring is only meaningful when Schwab is otherwise healthy —
+    # the builder short-circuits the disconnected case.
+    token_card = _schwab_token_expiring_action(schwab, now=now)
+    if token_card is not None:
+        candidates.append(token_card)
+
+    loser_card = _largest_loser_action(positions)
+    if loser_card is not None:
+        candidates.append(loser_card)
+
+    candidates.extend(_itm_short_dte_actions(open_legs))
+    candidates.extend(_short_dte_aggregate_actions(open_legs))
+    candidates.extend(_cc_candidate_actions(positions, open_legs))
+
+    no_legs_card = _no_open_legs_action(kpis)
+    if no_legs_card is not None:
+        candidates.append(no_legs_card)
+
+    candidates.sort(key=_sort_key_for)
+    return [_strip_internal_keys(card) for card in candidates[:MAX_ACTIONS]]

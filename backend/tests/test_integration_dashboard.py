@@ -387,3 +387,164 @@ def test_dashboard_500_does_not_leak_exception(client, monkeypatch):
     body = resp.text
     assert secret not in body
     assert "Failed to load dashboard" in body
+
+
+# ---------------------------------------------------------------------------
+# V0.5 contract — issue #146
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_payload_schema_v05_keys(client, monkeypatch):
+    """Snapshot test: assert every V0.5 top-level + nested key is present."""
+    _patch_status(monkeypatch, schwab_configured=False, fred_key="")
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # Top-level keys — `next_actions` is the V0.5 addition.
+    expected_top_level = {
+        "generated_at",
+        "status",
+        "kpis",
+        "positions",
+        "open_legs",
+        "upcoming_expirations",
+        "recent_activity",
+        "data_meta",
+        "next_actions",
+    }
+    assert expected_top_level <= set(data.keys())
+
+    # KPI extensions per spec §14.4.
+    kpi_keys = set(data["kpis"].keys())
+    for new_field in (
+        "largest_risk",
+        "largest_loser",
+        "premium_collected_total",
+        "premium_collected_ytd",
+        "premium_collected_trades",
+        "realized_pl",
+        "realized_pl_pct",
+    ):
+        assert new_field in kpi_keys, f"missing kpis.{new_field}"
+
+    # Engine output is a list (empty on a fresh dashboard with no open legs
+    # the scanner card still fires — but the field shape must exist).
+    assert isinstance(data["next_actions"], list)
+
+
+def test_dashboard_scanner_card_when_no_open_legs(client, monkeypatch):
+    """`journal.no_open_legs` emits even when there are zero positions."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    ids = {a["action_id"] for a in data["next_actions"]}
+    assert "journal.no_open_legs" in ids
+
+
+def test_dashboard_schwab_disconnected_action(client, monkeypatch):
+    """`data.schwab_disconnected` fires when Schwab is not configured."""
+    _patch_status(monkeypatch, schwab_configured=False, fred_key="")
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    ids = {a["action_id"] for a in data["next_actions"]}
+    assert "data.schwab_disconnected" in ids
+
+
+def test_dashboard_itm_short_dte_action(client, monkeypatch):
+    """An ITM ≤ 7 DTE leg triggers the per-leg expiration card."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    # Mock Schwab so the put is ITM (price 174 < strike 175).
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 174.0},
+    )
+
+    today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
+    monkeypatch.setattr(
+        "app.services.dashboard.date",
+        type("D", (), {"today": staticmethod(lambda: today)}),
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",  # 3 DTE
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    ids = {a["action_id"] for a in data["next_actions"]}
+    assert "expiration.itm_short_dte" in ids
+
+
+def test_dashboard_per_leg_signals_present(client, monkeypatch):
+    """Every open leg carries the V0.5 signal fields (issue #146 §14.5)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 174.0},
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2099-12-31",  # far DTE so the card doesn't get truncated
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["open_legs"], "expected at least one open leg"
+    leg = data["open_legs"][0]
+    # V0.5 contract: every leg carries these fields.
+    assert leg["profit_target_status"] == {
+        "captured_pct": None,
+        "state": "unknown",
+    }
+    assert leg["assignment_risk"] in {"high", "watch", "low"}
+    assert leg["suggested_action"] in {"roll", "hold", "manage"}
+    # close is intentionally never emitted in V0.5.
+    assert leg["suggested_action"] != "close"
+    assert leg["earnings_in_window"] is False  # no AV cache hit in tests
+
+
+def test_dashboard_position_rows_have_v05_signals(client, monkeypatch):
+    """Position rows include `wheel_status`, `next_suggested_action`, and `pl_pct`."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 180.0},
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["positions"], "expected at least one position row"
+    row = data["positions"][0]
+    assert row["wheel_status"] in {"CSP", "CC", "Wheel", "Holding"}
+    assert "next_suggested_action" in row
+    # pl_pct is None when no price OR when basis is zero — here we have both.
+    assert "pl_pct" in row
