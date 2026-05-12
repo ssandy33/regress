@@ -20,6 +20,8 @@ from sqlalchemy.orm import Session as DBSession
 from app.config import get_fred_api_key
 from app.models.database import CacheEntry, Position, Session as SessionModel, Trade
 from app.services import journal as journal_service
+from app.services.action_engine import compute_next_actions
+from app.services.alpha_vantage_client import get_cached_next_earnings_date
 from app.services.dashboard_legs import (
     derive_open_legs,
     filter_upcoming,
@@ -160,17 +162,57 @@ def _fetch_quotes_parallel(
     return prices, schwab_failed
 
 
+# Maps the derived ``position.strategy`` lifecycle label to the V0.5 wheel
+# status pill (spec §14.6). Unknown values collapse to "Holding" so a
+# pre-recompute import doesn't crash the dashboard.
+_STRATEGY_TO_WHEEL_STATUS: dict[str, str] = {
+    "csp": "CSP",
+    "cc": "CC",
+    "wheel": "Wheel",
+    "holding": "Holding",
+}
+
+
+def _derive_wheel_status(strategy: str, has_open_call: bool, has_open_put: bool) -> str:
+    """Translate a position's derived strategy + open-leg presence into a
+    user-facing wheel status pill (``CSP`` / ``CC`` / ``Wheel`` / ``Holding``).
+
+    The strategy label is already recomputed authoritatively by
+    :func:`app.services.positions.recompute_position_state`. We layer the
+    open-call/open-put presence on top only to keep the pill in sync when
+    the strategy column is out of date (pre-recompute imports). When both
+    a put and a call are open on the same ticker, that's a wheel.
+    """
+    if has_open_call and has_open_put:
+        return "Wheel"
+    base = _STRATEGY_TO_WHEEL_STATUS.get(strategy)
+    if base is not None:
+        return base
+    return "Holding"
+
+
 def _build_position_rows(
     open_positions: list[dict],
     quotes_by_ticker: dict[str, float | None],
     open_legs: list[dict],
 ) -> list[dict]:
-    """Convert journal positions into dashboard row shape, sorted by notional."""
-    leg_count_by_position = {}
+    """Convert journal positions into dashboard row shape, sorted by notional.
+
+    Each row also carries the V0.5 signal fields ``wheel_status`` and
+    ``pl_pct``. The ``next_suggested_action`` field is populated later by
+    :func:`_attach_next_suggested_actions` after the action engine runs.
+    """
+    leg_count_by_position: dict[str, int] = {}
+    has_open_put_by_ticker: dict[str, bool] = {}
+    has_open_call_by_ticker: dict[str, bool] = {}
     for leg in open_legs:
         leg_count_by_position[leg["position_id"]] = (
             leg_count_by_position.get(leg["position_id"], 0) + 1
         )
+        if leg.get("type") == "call":
+            has_open_call_by_ticker[leg["ticker"]] = True
+        elif leg.get("type") == "put":
+            has_open_put_by_ticker[leg["ticker"]] = True
 
     rows: list[dict] = []
     for position in open_positions:
@@ -180,10 +222,18 @@ def _build_position_rows(
         current_price = quotes_by_ticker.get(ticker)
         notional: float | None = None
         unrealized_pl: float | None = None
+        pl_pct: float | None = None
         if shares > 0 and current_price is not None:
             notional = current_price * shares
             cost_per_share = adjusted_cost_basis / shares if shares else 0.0
             unrealized_pl = (current_price - cost_per_share) * shares
+            if adjusted_cost_basis > 0:
+                pl_pct = (current_price * shares - adjusted_cost_basis) / adjusted_cost_basis
+        wheel_status = _derive_wheel_status(
+            position["strategy"],
+            has_open_call=has_open_call_by_ticker.get(ticker, False),
+            has_open_put=has_open_put_by_ticker.get(ticker, False),
+        )
         rows.append(
             {
                 "id": position["id"],
@@ -195,6 +245,9 @@ def _build_position_rows(
                 "notional": notional,
                 "unrealized_pl": unrealized_pl,
                 "open_legs_count": leg_count_by_position.get(position["id"], 0),
+                "wheel_status": wheel_status,
+                "next_suggested_action": "hold",  # overwritten after the engine runs
+                "pl_pct": pl_pct,
             }
         )
     # Sort by notional desc (None last), then ticker asc.
@@ -202,12 +255,192 @@ def _build_position_rows(
     return rows
 
 
+# Maps each action_id to a short display label used in the per-position
+# "next action" column. The action engine title is intentionally
+# action-oriented (e.g. "Roll AAPL 175P"); this label is the *summary*
+# rendered in the table cell.
+_NEXT_ACTION_TABLE_LABEL: dict[str, str] = {
+    "data.schwab_disconnected": "Reconnect",
+    "data.cache_very_stale": "Refresh data",
+    "data.schwab_token_expiring": "Renew token",
+    "position.large_loser": "Review",
+    "expiration.itm_short_dte": "Roll",
+    "expiration.short_dte": "Manage",
+    "position.cc_candidate": "Cover",
+    "journal.no_open_legs": "Run scanner",
+}
+
+
+def _attach_next_suggested_actions(
+    rows: list[dict],
+    next_actions: list[dict],
+    open_legs: list[dict],
+) -> None:
+    """Stamp each position row with the highest-priority targeted action label.
+
+    Position-targeted actions point straight to a position by id (e.g.
+    ``position.large_loser`` carries the position id in its action id).
+    Leg-targeted actions resolve via ``open_legs`` → ``position_id``. The
+    first matching action wins because :func:`compute_next_actions`
+    already sorted by priority. Positions without a match keep the default
+    ``"hold"``.
+    """
+    position_id_by_leg = {leg["id"]: leg["position_id"] for leg in open_legs}
+    label_by_position: dict[str, str] = {}
+    for action in next_actions:
+        action_id = action["action_id"]
+        label = _NEXT_ACTION_TABLE_LABEL.get(action_id)
+        if label is None:
+            continue
+        prefix = f"{action_id}."
+        subject_id = (
+            action["id"][len(prefix):] if action["id"].startswith(prefix) else ""
+        )
+        if action_id == "position.large_loser":
+            # Subject id is the position uuid.
+            if subject_id and subject_id not in label_by_position:
+                label_by_position[subject_id] = label
+        elif action_id == "expiration.itm_short_dte":
+            # Subject id is the leg/trade uuid — resolve via the legs map.
+            position_id = position_id_by_leg.get(subject_id)
+            if position_id and position_id not in label_by_position:
+                label_by_position[position_id] = label
+        elif action_id in {"position.cc_candidate", "expiration.short_dte"}:
+            # Subject is a ticker slug — resolve through the row scan so the
+            # label lands on every open position for that ticker.
+            ticker = (action.get("subject") or {}).get("ticker")
+            if not ticker:
+                continue
+            for row in rows:
+                if row["ticker"] == ticker and row["id"] not in label_by_position:
+                    label_by_position[row["id"]] = label
+
+    for row in rows:
+        row["next_suggested_action"] = label_by_position.get(row["id"], "hold")
+
+
+def _compute_largest_risk(position_rows: list[dict]) -> dict | None:
+    """Return the worst loser among open positions, or ``None``.
+
+    Picks the most-negative ``unrealized_pl``; positions without a price
+    or with non-negative P/L are skipped. Ties are broken by ticker A→Z
+    so the engine output is deterministic.
+    """
+    losers: list[tuple[float, str, dict]] = []
+    for row in position_rows:
+        pl = row.get("unrealized_pl")
+        if pl is None or pl >= 0:
+            continue
+        losers.append((pl, row["ticker"], row))
+    if not losers:
+        return None
+    losers.sort(key=lambda triple: (triple[0], triple[1]))
+    _, _, worst = losers[0]
+    return {
+        "ticker": worst["ticker"],
+        "unrealized_pl": worst["unrealized_pl"],
+        "unrealized_pl_pct": worst.get("pl_pct"),
+    }
+
+
+def _sum_premium_for_positions(positions: list[dict]) -> tuple[float, int]:
+    """Sum ``total_premiums`` and trade counts across positions.
+
+    Trade counts include every trade attached to the supplied positions,
+    not just leg-opening trades — the KPI tile is "trades that contributed
+    to the premium total".
+    """
+    total = 0.0
+    count = 0
+    for position in positions:
+        total += float(position.get("total_premiums") or 0.0)
+        count += len(position.get("trades") or [])
+    return total, count
+
+
+def _sum_premium_ytd(positions: list[dict], today: date) -> float:
+    """Sum credit/debit premium across trades closed in the current year.
+
+    Uses ``closed_at`` when present, falling back to ``opened_at``; per
+    the locked spec the YTD field is not rendered as a tile in V0.5 but
+    is emitted for downstream analytics. Trades without parseable timestamps
+    are skipped silently.
+    """
+    year = today.year
+    total = 0.0
+    for position in positions:
+        for trade in position.get("trades") or []:
+            anchor = trade.get("closed_at") or trade.get("opened_at")
+            parsed = parse_iso_to_utc(anchor)
+            if parsed is None:
+                continue
+            if parsed.year != year:
+                continue
+            premium = float(trade.get("premium") or 0.0)
+            qty = int(trade.get("quantity") or 0)
+            total += premium * qty * 100
+    return total
+
+
+def _compute_realized_pl(closed_positions: list[dict]) -> tuple[float, float | None]:
+    """Compute lifetime realized P/L and percent across closed positions.
+
+    Per the locked architectural decision in issue #146, V0.5 uses the
+    "simple" formula: ``realized_pl = sum(total_premiums)`` across closed
+    positions. Assignment / called-away cash flows are not yet tracked
+    explicitly — a follow-up issue will model close-out proceeds.
+
+    Percent is ``realized_pl / sum(broker_cost_basis)``; returns ``None``
+    when the denominator is zero or negative (no comparable basis).
+    """
+    if not closed_positions:
+        return 0.0, None
+    realized_pl = sum(
+        float(p.get("total_premiums") or 0.0) for p in closed_positions
+    )
+    cost_basis_total = sum(
+        float(p.get("broker_cost_basis") or 0.0) for p in closed_positions
+    )
+    if cost_basis_total <= 0:
+        return realized_pl, None
+    return realized_pl, realized_pl / cost_basis_total
+
+
+def _compute_largest_loser(closed_positions: list[dict]) -> dict | None:
+    """Return the worst realized loser among closed positions, or ``None``."""
+    if not closed_positions:
+        return None
+    losers: list[tuple[float, str, dict]] = []
+    for position in closed_positions:
+        realized = float(position.get("total_premiums") or 0.0)
+        if realized >= 0:
+            continue
+        losers.append((realized, position["ticker"], position))
+    if not losers:
+        return None
+    losers.sort(key=lambda triple: (triple[0], triple[1]))
+    realized, ticker, worst = losers[0]
+    basis = float(worst.get("broker_cost_basis") or 0.0)
+    pct = realized / basis if basis > 0 else None
+    return {
+        "ticker": ticker,
+        "realized_pl": realized,
+        "realized_pl_pct": pct,
+    }
+
+
 def _build_kpis(
     position_rows: list[dict],
     open_legs: list[dict],
     open_positions: list[dict],
+    closed_positions: list[dict],
+    today: date,
 ) -> dict:
-    """Aggregate KPI tiles from already-built row data."""
+    """Aggregate KPI tiles from already-built row data.
+
+    ``closed_positions`` powers the realized-P/L and largest-loser tiles.
+    ``today`` is threaded through so YTD scopes are deterministic in tests.
+    """
     open_positions_count = len(position_rows)
     # ``stock`` is a vestigial bucket retained for response-shape stability
     # (see DashboardOpenPositionsBreakdown docstring); ``holding`` is the
@@ -234,6 +467,12 @@ def _build_kpis(
     if unrealized_pl is not None and cost_basis_total > 0:
         unrealized_pl_pct = unrealized_pl / cost_basis_total
 
+    all_positions = list(open_positions) + list(closed_positions)
+    premium_total, premium_trades = _sum_premium_for_positions(all_positions)
+    premium_ytd = _sum_premium_ytd(all_positions, today=today)
+
+    realized_pl, realized_pl_pct = _compute_realized_pl(closed_positions)
+
     return {
         "open_positions": open_positions_count,
         "open_positions_breakdown": breakdown,
@@ -243,6 +482,13 @@ def _build_kpis(
         "open_legs_breakdown": {"puts": puts, "calls": calls},
         "unrealized_pl": unrealized_pl,
         "unrealized_pl_pct": unrealized_pl_pct,
+        "largest_risk": _compute_largest_risk(position_rows),
+        "largest_loser": _compute_largest_loser(closed_positions),
+        "premium_collected_total": premium_total,
+        "premium_collected_ytd": premium_ytd,
+        "premium_collected_trades": premium_trades,
+        "realized_pl": realized_pl,
+        "realized_pl_pct": realized_pl_pct,
     }
 
 
@@ -328,8 +574,10 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
     fred_status = _build_fred_status()
     cache_status = _bucket_cache_freshness(db)
 
-    # Positions
+    # Positions — fetch both open and closed in one go so realized-P/L
+    # KPIs and the action engine see the same snapshot.
     open_positions = journal_service.get_positions(db, status="open")
+    closed_positions = journal_service.get_positions(db, status="closed")
     journal_status = {"positions_count": len(open_positions)}
 
     # Quotes (parallelized; deduped by ticker)
@@ -338,13 +586,39 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         tickers, schwab_configured=schwab_configured
     )
 
-    # Legs derive purely from in-memory data + the quote map.
-    open_legs = derive_open_legs(open_positions, quotes_by_ticker, today=today)
+    # Legs derive purely from in-memory data + the quote map. Earnings
+    # lookup is cache-hit-only — the request path must not block on AV.
+    open_legs = derive_open_legs(
+        open_positions,
+        quotes_by_ticker,
+        today=today,
+        earnings_lookup=get_cached_next_earnings_date,
+    )
     upcoming = filter_upcoming(open_legs, horizon_days=14)
 
     # Position rows + KPIs piggyback on the same data — no extra DB hits.
     position_rows = _build_position_rows(open_positions, quotes_by_ticker, open_legs)
-    kpis = _build_kpis(position_rows, open_legs, open_positions)
+    kpis = _build_kpis(
+        position_rows,
+        open_legs,
+        open_positions,
+        closed_positions=closed_positions,
+        today=today,
+    )
+
+    # Action engine — pure, deterministic, recomputed every call (spec §2.2).
+    next_actions = compute_next_actions(
+        status={
+            "schwab": schwab_status,
+            "fred": fred_status,
+            "cache": cache_status,
+            "journal": journal_status,
+        },
+        kpis=kpis,
+        positions=position_rows,
+        open_legs=open_legs,
+    )
+    _attach_next_suggested_actions(position_rows, next_actions, open_legs)
 
     # Activity feed
     recent_activity = _build_recent_activity(db)
@@ -376,4 +650,5 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
             "fetched_at": now,
             "sources_unavailable": sources_unavailable,
         },
+        "next_actions": next_actions,
     }

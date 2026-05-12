@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
 import pytest
 
 from app.services.alpha_vantage_client import (
+    get_cached_next_earnings_date,
     get_next_earnings_date,
     clear_cache,
 )
@@ -214,3 +215,53 @@ class TestNoYfinanceImportsAnywhere:
             if isinstance(node, ast.ImportFrom):
                 if node.module and "yfinance" in node.module:
                     raise AssertionError("health.py still imports from yfinance")
+
+
+class TestGetCachedNextEarningsDate:
+    """Cache-hit-only helper (issue #146).
+
+    Must never trigger a network call. The dashboard composition path relies
+    on this guarantee to avoid blocking the request on Alpha Vantage.
+    """
+
+    def test_returns_none_when_cache_miss(self):
+        # No in-memory entry; _read_db_cache is stubbed to None via the
+        # module-level autouse fixture. The helper MUST NOT call requests.get.
+        with patch("app.services.alpha_vantage_client.requests.get") as mock_get:
+            result = get_cached_next_earnings_date("AAPL")
+        assert result is None
+        mock_get.assert_not_called()
+
+    def test_returns_value_from_hot_cache(self):
+        # Pre-populate the hot cache.
+        from app.services import alpha_vantage_client as av
+
+        av._cache["AAPL"] = ("2026-06-15", datetime.now(timezone.utc))
+        with patch("app.services.alpha_vantage_client.requests.get") as mock_get:
+            result = get_cached_next_earnings_date("AAPL")
+        assert result == "2026-06-15"
+        mock_get.assert_not_called()
+
+    def test_returns_none_when_hot_cache_expired(self):
+        from app.services import alpha_vantage_client as av
+
+        # Stamp the entry as more than 24h old so the TTL check fails.
+        old = datetime.now(timezone.utc) - timedelta(days=2)
+        av._cache["AAPL"] = ("2026-06-15", old)
+        with patch("app.services.alpha_vantage_client.requests.get") as mock_get:
+            result = get_cached_next_earnings_date("AAPL")
+        assert result is None
+        mock_get.assert_not_called()
+
+    def test_falls_back_to_db_cache(self):
+        from app.services import alpha_vantage_client as av
+
+        fresh = datetime.now(timezone.utc)
+        with patch(
+            "app.services.alpha_vantage_client._read_db_cache",
+            return_value=("2026-07-01", fresh),
+        ):
+            with patch("app.services.alpha_vantage_client.requests.get") as mock_get:
+                result = get_cached_next_earnings_date("AAPL")
+        assert result == "2026-07-01"
+        mock_get.assert_not_called()
