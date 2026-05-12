@@ -85,7 +85,11 @@ function CardBody({ action, visuals }) {
 export default function NextActionCard({ action, onInlineCta }) {
   const visuals = PRIORITY_VISUALS[action.priority] || PRIORITY_VISUALS.P2;
   const baseClasses = `block text-left p-4 border rounded-xl transition-colors hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${visuals.bgClass} ${visuals.borderClass}`;
-  const testId = `next-actions-card-${action.action_id}`;
+  // Use the unique ``action.id`` (e.g. ``position.cc_candidate.aapl``) so a
+   // family that emits multiple cards (e.g. 3 ITM legs) does not collide on
+   // ``data-testid``. The family slug is exposed separately on
+   // ``data-action-id`` for filtering.
+  const testId = `next-actions-card-${action.id}`;
 
   if (action.cta?.kind === 'inline') {
     return (

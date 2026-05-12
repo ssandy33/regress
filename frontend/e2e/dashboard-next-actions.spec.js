@@ -131,16 +131,16 @@ test.describe('NextActionsSection', () => {
     await page.goto('/dashboard');
     await page.waitForLoadState('networkidle');
 
-    const p0 = page.getByTestId('next-actions-card-position.large_loser');
+    const p0 = page.getByTestId('next-actions-card-position.large_loser.tsla');
     await expect(p0).toBeVisible();
     await expect(p0).toContainText('[P0]');
     await expect(p0).toContainText('⛔');
 
-    const p1 = page.getByTestId('next-actions-card-expiration.itm_short_dte');
+    const p1 = page.getByTestId('next-actions-card-expiration.itm_short_dte.aapl-175p-0508');
     await expect(p1).toContainText('[P1]');
     await expect(p1).toContainText('⚠');
 
-    const p2 = page.getByTestId('next-actions-card-journal.no_open_legs');
+    const p2 = page.getByTestId('next-actions-card-journal.no_open_legs.scanner');
     await expect(p2).toContainText('[P2]');
   });
 
@@ -215,7 +215,7 @@ test.describe('NextActionsSection', () => {
     await page.goto('/dashboard');
     await page.waitForLoadState('networkidle');
 
-    await page.getByTestId('next-actions-card-position.large_loser').click();
+    await page.getByTestId('next-actions-card-position.large_loser.tsla').click();
     await page.waitForURL(/\/journal/);
     expect(page.url()).toContain('/journal');
     expect(page.url()).toContain('position=pos-tsla');
@@ -244,7 +244,7 @@ test.describe('NextActionsSection', () => {
     await page.goto('/dashboard');
     await page.waitForLoadState('networkidle');
 
-    const card = page.getByTestId('next-actions-card-data.cache_very_stale');
+    const card = page.getByTestId('next-actions-card-data.cache_very_stale.cache');
     // The inline CTA renders as a <button>, not a <Link>
     await expect(card).toHaveJSProperty('tagName', 'BUTTON');
 
@@ -265,6 +265,111 @@ test.describe('NextActionsSection', () => {
 
     const section = page.getByTestId('next-actions-section');
     await expect(section).toHaveAttribute('aria-label', 'Next actions');
+  });
+
+  test('data-testid is unique when a family emits multiple cards', async ({ page }) => {
+    // Three ``position.cc_candidate`` cards (same ``action_id``) but each
+    // with a unique ``id`` — the rendered ``data-testid`` must be unique
+    // so Playwright locators don't collide on duplicate-family payloads.
+    const actions = [
+      action({
+        id: 'position.cc_candidate.aapl',
+        action_id: 'position.cc_candidate',
+        priority: 'P2',
+        title: 'Consider covered call on AAPL',
+        subject: { ticker: 'AAPL' },
+        cta: { label: 'Open Options', href: '/options?ticker=AAPL', kind: 'link' },
+      }),
+      action({
+        id: 'position.cc_candidate.msft',
+        action_id: 'position.cc_candidate',
+        priority: 'P2',
+        title: 'Consider covered call on MSFT',
+        subject: { ticker: 'MSFT' },
+        cta: { label: 'Open Options', href: '/options?ticker=MSFT', kind: 'link' },
+      }),
+      action({
+        id: 'position.cc_candidate.nvda',
+        action_id: 'position.cc_candidate',
+        priority: 'P2',
+        title: 'Consider covered call on NVDA',
+        subject: { ticker: 'NVDA' },
+        cta: { label: 'Open Options', href: '/options?ticker=NVDA', kind: 'link' },
+      }),
+    ];
+    await mockDashboard(page, { ...BASE_PAYLOAD, next_actions: actions });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    // Each card has a unique testid built from ``action.id``.
+    await expect(page.getByTestId('next-actions-card-position.cc_candidate.aapl')).toBeVisible();
+    await expect(page.getByTestId('next-actions-card-position.cc_candidate.msft')).toBeVisible();
+    await expect(page.getByTestId('next-actions-card-position.cc_candidate.nvda')).toBeVisible();
+
+    // The family slug is still queryable via ``data-action-id``.
+    const familyCount = await page
+      .locator('[data-action-id="position.cc_candidate"]')
+      .count();
+    expect(familyCount).toBe(3);
+
+    // No duplicate ``data-testid`` values among rendered next-action cards.
+    const duplicates = await page.evaluate(() => {
+      const nodes = Array.from(
+        document.querySelectorAll('[data-testid^="next-actions-card-"]')
+      );
+      const ids = nodes.map((n) => n.getAttribute('data-testid'));
+      const seen = new Set();
+      const dupes = [];
+      for (const id of ids) {
+        if (seen.has(id)) dupes.push(id);
+        seen.add(id);
+      }
+      return dupes;
+    });
+    expect(duplicates).toEqual([]);
+  });
+
+  test('inline CTA shows error toast and keeps card when refresh fails', async ({ page }) => {
+    // refreshStaleCache rejects -> NextActionsSection catches and surfaces a
+    // ``toast.error('Failed to refresh stale cache')``; the card must remain
+    // visible (no navigation, no removal from the DOM).
+    await page.route('**/api/settings/cache/refresh-stale', (route) => {
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'boom' }),
+      });
+    });
+    const actions = [
+      action({
+        id: 'data.cache_very_stale.global',
+        action_id: 'data.cache_very_stale',
+        priority: 'P0',
+        title: 'Refresh stale market data',
+        subject: { amount: '3 items' },
+        reason: '3 cached items over 90 days old.',
+        cta: { label: 'Refresh stale data', href: '#refresh-stale-cache', kind: 'inline' },
+      }),
+    ];
+    await mockDashboard(page, { ...BASE_PAYLOAD, next_actions: actions });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const card = page.getByTestId('next-actions-card-data.cache_very_stale.global');
+    await expect(card).toBeVisible();
+
+    const [response] = await Promise.all([
+      page.waitForResponse('**/api/settings/cache/refresh-stale'),
+      card.click(),
+    ]);
+    expect(response.status()).toBe(500);
+
+    // react-hot-toast renders the error copy somewhere on the page.
+    await expect(page.getByText('Failed to refresh stale cache')).toBeVisible();
+
+    // Card is still mounted; no navigation occurred.
+    await expect(card).toBeVisible();
+    expect(page.url()).toContain('/dashboard');
   });
 
   test('renders in priority order received from backend', async ({ page }) => {
