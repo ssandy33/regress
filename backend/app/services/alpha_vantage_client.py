@@ -167,6 +167,39 @@ def get_next_earnings_date(symbol: str) -> Optional[str]:
         return None
 
 
+def get_cached_next_earnings_date(symbol: str) -> Optional[str]:
+    """Return a cached earnings date for ``symbol`` without making a network call.
+
+    Looks at the in-memory hot cache first, then the SQLite durable cache.
+    Returns ``None`` when no fresh cache entry exists. By contract this
+    function NEVER triggers a network round-trip — callers (e.g. the
+    dashboard composition path) rely on cache-hit-only semantics so the
+    request path is not blocked on Alpha Vantage rate limits.
+
+    See ``frontend/design-specs/decision-dashboard-v05.md`` §14.5: the
+    dashboard surfaces ``earnings_in_window`` only when a fresh cache hit
+    is available; otherwise the field defaults to ``false`` and the
+    earnings glyph is suppressed.
+    """
+    now = datetime.now(timezone.utc)
+
+    if symbol in _cache:
+        cached_date, fetched_at = _cache[symbol]
+        if now - fetched_at < _CACHE_TTL:
+            return cached_date
+
+    db_entry = _read_db_cache(symbol)
+    if db_entry:
+        cached_date, fetched_at = db_entry
+        if now - fetched_at < _CACHE_TTL:
+            # Backfill the hot cache so subsequent lookups in the same
+            # process skip the DB hit.
+            _cache[symbol] = (cached_date, fetched_at)
+            return cached_date
+
+    return None
+
+
 def clear_cache() -> None:
     """Clear the in-memory earnings cache (for testing)."""
     _cache.clear()

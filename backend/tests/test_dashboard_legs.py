@@ -5,9 +5,13 @@ from datetime import date, timedelta
 import pytest
 
 from app.services.dashboard_legs import (
+    build_profit_target_status,
+    compute_assignment_risk,
     compute_decision_tag,
     compute_dte,
+    compute_earnings_in_window,
     compute_moneyness,
+    compute_suggested_action,
     derive_open_legs,
     filter_upcoming,
     format_decision_reason,
@@ -289,3 +293,177 @@ class TestFilterUpcoming:
         ]
         upcoming = filter_upcoming(legs)
         assert [leg["id"] for leg in upcoming] == ["itm", "otm"]
+
+
+# ---------------------------------------------------------------------------
+# V0.5 per-leg signal helpers (issue #146)
+# ---------------------------------------------------------------------------
+
+
+class TestComputeAssignmentRisk:
+    def test_high_at_seven_dte_itm(self):
+        assert compute_assignment_risk(7, "ITM") == "high"
+        assert compute_assignment_risk(0, "ITM") == "high"
+
+    def test_watch_at_fourteen_dte_itm(self):
+        # At the boundary the spec rule "dte <= 14 AND ITM" still applies.
+        assert compute_assignment_risk(14, "ITM") == "watch"
+        assert compute_assignment_risk(8, "ITM") == "watch"
+
+    def test_low_at_fifteen_dte_itm(self):
+        # Outside both windows even when ITM.
+        assert compute_assignment_risk(15, "ITM") == "low"
+        assert compute_assignment_risk(30, "ITM") == "low"
+
+    def test_low_when_not_itm(self):
+        assert compute_assignment_risk(3, "OTM") == "low"
+        assert compute_assignment_risk(3, "ATM") == "low"
+
+    def test_low_when_moneyness_unknown(self):
+        assert compute_assignment_risk(3, None) == "low"
+
+
+class TestComputeSuggestedAction:
+    def test_roll_for_roll_or_assign(self):
+        assert compute_suggested_action("roll-or-assign") == "roll"
+
+    def test_manage_for_manage(self):
+        assert compute_suggested_action("manage") == "manage"
+
+    def test_hold_for_watch(self):
+        # Watch maps to hold because the V0.5 vocabulary is intentionally
+        # smaller; the frontend already shows a Watch pill via decision_tag.
+        assert compute_suggested_action("watch") == "hold"
+
+    def test_hold_for_hold(self):
+        assert compute_suggested_action("hold") == "hold"
+
+    def test_never_emits_close_in_v05(self):
+        # Locked architectural decision: V0.5 never emits "close" because
+        # the 50%-target signal requires live option-chain data.
+        values = {
+            compute_suggested_action(tag)
+            for tag in ("roll-or-assign", "manage", "watch", "hold")
+        }
+        assert "close" not in values
+
+
+class TestProfitTargetStatusBuilder:
+    def test_state_is_universally_unknown_in_v05(self):
+        result = build_profit_target_status()
+        assert result == {"captured_pct": None, "state": "unknown"}
+
+
+class TestComputeEarningsInWindow:
+    def test_false_when_lookup_returns_none(self):
+        assert (
+            compute_earnings_in_window("AAPL", dte=5, earnings_lookup=lambda _t: None)
+            is False
+        )
+
+    def test_false_when_dte_zero(self):
+        # Zero DTE means the leg expires today — no future window.
+        assert (
+            compute_earnings_in_window(
+                "AAPL", dte=0, earnings_lookup=lambda _t: "2099-01-01"
+            )
+            is False
+        )
+
+    def test_true_when_within_window(self):
+        future = (date.today() + timedelta(days=3)).isoformat()
+        assert (
+            compute_earnings_in_window(
+                "AAPL", dte=7, earnings_lookup=lambda _t: future
+            )
+            is True
+        )
+
+    def test_false_when_after_window(self):
+        future = (date.today() + timedelta(days=30)).isoformat()
+        assert (
+            compute_earnings_in_window(
+                "AAPL", dte=5, earnings_lookup=lambda _t: future
+            )
+            is False
+        )
+
+    def test_false_when_lookup_returns_garbage(self):
+        assert (
+            compute_earnings_in_window(
+                "AAPL", dte=5, earnings_lookup=lambda _t: "not-a-date"
+            )
+            is False
+        )
+
+
+class TestDeriveOpenLegsV05Signals:
+    """Signal fields added in V0.5 must always be present on each leg."""
+
+    def _position(self, ticker: str, position_id: str, trades: list[dict]) -> dict:
+        return {"id": position_id, "ticker": ticker, "trades": trades}
+
+    def test_includes_v05_signal_fields(self):
+        positions = [
+            self._position(
+                "AAPL",
+                "p-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_put",
+                        "strike": 175.0,
+                        "expiration": "2026-05-08",
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 174.50},
+            today=date(2026, 5, 5),
+        )
+        leg = legs[0]
+        assert leg["profit_target_status"] == {
+            "captured_pct": None,
+            "state": "unknown",
+        }
+        # 3 DTE + ITM → high risk
+        assert leg["assignment_risk"] == "high"
+        # 3 DTE + ITM → decision tag roll-or-assign → suggested_action "roll"
+        assert leg["suggested_action"] == "roll"
+        # Earnings lookup defaults to cache-miss → False.
+        assert leg["earnings_in_window"] is False
+
+    def test_earnings_lookup_must_not_be_called_with_network(self):
+        # Custom lookup proves derive_open_legs uses cache-only semantics
+        # via the injected callable. No real network is allowed.
+        calls: list[str] = []
+
+        def lookup(ticker: str) -> str | None:
+            calls.append(ticker)
+            return None
+
+        positions = [
+            self._position(
+                "AAPL",
+                "p-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_put",
+                        "strike": 175.0,
+                        "expiration": "2026-05-08",
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 174.50},
+            today=date(2026, 5, 5),
+            earnings_lookup=lookup,
+        )
+        assert calls == ["AAPL"]

@@ -23,6 +23,20 @@ TRADE_TYPE_TO_OPTION_TYPE: dict[str, Literal["put", "call"]] = {
 
 MoneynessState = Literal["ITM", "ATM", "OTM"]
 DecisionTag = Literal["roll-or-assign", "manage", "watch", "hold"]
+AssignmentRisk = Literal["high", "watch", "low"]
+SuggestedAction = Literal["roll", "close", "hold", "manage"]
+ProfitTargetState = Literal["captured_50", "in_progress", "underwater", "unknown"]
+
+# Maps the four existing decision-tag buckets to the V0.5 suggested-action
+# vocabulary. Spec §14.5 locks this mapping; "close" is intentionally absent
+# because the 50% target signal requires live option-chain data (deferred to
+# V0.7).
+_DECISION_TAG_TO_SUGGESTED_ACTION: dict[DecisionTag, SuggestedAction] = {
+    "roll-or-assign": "roll",
+    "manage": "manage",
+    "watch": "hold",
+    "hold": "hold",
+}
 
 
 def compute_dte(expiration_iso: str, today: date | None = None) -> int:
@@ -134,21 +148,108 @@ def format_decision_reason(
     return f"OTM {moneyness['distance_pct'] * 100:.1f}%"
 
 
+def compute_assignment_risk(
+    dte: int,
+    moneyness_state: str | None,
+) -> AssignmentRisk:
+    """Classify the short option's assignment risk into three buckets.
+
+    Per spec §14.5:
+    - ``dte <= 7 AND ITM``  → ``"high"`` (acute risk; review today)
+    - ``dte <= 14 AND ITM`` → ``"watch"`` (watch the next 1–2 sessions)
+    - otherwise             → ``"low"``
+
+    Non-ITM legs and legs with unknown moneyness (no live price) collapse to
+    ``"low"`` so the dashboard never flags a risk it cannot justify.
+    """
+    if moneyness_state != "ITM":
+        return "low"
+    if dte <= 7:
+        return "high"
+    if dte <= 14:
+        return "watch"
+    return "low"
+
+
+def compute_suggested_action(decision_tag: DecisionTag) -> SuggestedAction:
+    """Map an existing decision tag to a V0.5 suggested-action label.
+
+    Per spec §14.5 the V0.5 vocabulary is ``"roll" | "hold" | "manage"``.
+    The ``"close"`` value (50%-profit-target hit) is intentionally never
+    emitted because the underlying signal requires live option-chain data.
+    """
+    return _DECISION_TAG_TO_SUGGESTED_ACTION.get(decision_tag, "hold")
+
+
+def build_profit_target_status() -> dict:
+    """Return the V0.5 profit-target status payload.
+
+    Always ``{"captured_pct": None, "state": "unknown"}`` because the live
+    option-chain integration is deferred. The shape ships so the frontend
+    contract is stable for the V0.7 expansion.
+    """
+    return {"captured_pct": None, "state": "unknown"}
+
+
+def compute_earnings_in_window(
+    ticker: str,
+    dte: int,
+    earnings_lookup,
+) -> bool:
+    """Determine whether a cached earnings date falls inside the leg's DTE window.
+
+    ``earnings_lookup`` is a callable ``(ticker: str) -> str | None`` that
+    must NEVER make a network call — typically
+    :func:`app.services.alpha_vantage_client.get_cached_next_earnings_date`.
+
+    Returns ``False`` when:
+    - the lookup returns ``None`` (cache miss),
+    - the cached date cannot be parsed,
+    - the DTE is non-positive (the leg has already expired or expires today),
+    - the cached earnings date falls outside ``[today, today + dte]``.
+
+    The window is intentionally inclusive on both ends.
+    """
+    if dte <= 0:
+        return False
+    earnings_iso = earnings_lookup(ticker)
+    if not earnings_iso:
+        return False
+    try:
+        earnings_date = date.fromisoformat(str(earnings_iso)[:10])
+    except (TypeError, ValueError):
+        return False
+    today_d = date.today()
+    delta_days = (earnings_date - today_d).days
+    return 0 <= delta_days <= dte
+
+
 def derive_open_legs(
     positions: Iterable[dict],
     quotes_by_ticker: dict[str, float | None],
     today: date | None = None,
+    earnings_lookup=None,
 ) -> list[dict]:
     """Flatten open option legs across the given positions.
 
     A leg is "open" when it was an opening trade (`sell_put` / `sell_call`)
     AND its `closed_at` is None on the trade row. Each leg is enriched with
-    DTE and moneyness using `quotes_by_ticker` (per-ticker live price).
+    DTE, moneyness, and the V0.5 per-leg signal fields:
+    ``profit_target_status`` (always ``state="unknown"``),
+    ``assignment_risk``, ``suggested_action``, and ``earnings_in_window``.
+
+    ``earnings_lookup`` is an optional callable used to populate
+    ``earnings_in_window``. It MUST be cache-hit-only — defaults to a
+    sentinel that returns ``None`` so the dashboard never blocks on
+    Alpha Vantage in the request path.
 
     Returns a list ordered by (dte ASC, ticker ASC) — callers that need
     other orderings should re-sort.
     """
     today = today or date.today()
+    if earnings_lookup is None:
+        # Defensive default: cache miss-only sentinel. Never trigger network.
+        earnings_lookup = lambda _ticker: None  # noqa: E731 — small inline default
     legs: list[dict] = []
     for position in positions:
         ticker = position["ticker"]
@@ -163,6 +264,8 @@ def derive_open_legs(
             strike = float(trade["strike"])
             dte = compute_dte(trade["expiration"], today=today)
             moneyness = compute_moneyness(option_type, strike, current_price)
+            moneyness_state = moneyness["state"] if moneyness else None
+            decision_tag = compute_decision_tag(dte, moneyness_state)
             legs.append(
                 {
                     "id": trade["id"],
@@ -173,6 +276,12 @@ def derive_open_legs(
                     "dte": dte,
                     "moneyness": moneyness,
                     "position_id": position_id,
+                    "profit_target_status": build_profit_target_status(),
+                    "assignment_risk": compute_assignment_risk(dte, moneyness_state),
+                    "suggested_action": compute_suggested_action(decision_tag),
+                    "earnings_in_window": compute_earnings_in_window(
+                        ticker, dte, earnings_lookup
+                    ),
                 }
             )
     legs.sort(key=lambda x: (x["dte"], x["ticker"]))
