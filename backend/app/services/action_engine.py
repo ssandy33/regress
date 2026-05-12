@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Iterable
+from urllib.parse import quote
 
 # Cap from spec §2.2: anything beyond 8 cards is noise; the user should
 # triage in the destination tool.
@@ -269,7 +270,7 @@ def _largest_loser_action(positions: Iterable[dict]) -> dict | None:
         "reason": "Position is below your review threshold (-5% or -$1,000).",
         "cta": {
             "label": f"Review {ticker}",
-            "href": f"/journal?position={worst['id']}",
+            "href": f"/journal?position={quote(str(worst['id']), safe='')}",
             "kind": "link",
         },
     }
@@ -304,7 +305,7 @@ def _itm_short_dte_actions(open_legs: Iterable[dict]) -> list[dict]:
                 ),
                 "cta": {
                     "label": "Manage in Journal",
-                    "href": f"/journal?position={leg['position_id']}",
+                    "href": f"/journal?position={quote(str(leg['position_id']), safe='')}",
                     "kind": "link",
                 },
                 # Sort metadata consumed by `_tie_breaker_for`.
@@ -361,7 +362,7 @@ def _short_dte_aggregate_actions(open_legs: Iterable[dict]) -> list[dict]:
                 ),
                 "cta": {
                     "label": f"Manage {ticker}",
-                    "href": f"/journal?position={entry['position_id']}",
+                    "href": f"/journal?position={quote(str(entry['position_id']), safe='')}",
                     "kind": "link",
                 },
                 "_dte": entry["min_dte"],
@@ -406,7 +407,7 @@ def _cc_candidate_actions(
                 ),
                 "cta": {
                     "label": f"Scan {ticker}",
-                    "href": f"/options?ticker={ticker}",
+                    "href": f"/options?ticker={quote(ticker, safe='')}",
                     "kind": "link",
                 },
             }

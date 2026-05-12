@@ -195,12 +195,16 @@ def compute_earnings_in_window(
     ticker: str,
     dte: int,
     earnings_lookup,
+    today: date | None = None,
 ) -> bool:
     """Determine whether a cached earnings date falls inside the leg's DTE window.
 
     ``earnings_lookup`` is a callable ``(ticker: str) -> str | None`` that
     must NEVER make a network call — typically
     :func:`app.services.alpha_vantage_client.get_cached_next_earnings_date`.
+
+    ``today`` is injected so the rest of the dashboard pipeline can stay
+    deterministic; when omitted it falls back to :func:`date.today`.
 
     Returns ``False`` when:
     - the lookup returns ``None`` (cache miss),
@@ -219,7 +223,7 @@ def compute_earnings_in_window(
         earnings_date = date.fromisoformat(str(earnings_iso)[:10])
     except (TypeError, ValueError):
         return False
-    today_d = date.today()
+    today_d = today or date.today()
     delta_days = (earnings_date - today_d).days
     return 0 <= delta_days <= dte
 
@@ -280,7 +284,7 @@ def derive_open_legs(
                     "assignment_risk": compute_assignment_risk(dte, moneyness_state),
                     "suggested_action": compute_suggested_action(decision_tag),
                     "earnings_in_window": compute_earnings_in_window(
-                        ticker, dte, earnings_lookup
+                        ticker, dte, earnings_lookup, today=today
                     ),
                 }
             )
