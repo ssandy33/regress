@@ -3,6 +3,7 @@ import { useDashboard } from '../../hooks/useDashboard';
 import { formatDate } from '../../utils/formatters';
 import StatusStrip from './StatusStrip';
 import DataReadinessBanner from './DataReadinessBanner';
+import NextActionsSection from './NextActionsSection';
 import KpiRow from './KpiRow';
 import UpcomingExpirationsCard from './UpcomingExpirationsCard';
 import OpenLegsCard from './OpenLegsCard';
@@ -72,6 +73,12 @@ export default function DashboardPage() {
               <OnboardingPanel />
             ) : (
               <>
+                <NextActionsSection
+                  actions={data?.next_actions}
+                  loading={loading}
+                  onRefreshed={refetch}
+                />
+
                 <KpiRow kpis={data?.kpis} />
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
