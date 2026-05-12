@@ -28,8 +28,11 @@ function fredPill(fred) {
 }
 
 function cachePill(cache) {
+  // Issue #147 / spec §2.1: ``cache.total === 0`` no longer renders a pill on
+  // the dashboard — the "Cache empty" surface moves to Settings → Data Sources.
+  // Returning ``null`` here is the signal to skip the pill entirely.
   if (!cache || cache.total === 0) {
-    return { state: 'neutral', label: 'Cache empty' };
+    return null;
   }
   if (cache.very_stale > 0) {
     return { state: 'error', label: `Cache very stale (${cache.very_stale})` };
@@ -58,7 +61,9 @@ export default function StatusStrip({ status }) {
     >
       <StatusPill {...schwab} href="/settings#schwab" dataTestid="status-pill-schwab" />
       <StatusPill {...fred} href="/settings#fred" dataTestid="status-pill-fred" />
-      <StatusPill {...cache} href="/settings#cache" dataTestid="status-pill-cache" />
+      {cache && (
+        <StatusPill {...cache} href="/settings#cache" dataTestid="status-pill-cache" />
+      )}
       <StatusPill {...journal} href="/journal" dataTestid="status-pill-journal" />
     </div>
   );

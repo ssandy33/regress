@@ -2,6 +2,7 @@ import Header from '../layout/Header';
 import { useDashboard } from '../../hooks/useDashboard';
 import { formatDate } from '../../utils/formatters';
 import StatusStrip from './StatusStrip';
+import DataReadinessBanner from './DataReadinessBanner';
 import KpiRow from './KpiRow';
 import UpcomingExpirationsCard from './UpcomingExpirationsCard';
 import OpenLegsCard from './OpenLegsCard';
@@ -9,15 +10,6 @@ import DashboardPositionsCard from './DashboardPositionsCard';
 import RecentActivityCard from './RecentActivityCard';
 import DataReadinessDetail from './DataReadinessDetail';
 import OnboardingPanel from './OnboardingPanel';
-
-function StaleBanner({ meta }) {
-  if (!meta?.is_stale) return null;
-  return (
-    <div className="px-4 py-2 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg text-sm text-yellow-800 dark:text-yellow-200">
-      Some data sources are unavailable — values shown may be cached or incomplete.
-    </div>
-  );
-}
 
 function lastSyncLabel(meta) {
   if (!meta?.fetched_at) return null;
@@ -69,7 +61,11 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            <StaleBanner meta={data?.data_meta} />
+            <DataReadinessBanner
+              status={data?.status}
+              loading={loading}
+              onRefreshed={refetch}
+            />
             <StatusStrip status={data?.status} />
 
             {isAllEmpty(data) ? (
