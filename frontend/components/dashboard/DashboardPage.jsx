@@ -85,6 +85,7 @@ export default function DashboardPage() {
                   <div className="lg:col-span-7">
                     <UpcomingExpirationsCard
                       expirations={data?.upcoming_expirations}
+                      openLegsCount={data?.kpis?.open_legs}
                       loading={loading}
                     />
                   </div>
