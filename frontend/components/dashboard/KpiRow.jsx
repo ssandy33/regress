@@ -10,7 +10,7 @@ import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatt
  *
  * Breakpoints per spec §14.2 (overrides §2.3): `grid-cols-2 md:grid-cols-3
  * lg:grid-cols-7`. The 7th tile spans 2 columns on mobile (`col-span-2`) to
- * avoid an orphan at the bottom of the 4×2 grid.
+ * avoid an orphan at the bottom of the 2-col mobile grid.
  *
  * Empty-state rules (spec §14.3):
  *   - Largest risk: `—` with tooltip (it's a pointer, not an aggregate)

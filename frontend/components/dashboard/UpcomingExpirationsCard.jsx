@@ -104,7 +104,6 @@ function ExpirationRow({ leg }) {
   // Line 3 renders only when earnings flag is set OR DTE ≤ 7 (spec §2.4).
   const showLine3 = earningsActive || shortDte;
   const showEarningsLine = earningsActive;
-  const showWindowLine = !earningsActive && shortDte;
 
   return (
     <Link

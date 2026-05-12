@@ -108,8 +108,7 @@ const ACTION_VISUALS = {
 function ActionCell({ action, mobileOnlyUrgent }) {
   const visuals = ACTION_VISUALS[action] || ACTION_VISUALS.hold;
   const isUrgent = action === 'roll' || action === 'manage';
-  // On mobile we hide non-urgent actions per spec §2.5. The `lg:!inline`
-  // override forces the cell back on at the desktop breakpoint.
+  // On mobile we hide non-urgent actions per spec §2.5. `lg:inline` re-shows at desktop.
   const visibilityClass =
     mobileOnlyUrgent && !isUrgent ? 'hidden lg:inline' : 'inline';
   return <span className={`${visibilityClass} ${visuals.className}`}>{visuals.label}</span>;

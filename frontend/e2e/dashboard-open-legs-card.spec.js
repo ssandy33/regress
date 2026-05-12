@@ -225,9 +225,31 @@ test.describe('OpenLegsCard (V0.5 — triage columns)', () => {
 
     // The roll action's label is visible (it's the urgent case).
     const actionCells = page.getByTestId('dashboard-leg-row-action');
-    // The action text span inside the roll row is visible
     await expect(actionCells.nth(0).getByText('Roll', { exact: true })).toBeVisible();
     // The hold label is hidden on mobile (it carries `hidden lg:inline`)
     await expect(actionCells.nth(1).getByText('Hold', { exact: true })).not.toBeVisible();
+  });
+
+  test('mobile ACTION column visible for manage (urgent, same as roll)', async ({ page }) => {
+    const manageLeg = makeLeg({ id: 'leg-manage', suggested_action: 'manage', assignment_risk: 'watch' });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [manageLeg] });
+    await page.setViewportSize({ width: 600, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByTestId('dashboard-leg-row-action').getByText('Manage', { exact: true })).toBeVisible();
+  });
+
+  test('close action never renders in V0.5 payload (spec §14.5)', async ({ page }) => {
+    const legs = [
+      makeLeg({ id: 'leg-roll', suggested_action: 'roll' }),
+      makeLeg({ id: 'leg-manage', ticker: 'TSLA', suggested_action: 'manage', assignment_risk: 'watch' }),
+      makeLeg({ id: 'leg-hold', ticker: 'AAPL', suggested_action: 'hold', assignment_risk: 'low', dte: 30 }),
+    ];
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: legs });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByText('Close target ✓')).toHaveCount(0);
   });
 });
