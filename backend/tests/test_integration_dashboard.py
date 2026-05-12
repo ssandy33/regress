@@ -548,3 +548,6 @@ def test_dashboard_position_rows_have_v05_signals(client, monkeypatch):
     assert "next_suggested_action" in row
     # pl_pct is None when no price OR when basis is zero — here we have both.
     assert "pl_pct" in row
+    # #151 — broker_cost_basis is surfaced so the Positions card can render
+    # the dual-line ("broker / adjusted") cost-basis cell.
+    assert row["broker_cost_basis"] == 17000.0

@@ -638,6 +638,10 @@ class DashboardPositionRow(BaseModel):
     wheel_status: DASHBOARD_WHEEL_STATUS
     next_suggested_action: str = "hold"
     pl_pct: Optional[float] = None
+    # New in V0.5.4 (#151) — exposes broker basis for the dual-line
+    # cost-basis cell ("line 1: broker; line 2: adjusted, muted").
+    # Optional because cash-secured-put rows have no broker basis yet.
+    broker_cost_basis: Optional[float] = None
 
 
 class DashboardMoneyness(BaseModel):

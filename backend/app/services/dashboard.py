@@ -248,6 +248,9 @@ def _build_position_rows(
                 "wheel_status": wheel_status,
                 "next_suggested_action": "hold",  # overwritten after the engine runs
                 "pl_pct": pl_pct,
+                # Broker basis is surfaced so the Positions card can render
+                # the dual-line "broker / adjusted" cost-basis cell (#151).
+                "broker_cost_basis": position.get("broker_cost_basis"),
             }
         )
     # Sort by notional desc (None last), then ticker asc.
