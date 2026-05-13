@@ -267,6 +267,124 @@ def test_adjusted_basis_no_trades(db_session):
     assert result["adjusted_cost_basis"] == 5000.0
 
 
+def test_adjusted_basis_excludes_assignment_consumed_premium(db_session):
+    """Issue #183: total_premiums must not double-count the put netted into basis.
+
+    Canonical wheel: Sell Put @ $13.50 premium $0.30 fees $0.66 → Assignment.
+    After the recomputer runs, ``broker_cost_basis = 1320.66`` (already nets
+    the $30 gross premium minus $0.66 fees). The journal read path's
+    ``adjusted_cost_basis`` must NOT subtract the same $30 a second time —
+    that would yield $1290.66 instead of the correct $1320.66.
+
+    With no additional premium-earning trades on the position, the canonical
+    AC is ``adjusted_cost_basis == broker_cost_basis == 1320.66``.
+    """
+    # Seed via the service layer so this test exercises the same code path
+    # the API uses. broker_cost_basis is recomputed below.
+    position = _create_sample_position(
+        db_session,
+        ticker="F",
+        broker_cost_basis=0.0,
+        opened_at="2026-03-01T10:00:00Z",
+    )
+    _create_sample_trade(
+        db_session,
+        position["id"],
+        trade_type="sell_put",
+        strike=13.50,
+        expiration="2026-03-27",
+        premium=0.30,
+        fees=0.66,
+        quantity=1,
+        opened_at="2026-03-01T10:00:00Z",
+    )
+    _create_sample_trade(
+        db_session,
+        position["id"],
+        trade_type="assignment",
+        strike=13.50,
+        expiration="2026-03-27",
+        premium=0.0,
+        fees=0.0,
+        quantity=1,
+        opened_at="2026-03-27T16:00:00Z",
+    )
+
+    # Drive the recomputer so broker_cost_basis lands at the netted value.
+    from app.services.positions import recompute_position_state
+
+    recompute_position_state(db_session, position["id"])
+
+    result = get_position(db_session, position["id"])
+
+    assert result["broker_cost_basis"] == pytest.approx(1320.66, abs=1e-4)
+    # total_premiums reports gross premium collected (unchanged semantics).
+    assert result["total_premiums"] == pytest.approx(30.0, abs=1e-4)
+    # adjusted_cost_basis must exclude the netted put — equals basis exactly
+    # when there are no other premium-earning trades.
+    assert result["adjusted_cost_basis"] == pytest.approx(1320.66, abs=1e-4)
+
+
+def test_adjusted_basis_post_assignment_cc_subtracts_only_new_premium(db_session):
+    """Issue #183 follow-on: a CC sold after assignment IS subtracted normally.
+
+    Wheel mid-cycle: Sell Put → Assignment → Sell Call. The assignment-
+    netted put premium stays inside ``broker_cost_basis``; the CC premium
+    is real new income and shows up in ``adjusted_cost_basis``.
+
+    Canonical F-case extended: basis = $1320.66, sell a $15 CC for $0.40
+    → adjusted basis = 1320.66 - 40 = 1280.66.
+    """
+    position = _create_sample_position(
+        db_session,
+        ticker="F",
+        broker_cost_basis=0.0,
+        opened_at="2026-03-01T10:00:00Z",
+    )
+    _create_sample_trade(
+        db_session,
+        position["id"],
+        trade_type="sell_put",
+        strike=13.50,
+        expiration="2026-03-27",
+        premium=0.30,
+        fees=0.66,
+        opened_at="2026-03-01T10:00:00Z",
+    )
+    _create_sample_trade(
+        db_session,
+        position["id"],
+        trade_type="assignment",
+        strike=13.50,
+        expiration="2026-03-27",
+        premium=0.0,
+        fees=0.0,
+        opened_at="2026-03-27T16:00:00Z",
+    )
+    _create_sample_trade(
+        db_session,
+        position["id"],
+        trade_type="sell_call",
+        strike=15.0,
+        expiration="2026-04-17",
+        premium=0.40,
+        fees=0.66,
+        opened_at="2026-04-01T10:00:00Z",
+    )
+
+    from app.services.positions import recompute_position_state
+
+    recompute_position_state(db_session, position["id"])
+
+    result = get_position(db_session, position["id"])
+
+    assert result["broker_cost_basis"] == pytest.approx(1320.66, abs=1e-4)
+    # total_premiums sums every premium gross (30 from put + 40 from call).
+    assert result["total_premiums"] == pytest.approx(70.0, abs=1e-4)
+    # adjusted basis subtracts ONLY the new $40 (the put was already netted).
+    assert result["adjusted_cost_basis"] == pytest.approx(1280.66, abs=1e-4)
+
+
 def test_min_compliant_cc_strike(db_session):
     """Verify 1.10x calculation on adjusted basis."""
     position = _create_sample_position(

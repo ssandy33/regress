@@ -72,8 +72,9 @@ class TestParseSchwabCsv:
         assert row["strike"] == 13.50
         assert row["expiration"] == "2026-03-27"
         assert row["quantity"] == 1
-        # Premium per share = 29.35 / (1 * 100) = 0.2935, positive for sells.
-        assert row["premium"] == pytest.approx(0.2935, abs=1e-4)
+        # Premium per share = gross Price column (0.30), not the post-fee
+        # net (29.35 / 100 = 0.2935) — corrected after #184.
+        assert row["premium"] == pytest.approx(0.30, abs=1e-4)
         assert row["fees"] == 0.65
         assert row["opened_at"] == "2026-03-01"
 
@@ -84,17 +85,18 @@ class TestParseSchwabCsv:
         assert row["ticker"] == "SOFI"
         assert row["trade_type"] == "sell_call"
         assert row["quantity"] == 2
-        # 98.70 / (2 * 100) = 0.4935
-        assert row["premium"] == pytest.approx(0.4935, abs=1e-4)
+        # Gross per-share Price column = 0.50 (was 98.70 / (2*100) = 0.4935
+        # — the post-fee net — corrected after #184).
+        assert row["premium"] == pytest.approx(0.50, abs=1e-4)
 
     def test_buy_to_close_premium_is_negative(self):
         result = parse_schwab_csv(_csv([BUY_TO_CLOSE_ROW]))
         assert len(result) == 1
         row = result[0]
         assert row["trade_type"] == "buy_put_close"
-        # Schwab uses parentheses for negatives; abs(amount) used for premium,
-        # but the buy side flips the sign.
-        assert row["premium"] == pytest.approx(-0.1065, abs=1e-4)
+        # Gross per-share Price column = 0.10 (sign flipped for buy_to_close).
+        # Pre-#184 this used post-fee net (-0.1065).
+        assert row["premium"] == pytest.approx(-0.10, abs=1e-4)
 
     def test_assigned_maps_to_assignment(self):
         result = parse_schwab_csv(_csv([ASSIGNED_PUT_ROW]))
@@ -223,8 +225,9 @@ class TestParseSchwabCsv:
         )
         result = parse_schwab_csv(_csv([row]))
         assert len(result) == 1
-        # 998.70 / (2 * 100) = 4.9935
-        assert result[0]["premium"] == pytest.approx(4.9935, abs=1e-4)
+        # Gross per-share Price column = 5.00 (was 998.70 / (2*100) = 4.9935
+        # — the post-fee net — corrected after #184).
+        assert result[0]["premium"] == pytest.approx(5.00, abs=1e-4)
 
 
 # --- API endpoint integration tests -----------------------------------------

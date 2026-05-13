@@ -42,7 +42,13 @@ class Position(Base):
     id = Column(String, primary_key=True)  # UUID4
     ticker = Column(String, nullable=False)
     shares = Column(Integer, nullable=False, default=100)
-    broker_cost_basis = Column(Float, nullable=False)  # total dollar cost for all shares
+    # Cost basis matching IRS/Schwab convention: ``strike × shares − net
+    # premium of the assigned put`` (net premium = ``gross_premium × 100 ×
+    # contracts − fees_prorated``). Falls back to raw ``strike × shares`` when
+    # no originating short put can be matched to an assignment (orphan
+    # imports); the un-netted case is logged at WARNING. Recomputed on every
+    # ledger replay by ``recompute_position_state`` — never written directly.
+    broker_cost_basis = Column(Float, nullable=False)
     status = Column(String, nullable=False, default="open")  # "open" | "closed"
     strategy = Column(String, nullable=False)  # "csp" | "cc" | "wheel"
     opened_at = Column(String, nullable=False)  # ISO datetime

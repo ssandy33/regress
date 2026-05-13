@@ -23,6 +23,7 @@ from app.services.positions import (
     _derive_strategy_label,
     _LegKey,
     _reset_unpaired_warning_cache,
+    compute_assignment_netting,
     recompute_position_state,
 )
 
@@ -2041,3 +2042,340 @@ class TestPersistsTradeClosedAt:
 
         db_session.refresh(sell_put)
         assert sell_put.closed_at == first_close
+
+
+# --- Issue #183: assignment basis netting ------------------------------------
+
+
+class TestAssignmentBasisNetting:
+    """Issue #183: ``broker_cost_basis`` must net the originating put's net
+    premium (gross premium minus prorated fees) when an assignment matches a
+    paired short put.
+
+    Pre-fix: ``broker_cost_basis = strike * shares`` for every assignment,
+    which diverges from Schwab's / IRS's "strike × shares − net premium" by
+    the gross premium minus fees per contract. The fix: at assignment, look
+    up the originating ``sell_put`` via the consumed ``_LegKey.trade_id`` and
+    net its premium dollars (minus prorated fees) out of basis. Fall back to
+    raw ``strike × shares`` and log a WARNING when no matching put is found.
+    """
+
+    def setup_method(self) -> None:
+        # Each test should see the first WARNING for any orphan assignment it
+        # creates rather than a demoted INFO from a prior run.
+        _reset_unpaired_warning_cache()
+
+    def test_basis_nets_assignment_premium(self, db_session):
+        # Canonical wheel cycle: Sell Put @ $13.50, premium $0.30, fees $0.66,
+        # 1 contract → Assignment. Net premium = $30 - $0.66 = $29.34. Basis =
+        # 1350 - 29.34 = $1320.66. This is the user-facing canonical F-case
+        # from issue #183.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                    "premium": 0.30,
+                    "fees": 0.66,
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.status == "open"
+        assert result.shares == 100
+        assert result.broker_cost_basis == pytest.approx(1320.66, abs=1e-4)
+
+    def test_basis_nets_multi_contract_assignment(self, db_session):
+        # Sell 5 Puts @ $20.00 premium $0.40 fees $3.30; all 5 assigned.
+        # Net premium = 5 * 100 * 0.40 - 3.30 = 200 - 3.30 = 196.70.
+        # Basis = 5 * 100 * 20 - 196.70 = 10000 - 196.70 = 9803.30.
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-01",
+                    "premium": 0.40,
+                    "fees": 3.30,
+                    "quantity": 5,
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-20",
+                    "quantity": 5,
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        assert result.status == "open"
+        assert result.shares == 500
+        assert result.broker_cost_basis == pytest.approx(9803.30, abs=1e-4)
+
+    def test_basis_prorates_fees_on_partial_assignment(self, db_session):
+        # Sell 5 Puts @ $20.00 premium $0.40 fees $3.30; only 3 assigned.
+        # Each consumed contract gets ``3.30 / 5 = 0.66`` of the fee budget.
+        # Net premium netted = 3 * 100 * 0.40 - 3 * 0.66 = 120 - 1.98 = 118.02.
+        # Basis = 3 * 100 * 20 - 118.02 = 6000 - 118.02 = 5881.98.
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-01",
+                    "premium": 0.40,
+                    "fees": 3.30,
+                    "quantity": 5,
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-02-20",
+                    "opened_at": "2026-02-20",
+                    "quantity": 3,
+                },
+            ],
+        )
+
+        # Freeze before the leg's expiration so the 2 unconsumed legs aren't
+        # swept by the calendar fallback.
+        result = recompute_position_state(
+            db_session, pos.id, clock=_frozen_clock(date(2026, 2, 21))
+        )
+
+        assert result.status == "open"
+        assert result.shares == 300
+        assert result.broker_cost_basis == pytest.approx(5881.98, abs=1e-4)
+
+    def test_basis_canonical_f_case_exact_1320_66(self, db_session):
+        # Locks the user-facing AC from issue #183: the canonical F-case
+        # must produce exactly $1320.66 (matches Schwab + IRS records).
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                    "premium": 0.30,
+                    "fees": 0.66,
+                    "quantity": 1,
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                    "quantity": 1,
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        # Exact equality — the recomputer rounds basis to 4 decimals and
+        # 1350 - 29.34 = 1320.66 lands cleanly in float.
+        assert result.broker_cost_basis == 1320.66
+
+    def test_basis_multi_cycle_matches_assigned_put_not_expired(
+        self, db_session
+    ):
+        # Wheel re-entry: first sell_put expires worthless, second sell_put
+        # at the same strike is ASSIGNED. The recomputer must net the SECOND
+        # put's premium into basis, not the first (expired) one.
+        pos = _seed_position(
+            db_session,
+            ticker="MARA",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-01-17",
+                    "opened_at": "2026-01-02",
+                    "premium": 0.10,
+                    "fees": 0.66,
+                },
+                {
+                    "trade_type": "expired",
+                    "strike": 20.0,
+                    "expiration": "2026-01-17",
+                    "opened_at": "2026-01-17",
+                },
+                {
+                    "trade_type": "sell_put",
+                    "strike": 20.0,
+                    "expiration": "2026-03-17",
+                    "opened_at": "2026-02-15",
+                    "premium": 0.45,
+                    "fees": 0.66,
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 20.0,
+                    "expiration": "2026-03-17",
+                    "opened_at": "2026-03-17",
+                },
+            ],
+        )
+
+        result = recompute_position_state(db_session, pos.id)
+
+        # Second put's net premium = 0.45 * 100 - 0.66 = 44.34.
+        # Basis = 2000 - 44.34 = 1955.66. NOT 2000 - 9.34 = 1990.66 (which
+        # would be the bug of netting the expired first put).
+        assert result.shares == 100
+        assert result.broker_cost_basis == pytest.approx(1955.66, abs=1e-4)
+
+    def test_basis_falls_back_when_no_matching_put(self, db_session, caplog):
+        # Orphan assignment row — basis falls back to raw strike × shares,
+        # a WARNING is logged, and the recomputer does not crash.
+        pos = _seed_position(
+            db_session,
+            ticker="ZZZ",
+            trades=[
+                {
+                    "trade_type": "assignment",
+                    "strike": 50.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-17",
+                }
+            ],
+        )
+
+        with caplog.at_level("WARNING", logger="app.services.positions"):
+            result = recompute_position_state(
+                db_session, pos.id, clock=_frozen_clock(date(2026, 5, 8))
+            )
+
+        assert result.shares == 100
+        assert result.broker_cost_basis == pytest.approx(5000.0)
+        assert any(
+            "Un-netted assignment basis" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_basis_zero_premium_no_netting_no_warning(self, db_session, caplog):
+        # Backward-compat: a sell_put with premium=0.0 (legacy imports) still
+        # matches — yielding a net premium of 0.0 — so basis equals raw
+        # strike × shares. The matcher succeeds, so NO un-netted warning
+        # fires.
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        with caplog.at_level("WARNING", logger="app.services.positions"):
+            result = recompute_position_state(db_session, pos.id)
+
+        assert result.broker_cost_basis == pytest.approx(1350.0)
+        assert not any(
+            "Un-netted assignment basis" in record.getMessage()
+            for record in caplog.records
+        )
+
+
+class TestComputeAssignmentNetting:
+    """Pure-function unit tests for the shared netting helper used by the
+    journal read path."""
+
+    def test_no_assignment_returns_empty(self, db_session):
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                    "premium": 0.30,
+                    "fees": 0.66,
+                }
+            ],
+        )
+
+        assert compute_assignment_netting(list(pos.trades)) == {}
+
+    def test_assignment_returns_gross_premium_dollars(self, db_session):
+        # The helper reports gross premium dollars only — fees are NOT
+        # included (compute_total_premiums excludes fees in the same way).
+        pos = _seed_position(
+            db_session,
+            ticker="F",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-01",
+                    "premium": 0.30,
+                    "fees": 0.66,
+                },
+                {
+                    "trade_type": "assignment",
+                    "strike": 13.50,
+                    "expiration": "2026-03-27",
+                    "opened_at": "2026-03-27",
+                },
+            ],
+        )
+
+        result = compute_assignment_netting(list(pos.trades))
+        sell_put = next(t for t in pos.trades if t.trade_type == "sell_put")
+        # 0.30 * 100 = 30.00 gross premium dollars netted for one contract.
+        assert result == {sell_put.id: pytest.approx(30.0, abs=1e-4)}
+
+    def test_orphan_assignment_returns_empty(self, db_session):
+        # No matching sell_put → nothing to net. The journal read path uses
+        # an empty map so it doesn't double-count premiums that aren't there.
+        pos = _seed_position(
+            db_session,
+            ticker="ZZZ",
+            trades=[
+                {
+                    "trade_type": "assignment",
+                    "strike": 50.0,
+                    "expiration": "2026-04-17",
+                    "opened_at": "2026-04-17",
+                }
+            ],
+        )
+
+        assert compute_assignment_netting(list(pos.trades)) == {}

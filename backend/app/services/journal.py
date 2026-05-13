@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models.database import Position, Trade
 from app.models.schemas import PositionCreate, PositionUpdate, TradeCreate, TradeUpdate
+from app.services.positions import compute_assignment_netting
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,16 @@ def compute_total_premiums(trades: list) -> float:
 
 
 def compute_adjusted_basis(broker_cost_basis: float, total_premiums: float) -> float:
-    """Adjusted cost basis = broker_cost_basis - total_premiums."""
+    """Adjusted cost basis = ``broker_cost_basis - total_premiums``.
+
+    After issue #183, ``broker_cost_basis`` already nets the originating
+    short put's premium (minus prorated fees) for every assignment that
+    matched a paired put. To avoid double-counting, callers must pass a
+    ``total_premiums`` value that EXCLUDES the gross premium of those
+    netted puts — :func:`_build_position_response` derives that value via
+    :func:`app.services.positions.compute_assignment_netting`. The
+    subtraction itself is unchanged; the wiring is what shifted.
+    """
     return broker_cost_basis - total_premiums
 
 
@@ -52,10 +62,25 @@ def _build_trade_response(trade: Trade) -> dict:
 
 
 def _build_position_response(position: Position) -> dict:
-    """Build a PositionResponse dict from a Position ORM object."""
+    """Build a PositionResponse dict from a Position ORM object.
+
+    ``total_premiums`` reports the gross premium collected/paid across every
+    trade on the position — that is the "money I have moved on this position
+    via options" headline number the dashboard surfaces. ``adjusted_cost_basis``,
+    however, must exclude any premium that the recomputer already netted into
+    ``broker_cost_basis`` on assignment (issue #183) or it would double-count
+    the put twice. We call :func:`compute_assignment_netting` to learn which
+    sell_put trade_ids were consumed by assignments and subtract their gross
+    premium dollars from the basis-input premium sum.
+    """
     trades = list(position.trades)
     total_premiums = compute_total_premiums(trades)
-    adjusted_cost_basis = compute_adjusted_basis(position.broker_cost_basis, total_premiums)
+    netted_by_trade_id = compute_assignment_netting(trades)
+    netted_premium_total = sum(netted_by_trade_id.values())
+    premiums_for_adjusted_basis = total_premiums - netted_premium_total
+    adjusted_cost_basis = compute_adjusted_basis(
+        position.broker_cost_basis, premiums_for_adjusted_basis
+    )
     min_compliant_cc_strike = compute_min_cc_strike(adjusted_cost_basis, position.shares)
 
     return {
