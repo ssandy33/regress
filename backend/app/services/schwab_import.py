@@ -77,16 +77,25 @@ def map_schwab_transaction(txn: dict) -> dict | None:
     # $0.66 in fees nets to $29.34, which rounds to $0.29 — the visible bug).
     #
     # Positive for sells (credits), negative for buys (debits).
+    # For sells, |netAmount| = gross − fees → add fees back to recover gross.
+    # For buys, |netAmount| = gross + fees → subtract fees.
+    is_buy = instruction.startswith("BUY")
+    fee_adjustment = -fees if is_buy else fees
+
     raw_price = item.get("price")
     if raw_price is not None:
         try:
             premium_per_share = abs(float(raw_price))
         except (TypeError, ValueError):
             premium_per_share = (
-                (abs(net_amount) + fees) / (quantity * 100) if quantity > 0 else 0.0
+                max((abs(net_amount) + fee_adjustment) / (quantity * 100), 0.0)
+                if quantity > 0
+                else 0.0
             )
     elif quantity > 0:
-        premium_per_share = (abs(net_amount) + fees) / (quantity * 100)
+        premium_per_share = max(
+            (abs(net_amount) + fee_adjustment) / (quantity * 100), 0.0
+        )
     else:
         premium_per_share = 0.0
 

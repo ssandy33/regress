@@ -156,6 +156,34 @@ class TestMapSchwabTransaction:
         assert result["premium"] == pytest.approx(0.30, abs=1e-4)
         assert result["premium"] != pytest.approx(0.2934, abs=1e-4)
 
+    def test_buy_to_close_premium_grossed_down_when_netamount_includes_fees(self):
+        """Buy-to-close: |netAmount| = gross + fees, so subtract fees to recover gross.
+
+        Mirrors the sell-side gross-up but in the opposite direction. Without
+        flipping the fee sign on buys, the fallback would over-state the gross
+        premium by ``2 * fees / (qty*100)`` per share.
+        """
+        fees = {
+            "commission": 0.65,
+            "secFee": 0.01,
+            "optRegFee": 0.0,
+            "rFee": 0.0,
+            "cdscFee": 0.0,
+            "otherCharges": 0.0,
+        }
+        txn = _make_txn(
+            "BUY_TO_CLOSE",
+            "PUT",
+            ticker="F",
+            strike=13.50,
+            net_amount=-30.66,
+            amount=1,
+            fees=fees,
+        )
+        result = map_schwab_transaction(txn)
+        assert result is not None
+        assert result["premium"] == pytest.approx(-0.30, abs=1e-4)
+
     def test_premium_prefers_transferitem_price_when_present(self):
         """If Schwab exposes ``transferItem.price`` use it directly as gross.
 

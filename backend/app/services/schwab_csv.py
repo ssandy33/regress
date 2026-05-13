@@ -184,10 +184,18 @@ def _map_csv_row(raw_row: dict, header_map: dict[str, str]) -> dict | None:
     # unparseable — that path applies to assignment / expired rows that have
     # no Price column populated, where the fallback produces 0.0 from a 0.0
     # amount + 0.0 fees anyway. See issue #184.
+    # Buys pay gross + fees; sells receive gross − fees. Fee sign in the
+    # fallback must flip for buy-side rows so gross is recovered correctly.
+    # ``instruction`` is None for direct-mapped types like Expired / Assignment.
+    is_buy = bool(instruction) and instruction.startswith("BUY")
+    fee_adjustment = -abs(fees) if is_buy else abs(fees)
+
     if price is not None and price > 0 and quantity > 0:
         premium_per_share = abs(price)
     elif quantity > 0:
-        premium_per_share = (abs(amount) + abs(fees)) / (quantity * 100)
+        premium_per_share = max(
+            (abs(amount) + fee_adjustment) / (quantity * 100), 0.0
+        )
     else:
         premium_per_share = 0.0
     if instruction == "BUY_TO_CLOSE":
