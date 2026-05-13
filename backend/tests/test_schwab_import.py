@@ -184,6 +184,37 @@ class TestMapSchwabTransaction:
         assert result is not None
         assert result["premium"] == pytest.approx(-0.30, abs=1e-4)
 
+    def test_receive_deliver_with_fees_emits_zero_premium(self):
+        """Assignment / called-away rows are not premium-bearing trades.
+
+        If Schwab reports a non-zero fee on a RECEIVE_DELIVER row and omits
+        ``transferItem.price``, the fallback gross-up would otherwise turn the
+        fee into a fabricated premium. Lifecycle rows must keep premium at 0.
+        """
+        fees = {
+            "commission": 0.0,
+            "secFee": 0.10,
+            "optRegFee": 0.0,
+            "rFee": 0.0,
+            "cdscFee": 0.0,
+            "otherCharges": 0.0,
+        }
+        put_txn = _make_txn(
+            "RECEIVE_DELIVER", "PUT", net_amount=0.0, amount=1, fees=fees
+        )
+        result = map_schwab_transaction(put_txn)
+        assert result["trade_type"] == "assignment"
+        assert result["premium"] == 0.0
+        assert result["fees"] == pytest.approx(0.10)
+
+        call_txn = _make_txn(
+            "RECEIVE_DELIVER", "CALL", net_amount=0.0, amount=1, fees=fees
+        )
+        result = map_schwab_transaction(call_txn)
+        assert result["trade_type"] == "called_away"
+        assert result["premium"] == 0.0
+        assert result["fees"] == pytest.approx(0.10)
+
     def test_premium_prefers_transferitem_price_when_present(self):
         """If Schwab exposes ``transferItem.price`` use it directly as gross.
 

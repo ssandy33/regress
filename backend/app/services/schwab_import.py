@@ -83,7 +83,11 @@ def map_schwab_transaction(txn: dict) -> dict | None:
     fee_adjustment = -fees if is_buy else fees
 
     raw_price = item.get("price")
-    if raw_price is not None:
+    if instruction == "RECEIVE_DELIVER":
+        # Assignment / called-away are lifecycle events, not premium-bearing
+        # trades. Any fees on these rows stay in ``fees`` only.
+        premium_per_share = 0.0
+    elif raw_price is not None:
         try:
             premium_per_share = abs(float(raw_price))
         except (TypeError, ValueError):

@@ -190,7 +190,11 @@ def _map_csv_row(raw_row: dict, header_map: dict[str, str]) -> dict | None:
     is_buy = bool(instruction) and instruction.startswith("BUY")
     fee_adjustment = -abs(fees) if is_buy else abs(fees)
 
-    if price is not None and price > 0 and quantity > 0:
+    if direct_trade_type is not None:
+        # Direct-mapped lifecycle rows (assignment / called-away / expired)
+        # are not premium-bearing trades. Keep fees but emit zero premium.
+        premium_per_share = 0.0
+    elif price is not None and price > 0 and quantity > 0:
         premium_per_share = abs(price)
     elif quantity > 0:
         premium_per_share = max(
