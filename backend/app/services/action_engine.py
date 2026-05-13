@@ -399,10 +399,13 @@ def _cc_candidate_actions(
         )
         # OptionScanRequest.cost_basis is per-share; broker_cost_basis is total.
         # Divide before emitting so the scanner's 10% rule and capital math
-        # match (issue #186).
+        # match (issue #186). Round to 4 decimals to avoid IEEE 754 float
+        # noise leaking into the URL (issue #188 — e.g., 1320.66/100 →
+        # 13.206600000000002 without round()); 4 decimals matches the
+        # precision convention used by recompute_position_state.
         broker_cost_basis = row.get("broker_cost_basis")
         if broker_cost_basis is not None and shares_int > 0:
-            cost_basis_per_share = broker_cost_basis / shares_int
+            cost_basis_per_share = round(broker_cost_basis / shares_int, 4)
             href += f"&cost_basis={quote(str(cost_basis_per_share), safe='')}"
         cards.append(
             {
