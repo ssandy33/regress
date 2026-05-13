@@ -57,8 +57,8 @@ export function useOptionScanner() {
     return raw && !isNaN(Number(raw)) ? raw : '';
   });
   const [sharesHeld, setSharesHeld] = useState(() => {
-    const raw = parseInt(searchParams?.get('shares'), 10);
-    return raw > 0 ? raw : 100;
+    const raw = Number(searchParams?.get('shares'));
+    return Number.isInteger(raw) && raw > 0 ? raw : 100;
   });
   const [capitalAvailable, setCapitalAvailable] = useState('');
   const [minDte, setMinDte] = useState(25);

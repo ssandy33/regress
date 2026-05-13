@@ -104,6 +104,15 @@ test.describe('Options scanner — URL pre-fill', () => {
     await expect(sharesInput).toHaveValue('100');
   });
 
+  test('?shares=100.5 falls back to default (shares must be a whole number)', async ({ page }) => {
+    await setupMocks(page);
+    await page.goto('/options?strategy=covered_call&shares=100.5');
+    await page.waitForLoadState('networkidle');
+
+    const sharesInput = page.getByTestId('scanner-shares-held-input');
+    await expect(sharesInput).toHaveValue('100');
+  });
+
   test('?cost_basis=xyz keeps cost basis empty', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/options?strategy=covered_call&cost_basis=xyz');
@@ -164,9 +173,6 @@ test.describe('Options scanner — URL pre-fill', () => {
 
     await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=17240');
     await page.waitForLoadState('networkidle');
-    // Give any deferred effects a chance to run.
-    await page.waitForTimeout(500);
-
-    expect(scanCalled).toBe(false);
+    await expect.poll(() => scanCalled, { timeout: 1000 }).toBe(false);
   });
 });
