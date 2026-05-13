@@ -35,5 +35,8 @@
     "@storybook/addon-themes": "^10.3.6",
     "vite": "^8.0.12",
     "eslint-plugin-storybook": "^10.3.6"
+  },
+  "overrides": {
+    "eslint-plugin-react-hooks": "7.0.1"
   }
 }
