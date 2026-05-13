@@ -123,6 +123,7 @@ export default function ChainFilters({
                   value={sharesHeld}
                   onChange={(e) => setSharesHeld(parseInt(e.target.value) || 100)}
                   className={inputClass}
+                  data-testid="scanner-shares-held-input"
                 />
               </div>
               <div>

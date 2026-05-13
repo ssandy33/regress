@@ -82,8 +82,7 @@ test.describe('Options scanner — URL pre-fill', () => {
     const costBasisInput = page.locator('input[placeholder="15.50"]');
     await expect(costBasisInput).toHaveValue('17240');
 
-    // Shares Held has no placeholder — match by label association.
-    const sharesInput = page.locator('label:has-text("Shares Held") + input');
+    const sharesInput = page.getByTestId('scanner-shares-held-input');
     await expect(sharesInput).toHaveValue('100');
   });
 
@@ -101,7 +100,7 @@ test.describe('Options scanner — URL pre-fill', () => {
     await page.goto('/options?strategy=covered_call&shares=abc');
     await page.waitForLoadState('networkidle');
 
-    const sharesInput = page.locator('label:has-text("Shares Held") + input');
+    const sharesInput = page.getByTestId('scanner-shares-held-input');
     await expect(sharesInput).toHaveValue('100');
   });
 
