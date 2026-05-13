@@ -391,6 +391,15 @@ def _cc_candidate_actions(
         ticker = row["ticker"]
         if ticker in tickers_with_open_calls:
             continue
+        shares_int = int(row["shares"])
+        href = (
+            f"/options?ticker={quote(ticker, safe='')}"
+            f"&strategy=covered_call"
+            f"&shares={shares_int}"
+        )
+        broker_cost_basis = row.get("broker_cost_basis")
+        if broker_cost_basis is not None:
+            href += f"&cost_basis={quote(str(broker_cost_basis), safe='')}"
         cards.append(
             {
                 "id": f"position.cc_candidate.{_slugify_ticker(ticker)}",
@@ -399,15 +408,15 @@ def _cc_candidate_actions(
                 "title": f"Consider covered call on {ticker}",
                 "subject": {
                     "ticker": ticker,
-                    "amount": f"{int(row['shares'])} shares",
+                    "amount": f"{shares_int} shares",
                 },
                 "reason": (
-                    f"You hold {int(row['shares'])} {ticker} shares with no open "
+                    f"You hold {shares_int} {ticker} shares with no open "
                     "call leg — consider writing a covered call."
                 ),
                 "cta": {
                     "label": f"Scan {ticker}",
-                    "href": f"/options?ticker={quote(ticker, safe='')}",
+                    "href": href,
                     "kind": "link",
                 },
             }

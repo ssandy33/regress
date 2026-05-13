@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from 'react';
 import dynamic from 'next/dynamic';
 import LoadingSkeleton from '@/components/layout/LoadingSkeleton';
 
@@ -9,5 +10,9 @@ const OptionScanner = dynamic(() => import('@/components/options/OptionScanner')
 });
 
 export default function OptionsPage() {
-  return <OptionScanner />;
+  return (
+    <Suspense fallback={null}>
+      <OptionScanner />
+    </Suspense>
+  );
 }
