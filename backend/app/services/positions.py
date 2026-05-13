@@ -344,6 +344,137 @@ def _derive_strategy_label(shares: int, open_legs: list[_LegKey]) -> str:
     return "csp"
 
 
+def _match_originating_put(
+    trades_by_id: dict[str, Trade],
+    consumed: "_LegKey | None",
+) -> Trade | None:
+    """Look up the originating short put for an assignment-consumed leg.
+
+    ``_consume_leg`` already returns the originating opening Trade's ``id``
+    via ``_LegKey.trade_id``. This helper centralizes the lookup so both the
+    recomputer (which nets the put's net premium into ``broker_cost_basis``)
+    and the journal read path (which excludes the netted premium from
+    ``total_premiums``) agree on which trade was matched. Returns ``None``
+    when ``consumed`` is ``None`` (the orphan-assignment fallback) or when
+    the originating trade is somehow not the expected ``sell_put`` — the
+    caller falls back to the un-netted raw basis in either case.
+    """
+    if consumed is None:
+        return None
+    trade = trades_by_id.get(consumed.trade_id)
+    if trade is None:
+        return None
+    if trade.trade_type != "sell_put":
+        return None
+    return trade
+
+
+def _pair_leg_for_netting(
+    open_legs: list[_LegKey],
+    option_type: str | None,
+    strike: float,
+    expiration: str,
+) -> _LegKey | None:
+    """Strict-then-FIFO match against open legs, with no logging side effects.
+
+    Mirrors :func:`_consume_leg`'s pairing logic exactly but skips the
+    warning emission used by :func:`recompute_position_state`. The journal
+    read path replays trades on every position fetch, so it must not emit
+    warnings (the recomputer already did, at write time).
+    """
+    candidates: list[str]
+    if option_type is None:
+        candidates = ["put", "call"]
+    else:
+        candidates = [option_type]
+
+    for candidate in candidates:
+        for idx, leg in enumerate(open_legs):
+            if (
+                leg.option_type == candidate
+                and leg.strike == strike
+                and leg.expiration == expiration
+            ):
+                return open_legs.pop(idx)
+
+    for candidate in candidates:
+        side_indices = [
+            i for i, leg in enumerate(open_legs) if leg.option_type == candidate
+        ]
+        if not side_indices:
+            continue
+        fifo_idx = min(side_indices, key=lambda i: open_legs[i].expiration)
+        return open_legs.pop(fifo_idx)
+
+    return None
+
+
+def compute_assignment_netting(trades: list[Trade]) -> dict[str, float]:
+    """Replay a position's ledger and report per-sell_put premium netted into basis.
+
+    Returns a ``{sell_put_trade_id: gross_premium_dollars_netted}`` mapping
+    where ``gross_premium_dollars_netted == premium_per_share * 100 *
+    contracts_consumed_by_assignment``. Used by the journal read path to
+    avoid double-counting netted premium in ``adjusted_cost_basis`` — see
+    :func:`app.services.journal._build_position_response`.
+
+    Pure function — no DB writes, no log emissions. Mirrors the matching
+    logic in :func:`recompute_position_state` so a single source of truth
+    governs which short puts are considered "consumed by assignment" for
+    basis purposes. Sorts trades by ``(opened_at, id)`` to match the
+    recomputer's replay order, then walks the ledger once.
+
+    Fees are not part of the returned value because
+    :func:`app.services.journal.compute_total_premiums` already excludes
+    fees from the gross premium sum — only the gross premium dollars need
+    to be excluded to keep ``adjusted_cost_basis`` correct.
+    """
+    sorted_trades = sorted(trades, key=lambda t: (t.opened_at or "", t.id or ""))
+    by_id: dict[str, Trade] = {t.id: t for t in sorted_trades}
+    open_legs: list[_LegKey] = []
+    netted: dict[str, float] = {}
+
+    for trade in sorted_trades:
+        ttype = trade.trade_type
+        qty = int(trade.quantity or 1)
+
+        opening_side = _option_type_for_open(ttype)
+        if opening_side is not None:
+            for _ in range(qty):
+                open_legs.append(
+                    _LegKey(
+                        option_type=opening_side,
+                        strike=float(trade.strike),
+                        expiration=trade.expiration,
+                        trade_id=trade.id,
+                    )
+                )
+            continue
+
+        if ttype not in _OPTION_CLOSE_TYPES:
+            continue
+
+        close_side = _option_type_for_close(ttype)
+        for _ in range(qty):
+            consumed = _pair_leg_for_netting(
+                open_legs,
+                close_side,
+                float(trade.strike),
+                trade.expiration,
+            )
+            if ttype != "assignment":
+                continue
+            originating = _match_originating_put(by_id, consumed)
+            if originating is None:
+                continue
+            premium_dollars = float(originating.premium or 0.0) * 100.0
+            netted[originating.id] = (
+                netted.get(originating.id, 0.0) + premium_dollars
+            )
+
+    return netted
+
+
 def recompute_position_state(
     db: Session,
     position_id: str,
@@ -462,6 +593,16 @@ def recompute_position_state(
     # the calendar-fallback pass. Applied to ``Trade.closed_at`` in a single
     # pass after the replay so the helpers stay pure (issue #136).
     closes_to_write: list[tuple[str, str]] = []
+    # ``Trade.id`` → ``Trade`` lookup so the assignment branch can resolve the
+    # originating short put for premium-netting into ``broker_cost_basis``
+    # (issue #183).
+    trades_by_id: dict[str, Trade] = {t.id: t for t in trades}
+    # Per-sell_put cumulative count of contracts already consumed by
+    # assignment within this replay. Used to prorate fees: each consumed
+    # contract gets ``fees / total_contracts`` of the originating put's
+    # fee budget netted into basis, summing to the full fee total only when
+    # every contract is consumed.
+    consumed_contracts_by_put: dict[str, int] = {}
 
     for trade in trades:
         ttype = trade.trade_type
@@ -485,6 +626,7 @@ def recompute_position_state(
         # Closing trade types: consume one matching open leg per contract.
         if ttype in _OPTION_CLOSE_TYPES:
             close_side = _option_type_for_close(ttype)
+            consumed_puts_this_trade: list[_LegKey] = []
             for _ in range(qty):
                 consumed = _consume_leg(
                     open_legs,
@@ -500,11 +642,43 @@ def recompute_position_state(
                     # Stamp the resolving trade's opened_at on the consumed
                     # leg's originating Trade row (issue #136).
                     closes_to_write.append((consumed.trade_id, trade.opened_at))
+                if ttype == "assignment" and consumed is not None:
+                    consumed_puts_this_trade.append(consumed)
 
             if ttype == "assignment":
-                # Put assigned: acquire shares at strike.
+                # Put assigned: acquire shares at strike. Then net the
+                # originating short put's premium (minus prorated fees) out
+                # of broker_cost_basis so the stored value matches the IRS
+                # / Schwab convention "strike × shares − net premium" rather
+                # than the raw strike × shares (issue #183).
                 shares += contract_shares
                 basis += float(trade.strike) * contract_shares
+
+                unmatched_contracts = qty - len(consumed_puts_this_trade)
+                for consumed_leg in consumed_puts_this_trade:
+                    originating = _match_originating_put(
+                        trades_by_id, consumed_leg
+                    )
+                    if originating is None:
+                        unmatched_contracts += 1
+                        continue
+                    total_contracts = max(int(originating.quantity or 1), 1)
+                    fee_share = float(originating.fees or 0.0) / total_contracts
+                    premium_dollars = float(originating.premium or 0.0) * 100.0
+                    # Net premium contribution for THIS one consumed contract.
+                    basis -= premium_dollars - fee_share
+                    consumed_contracts_by_put[originating.id] = (
+                        consumed_contracts_by_put.get(originating.id, 0) + 1
+                    )
+                if unmatched_contracts > 0:
+                    logger.warning(
+                        "Un-netted assignment basis for %s assignment "
+                        "trade_id=%s — no matching short put for %d contract(s); "
+                        "falling back to raw strike × shares",
+                        position.ticker,
+                        trade.id,
+                        unmatched_contracts,
+                    )
             elif ttype == "called_away":
                 # Call exercised: shares are removed at the option's strike;
                 # broker basis is reduced proportionally to the shares removed.

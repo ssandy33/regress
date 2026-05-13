@@ -66,11 +66,27 @@ def map_schwab_transaction(txn: dict) -> dict | None:
 
     quantity = abs(int(item.get("amount", 1)))
     net_amount = float(txn.get("netAmount", 0))
+    fees = _extract_fees(txn)
 
-    # Premium per share: abs(netAmount) / (quantity * 100)
-    # Positive for sells (credits), negative for buys (debits)
-    if quantity > 0:
-        premium_per_share = abs(net_amount) / (quantity * 100)
+    # Premium per share: prefer the gross per-share price reported on the
+    # transferItem when Schwab provides it; otherwise gross-up the post-fee
+    # ``netAmount`` by adding the fee total back in before dividing. Schwab's
+    # ``netAmount`` field is the *net* dollar movement after commissions and
+    # exchange fees, so using it raw understates the premium by ``fees / (qty
+    # * 100)`` per share (issue #184: a 1-contract sell put at $0.30 with
+    # $0.66 in fees nets to $29.34, which rounds to $0.29 — the visible bug).
+    #
+    # Positive for sells (credits), negative for buys (debits).
+    raw_price = item.get("price")
+    if raw_price is not None:
+        try:
+            premium_per_share = abs(float(raw_price))
+        except (TypeError, ValueError):
+            premium_per_share = (
+                (abs(net_amount) + fees) / (quantity * 100) if quantity > 0 else 0.0
+            )
+    elif quantity > 0:
+        premium_per_share = (abs(net_amount) + fees) / (quantity * 100)
     else:
         premium_per_share = 0.0
 
@@ -78,7 +94,6 @@ def map_schwab_transaction(txn: dict) -> dict | None:
     if instruction in ("BUY_TO_CLOSE",):
         premium_per_share = -premium_per_share
 
-    fees = _extract_fees(txn)
     opened_at = txn.get("transactionDate", "")
 
     return {

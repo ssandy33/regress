@@ -172,14 +172,24 @@ def _map_csv_row(raw_row: dict, header_map: dict[str, str]) -> dict | None:
 
     amount = _parse_float(raw_row.get(header_map.get("amount", ""), ""))
     fees = _parse_float(raw_row.get(header_map.get("fees & comm", ""), "")) or 0.0
+    price = _parse_float(raw_row.get(header_map.get("price", ""), ""))
 
     if amount is None:
         amount = 0.0
 
-    # Premium per share: abs(Amount) / (quantity * 100). Schwab's "Amount"
-    # column is signed (positive = credit, negative = debit) and already net of
-    # fees, mirroring the API's `netAmount` field.
-    premium_per_share = abs(amount) / (quantity * 100) if quantity > 0 else 0.0
+    # Premium per share: prefer the per-share ``Price`` column when present —
+    # Schwab's CSV exposes the gross premium there directly, which sidesteps
+    # the fee-arithmetic that ``Amount`` is already net of. Fall back to
+    # gross-up math (``abs(Amount) + fees``) when ``Price`` is missing or
+    # unparseable — that path applies to assignment / expired rows that have
+    # no Price column populated, where the fallback produces 0.0 from a 0.0
+    # amount + 0.0 fees anyway. See issue #184.
+    if price is not None and price > 0 and quantity > 0:
+        premium_per_share = abs(price)
+    elif quantity > 0:
+        premium_per_share = (abs(amount) + abs(fees)) / (quantity * 100)
+    else:
+        premium_per_share = 0.0
     if instruction == "BUY_TO_CLOSE":
         premium_per_share = -premium_per_share
 

@@ -127,6 +127,72 @@ class TestMapSchwabTransaction:
         result = map_schwab_transaction(txn)
         assert result["fees"] == 0.0
 
+    def test_premium_grossed_up_when_netamount_excludes_fees(self):
+        """Sell-put net=$29.34 + $0.66 fees + qty=1 → gross premium $0.30, not $0.29.
+
+        Schwab's ``netAmount`` is post-fees, so dividing it by ``qty*100``
+        understates the premium by ``fees / (qty*100)``. Issue #184: that
+        rounding error was the visible "0.29 instead of 0.30" symptom.
+        """
+        fees = {
+            "commission": 0.65,
+            "secFee": 0.01,
+            "optRegFee": 0.0,
+            "rFee": 0.0,
+            "cdscFee": 0.0,
+            "otherCharges": 0.0,
+        }
+        txn = _make_txn(
+            "SELL_TO_OPEN",
+            "PUT",
+            ticker="F",
+            strike=13.50,
+            net_amount=29.34,
+            amount=1,
+            fees=fees,
+        )
+        result = map_schwab_transaction(txn)
+        assert result is not None
+        assert result["premium"] == pytest.approx(0.30, abs=1e-4)
+        assert result["premium"] != pytest.approx(0.2934, abs=1e-4)
+
+    def test_premium_prefers_transferitem_price_when_present(self):
+        """If Schwab exposes ``transferItem.price`` use it directly as gross.
+
+        Some API payloads include the per-share price on the option leg;
+        prefer it over the netAmount gross-up arithmetic. The two approaches
+        should agree but ``price`` is the canonical field.
+        """
+        fees = {"commission": 0.66}
+        txn = _make_txn(
+            "SELL_TO_OPEN",
+            "PUT",
+            net_amount=29.34,
+            amount=1,
+            fees=fees,
+        )
+        # Inject the price field on the transferItem.
+        txn["transferItems"][0]["price"] = 0.30
+        result = map_schwab_transaction(txn)
+        assert result["premium"] == pytest.approx(0.30, abs=1e-4)
+
+    def test_premium_preserves_subpenny_precision(self):
+        """Gross-up math preserves sub-penny precision (e.g. $0.295).
+
+        Sell put @ $0.295 gross × 1 contract = $29.50 gross, minus $0.66 fees
+        = $28.84 net. The import path must recover $0.295 from those inputs.
+        """
+        fees = {"commission": 0.65, "secFee": 0.01}
+        txn = _make_txn(
+            "SELL_TO_OPEN",
+            "PUT",
+            net_amount=28.84,
+            amount=1,
+            fees=fees,
+        )
+        result = map_schwab_transaction(txn)
+        assert result["premium"] == pytest.approx(0.295, abs=1e-4)
+
 
 # --- Duplicate detection ---
 
