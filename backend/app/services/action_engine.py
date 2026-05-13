@@ -397,9 +397,13 @@ def _cc_candidate_actions(
             f"&strategy=covered_call"
             f"&shares={shares_int}"
         )
+        # OptionScanRequest.cost_basis is per-share; broker_cost_basis is total.
+        # Divide before emitting so the scanner's 10% rule and capital math
+        # match (issue #186).
         broker_cost_basis = row.get("broker_cost_basis")
-        if broker_cost_basis is not None:
-            href += f"&cost_basis={quote(str(broker_cost_basis), safe='')}"
+        if broker_cost_basis is not None and shares_int > 0:
+            cost_basis_per_share = broker_cost_basis / shares_int
+            href += f"&cost_basis={quote(str(cost_basis_per_share), safe='')}"
         cards.append(
             {
                 "id": f"position.cc_candidate.{_slugify_ticker(ticker)}",

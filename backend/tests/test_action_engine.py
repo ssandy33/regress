@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.services.action_engine import (
     ITM_SHORT_DTE_CAP,
     MAX_ACTIONS,
@@ -371,7 +373,46 @@ class TestCcCandidateTrigger:
         assert "ticker=AAPL" in href
         assert "strategy=covered_call" in href
         assert "shares=100" in href
-        assert "cost_basis=17240.0" in href
+        # cost_basis is emitted PER-SHARE (issue #186) — scanner expects that
+        # unit. 17240.0 total / 100 shares = 172.4 per share.
+        assert "cost_basis=172.4" in href
+        # Must never emit the raw total — that breaks the 10% rule downstream.
+        assert "cost_basis=17240" not in href
+
+    def test_cc_candidate_href_emits_per_share_basis_canonical_f_case(self):
+        """Regression for #186: F at 100 shares with broker_cost_basis=$1,320.66
+        must emit cost_basis=13.2066 per-share, not the raw total.
+
+        Pre-fix the scanner's 10%-rule floor became 1320.66 * 1.01 ~= $1,333,
+        rejecting every realistic F strike.
+        """
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=0),
+            positions=[
+                _position(
+                    "p-f",
+                    "F",
+                    shares=100,
+                    broker_cost_basis=1320.66,
+                )
+            ],
+            open_legs=[],
+        )
+        card = next(a for a in actions if a["action_id"] == "position.cc_candidate")
+        href = card["cta"]["href"]
+        assert "cost_basis=13.2066" in href
+        assert "cost_basis=1320.66" not in href
+
+    @pytest.mark.skip(
+        reason=(
+            "Manual AC from #186: clicking 'Scan F →' on the dashboard yields "
+            "a scanner result with at least one non-rejected strike. Requires "
+            "live option-chain data from Schwab, not automatable in unit tests."
+        )
+    )
+    def test_manual_ac_cc_candidate_yields_non_rejected_strike(self):
+        pass
 
     def test_cc_candidate_href_omits_cost_basis_when_null(self):
         """Null broker_cost_basis must omit the cost_basis param entirely."""
