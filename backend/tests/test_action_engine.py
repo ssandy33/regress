@@ -60,6 +60,7 @@ def _position(
     shares: int = 100,
     unrealized_pl: float | None = None,
     pl_pct: float | None = None,
+    broker_cost_basis: float | None = None,
 ) -> dict:
     return {
         "id": position_id,
@@ -67,6 +68,7 @@ def _position(
         "shares": shares,
         "unrealized_pl": unrealized_pl,
         "pl_pct": pl_pct,
+        "broker_cost_basis": broker_cost_basis,
     }
 
 
@@ -348,6 +350,50 @@ class TestCcCandidateTrigger:
         )
         ids = {a["action_id"] for a in actions}
         assert "position.cc_candidate" not in ids
+
+    def test_cc_candidate_href_carries_context(self):
+        """The CTA href hands off strategy, shares, and cost basis to the scanner."""
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=0),
+            positions=[
+                _position(
+                    "p-aapl",
+                    "AAPL",
+                    shares=100,
+                    broker_cost_basis=17240.0,
+                )
+            ],
+            open_legs=[],
+        )
+        card = next(a for a in actions if a["action_id"] == "position.cc_candidate")
+        href = card["cta"]["href"]
+        assert "ticker=AAPL" in href
+        assert "strategy=covered_call" in href
+        assert "shares=100" in href
+        assert "cost_basis=17240.0" in href
+
+    def test_cc_candidate_href_omits_cost_basis_when_null(self):
+        """Null broker_cost_basis must omit the cost_basis param entirely."""
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=0),
+            positions=[
+                _position(
+                    "p-aapl",
+                    "AAPL",
+                    shares=100,
+                    broker_cost_basis=None,
+                )
+            ],
+            open_legs=[],
+        )
+        card = next(a for a in actions if a["action_id"] == "position.cc_candidate")
+        href = card["cta"]["href"]
+        assert "ticker=AAPL" in href
+        assert "strategy=covered_call" in href
+        assert "shares=100" in href
+        assert "cost_basis" not in href
 
 
 class TestNoOpenLegsTrigger:

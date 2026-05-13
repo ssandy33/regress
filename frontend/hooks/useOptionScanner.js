@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { scanOptions } from '../api/client';
 
@@ -40,14 +41,25 @@ function computeCapitalFields(recommendations, strategy, capitalAvailable, curre
 }
 
 export function useOptionScanner() {
+  const searchParams = useSearchParams();
+
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const [ticker, setTicker] = useState('');
-  const [strategy, setStrategy] = useState('cash_secured_put');
-  const [costBasis, setCostBasis] = useState('');
-  const [sharesHeld, setSharesHeld] = useState(100);
+  const [ticker, setTicker] = useState(() => searchParams?.get('ticker')?.toUpperCase().trim() ?? '');
+  const [strategy, setStrategy] = useState(() => {
+    const raw = searchParams?.get('strategy');
+    return ['cash_secured_put', 'covered_call'].includes(raw) ? raw : 'cash_secured_put';
+  });
+  const [costBasis, setCostBasis] = useState(() => {
+    const raw = searchParams?.get('cost_basis');
+    return raw && !isNaN(Number(raw)) ? raw : '';
+  });
+  const [sharesHeld, setSharesHeld] = useState(() => {
+    const raw = parseInt(searchParams?.get('shares'), 10);
+    return raw > 0 ? raw : 100;
+  });
   const [capitalAvailable, setCapitalAvailable] = useState('');
   const [minDte, setMinDte] = useState(25);
   const [maxDte, setMaxDte] = useState(50);
