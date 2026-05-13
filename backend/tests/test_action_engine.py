@@ -403,6 +403,9 @@ class TestCcCandidateTrigger:
         href = card["cta"]["href"]
         assert "cost_basis=13.2066" in href
         assert "cost_basis=1320.66" not in href
+        # Regression for #188: no IEEE 754 float-noise tail in the URL.
+        assert "13.206600000000002" not in href
+        assert "13.20660000000001" not in href
 
     @pytest.mark.skip(
         reason=(
