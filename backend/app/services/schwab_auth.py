@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 SCHWAB_TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
 SCHWAB_AUTHORIZE_URL = "https://api.schwabapi.com/v1/oauth/authorize"
 SCHWAB_REDIRECT_URI = "https://127.0.0.1:8089/callback"
+# Per Schwab's Swagger UI for /trader/v1/accounts/{hash}/transactions, the OAuth
+# grant must declare scope=readonly. Without it, /transactions silently returns
+# 200 + [] while /accounts continues to work. See issue #125.
+SCHWAB_OAUTH_SCOPE = "readonly"
 
 # Refresh access token when it expires within this many seconds
 ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 120
@@ -230,7 +234,11 @@ class SchwabTokenManager:
         self._cached_access_token = token_data["access_token"]
         self._cached_access_token_expires = access_expires
 
-        logger.info("Schwab tokens refreshed, access expires %s", access_expires.isoformat())
+        logger.info(
+            "Schwab tokens refreshed, access expires %s, scope=%s",
+            access_expires.isoformat(),
+            token_data.get("scope", "(none returned)"),
+        )
 
 
 def _read_setting(db, key: str) -> str | None:

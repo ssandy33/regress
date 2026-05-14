@@ -13,6 +13,7 @@ import httpx
 
 from app.services.schwab_auth import (
     SCHWAB_AUTHORIZE_URL,
+    SCHWAB_OAUTH_SCOPE,
     SCHWAB_REDIRECT_URI,
     SCHWAB_TOKEN_URL,
     _upsert_setting,
@@ -38,6 +39,7 @@ def schwab_auth(args):
         f"{SCHWAB_AUTHORIZE_URL}"
         f"?response_type=code"
         f"&client_id={app_key}"
+        f"&scope={SCHWAB_OAUTH_SCOPE}"
         f"&redirect_uri={quote(SCHWAB_REDIRECT_URI, safe='')}"
     )
 
@@ -88,6 +90,8 @@ def schwab_auth(args):
     if "access_token" not in token_data or "refresh_token" not in token_data:
         print("Error: Unexpected token response format. Missing required fields.", file=sys.stderr)
         sys.exit(1)
+
+    print(f"Schwab granted scope: {token_data.get('scope', '(none returned)')}")
 
     now = datetime.now(timezone.utc)
     access_expires = now.replace(microsecond=0) + timedelta(

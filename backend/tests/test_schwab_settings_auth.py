@@ -20,6 +20,15 @@ class TestSchwabAuthUrl:
         resp = client.post("/api/settings/schwab/auth-url", json={"app_key": "  "})
         assert resp.status_code == 422
 
+    def test_auth_url_includes_readonly_scope(self, client):
+        # Regression for #125: Schwab's /trader/v1/accounts/{hash}/transactions
+        # endpoint silently returns 200 + [] when the OAuth grant lacks scope.
+        # Schwab's own Swagger UI documents scope=readonly as required for the
+        # transactions endpoint.
+        resp = client.post("/api/settings/schwab/auth-url", json={"app_key": "k"})
+        assert resp.status_code == 200
+        assert "scope=readonly" in resp.json()["auth_url"]
+
 
 def _mock_token_response():
     mock = MagicMock()
