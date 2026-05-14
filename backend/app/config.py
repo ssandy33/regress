@@ -11,8 +11,6 @@ class Settings(BaseSettings):
     slack_webhook_url: str = ""
     schwab_encryption_key: str = ""
     nextauth_secret: Optional[str] = None
-    github_id: str = ""
-    github_secret: str = ""
     allowed_users: str = ""
     database_url: str = "sqlite:///./regression_tool.db"
     cache_ttl_daily_hours: int = 24
