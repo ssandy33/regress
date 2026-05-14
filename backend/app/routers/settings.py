@@ -13,6 +13,7 @@ from sqlalchemy import func, text
 from app.config import settings, get_fred_api_key
 from app.services.schwab_auth import (
     SCHWAB_AUTHORIZE_URL,
+    SCHWAB_OAUTH_SCOPE,
     SCHWAB_REDIRECT_URI,
     SCHWAB_TOKEN_URL,
     SchwabTokenManager,
@@ -175,6 +176,7 @@ def get_schwab_auth_url(req: SchwabAuthUrlRequest):
         f"{SCHWAB_AUTHORIZE_URL}"
         f"?response_type=code"
         f"&client_id={quote(req.app_key.strip(), safe='')}"
+        f"&scope={SCHWAB_OAUTH_SCOPE}"
         f"&redirect_uri={quote(SCHWAB_REDIRECT_URI, safe='')}"
     )
     return {"auth_url": auth_url, "redirect_uri": SCHWAB_REDIRECT_URI}
@@ -227,6 +229,7 @@ def exchange_schwab_callback(req: SchwabCallbackRequest, db: DBSession = Depends
             content={"detail": "Unexpected response from Schwab. Missing token fields."},
         )
 
+    logger.info("Schwab granted scope: %s", token_data.get("scope", "(none returned)"))
     result = store_schwab_tokens(db, app_key, app_secret, token_data)
     return {"status": "ok", **result}
 
