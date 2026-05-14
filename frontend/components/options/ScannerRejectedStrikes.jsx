@@ -1,21 +1,22 @@
-// Phase 1.5 mock — placeholder for spec implementation. Replace during Phase 3.
+// Humanized rejected-strikes disclosure. Replaces the inline red
+// `rejection_reasons` join with a bulleted list of plain-English sentences
+// in neutral slate color.
 //
-// Humanized rejected-strikes disclosure. Replaces the inline red `rejection_reasons`
-// join with a bulleted list of plain-English sentences in neutral slate color.
-//
-// The backend adds a `human_reasons` field on `RejectedStrike` (preserving
-// `rejection_reasons` for tests). Mapper lives in
-// `backend/app/services/rejection_messages.py` per the spec. Unknown codes
-// degrade gracefully to the raw string.
+// Source of truth for the human sentences is the backend's `human_reasons`
+// field on each `RejectedStrike` (populated by
+// `backend/app/services/rejection_messages.py`). The fallback CLIENT_COPY
+// map below is purely defensive — if the backend ever returns an empty
+// `human_reasons` (legacy payload, mis-deploy), the client maps raw codes
+// to short sentences so the user is not staring at machine codes. Unknown
+// raw codes degrade to the raw string unchanged.
 //
 // Spec: frontend/design-specs/scanner-education-v0.5.7.md (Affordance 4)
 
 import { useState } from 'react';
 
-// Stand-in mapper for stories. In production this lives server-side and the
-// payload arrives pre-humanized via `human_reasons`. Kept here for stories
-// that pass raw codes and for the "unknown reason code" fallback variant.
-export const REJECTION_COPY = {
+// Defensive fallback only — the backend is the canonical source.
+// Keys are the code prefix (everything before the colon in a raw rejection).
+const CLIENT_COPY_FALLBACK = {
   fails_10pct_rule:
     'Strike is below 90% of your cost basis — selling here could force you to part with shares at a loss.',
   itm_put:
@@ -32,15 +33,19 @@ export const REJECTION_COPY = {
     'Return is above your sanity-check cap — likely a stale quote or an unusual contract.',
 };
 
-function humanize(code) {
-  return REJECTION_COPY[code] || code; // graceful fallback
+function humanizeFallback(raw) {
+  // Extract the code prefix (before the first colon) and look it up. If the
+  // raw string has no colon, treat the whole string as the code.
+  const codeMatch = /^([a-z_]+)/i.exec(raw);
+  const code = codeMatch ? codeMatch[1] : raw;
+  return CLIENT_COPY_FALLBACK[code] || raw;
 }
 
 function RejectedRow({ rejection }) {
   const reasons =
     rejection.human_reasons && rejection.human_reasons.length > 0
       ? rejection.human_reasons
-      : rejection.rejection_reasons.map(humanize);
+      : (rejection.rejection_reasons || []).map(humanizeFallback);
 
   return (
     <li

@@ -1,6 +1,16 @@
 import { useState } from 'react';
+import ScannerColumnHeader from './ScannerColumnHeader';
+import ScannerStrikeRowExpansion from './ScannerStrikeRowExpansion';
+import { SCANNER_COLUMN_TOOLTIPS } from './scannerColumnTooltips';
 
-export default function StrikeTable({ recommendations, selectedStrikes, onToggleSelection, hasCapital = false }) {
+export default function StrikeTable({
+  recommendations,
+  selectedStrikes,
+  onToggleSelection,
+  hasCapital = false,
+  strategy = 'covered_call',
+  costBasis = null,
+}) {
   const [sortField, setSortField] = useState('rank');
   const [sortDir, setSortDir] = useState('asc');
   const [expandedRow, setExpandedRow] = useState(null);
@@ -36,16 +46,16 @@ export default function StrikeTable({ recommendations, selectedStrikes, onToggle
             <tr>
               <th className="px-3 py-2 text-left w-8" />
               <SortHeader field="rank" label="#" sortField={sortField} sortDir={sortDir} onSort={handleSort} align="left" />
-              <SortHeader field="strike" label="Strike" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <EduHeader field="strike" label="Strike" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.strike} />
               <SortHeader field="expiration" label="Exp" sortField={sortField} sortDir={sortDir} onSort={handleSort} align="left" />
-              <SortHeader field="dte" label="DTE" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-              <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 dark:text-slate-400">Bid/Ask</th>
-              <SortHeader field="delta" label="Delta" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader field="open_interest" label="OI" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader field="total_premium" label="Premium" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader field="return_on_capital_pct" label="Return%" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader field="annualized_return_pct" label="Ann.%" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader field="distance_from_price_pct" label="Dist.%" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
+              <EduHeader field="dte" label="DTE" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.dte} />
+              <BidAskHeader />
+              <EduHeader field="delta" label="Delta" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.delta} />
+              <EduHeader field="open_interest" label="OI" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.open_interest} />
+              <EduHeader field="total_premium" label="Premium" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.total_premium} />
+              <EduHeader field="return_on_capital_pct" label="Return%" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.return_on_capital_pct} />
+              <EduHeader field="annualized_return_pct" label="Ann.%" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.annualized_return_pct} />
+              <EduHeader field="distance_from_price_pct" label="Dist.%" sortField={sortField} sortDir={sortDir} onSort={handleSort} tooltip={SCANNER_COLUMN_TOOLTIPS.distance_from_price_pct} />
               {hasCapital && (
                 <>
                   <SortHeader field="contracts" label="Contracts" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
@@ -111,7 +121,11 @@ export default function StrikeTable({ recommendations, selectedStrikes, onToggle
                   {isExpanded && (
                     <tr>
                       <td colSpan={hasCapital ? 14 : 12} className="px-6 py-4 bg-slate-50 dark:bg-slate-900/50">
-                        <ExpandedDetails strike={s} />
+                        <ExpandedDetails
+                          strike={s}
+                          strategy={strategy}
+                          costBasis={costBasis}
+                        />
                       </td>
                     </tr>
                   )}
@@ -142,52 +156,97 @@ function SortHeader({ field, label, sortField, sortDir, onSort, align = 'right' 
   );
 }
 
-function ExpandedDetails({ strike }) {
+// Sortable column header WITH the educational \u24d8 tooltip. Adapter around the
+// shared ScannerColumnHeader component \u2014 keeps the sort plumbing local to
+// StrikeTable so we don't have to thread sortField/sortDir through every call.
+function EduHeader({ field, label, sortField, sortDir, onSort, tooltip, align = 'right' }) {
   return (
-    <div className="grid grid-cols-3 gap-6 text-sm">
-      <div>
-        <h4 className="font-medium text-slate-900 dark:text-white mb-2">
-          Greeks
-          {strike.greeks_source && strike.greeks_source !== 'market' && (
-            <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">
-              {strike.greeks_source === 'calculated' ? 'BS calc' : strike.greeks_source}
-            </span>
-          )}
-        </h4>
-        <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
-          <div>Delta: {strike.delta?.toFixed(3) ?? 'N/A'}</div>
-          <div>Gamma: {strike.gamma?.toFixed(4) ?? 'N/A'}</div>
-          <div>Theta: {strike.theta?.toFixed(4) ?? 'N/A'}</div>
-          <div>Vega: {strike.vega?.toFixed(4) ?? 'N/A'}</div>
-          <div>IV: {strike.iv ? (strike.iv * 100).toFixed(1) + '%' : 'N/A'}</div>
-        </div>
-      </div>
-      <div>
-        <h4 className="font-medium text-slate-900 dark:text-white mb-2">Metrics</h4>
-        <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
-          <div>Premium/Contract: ${strike.premium_per_contract.toFixed(2)}</div>
-          <div>Max Profit: ${strike.max_profit.toFixed(2)}</div>
-          {strike.breakeven != null && <div>Breakeven: ${strike.breakeven.toFixed(2)}</div>}
-          {strike.distance_from_basis_pct != null && <div>Dist. from Basis: {strike.distance_from_basis_pct.toFixed(1)}%</div>}
-          <div>50% Target: ${strike.fifty_pct_profit_target.toFixed(2)}</div>
-        </div>
-      </div>
-      <div>
-        <h4 className="font-medium text-slate-900 dark:text-white mb-2">Rule Compliance</h4>
-        <div className="space-y-1 text-xs">
-          <RuleCheck label="10% Rule" passed={strike.rule_compliance.passes_10pct_rule} />
-          <RuleCheck label="DTE Range" passed={strike.rule_compliance.passes_dte_range} />
-          <RuleCheck label="Delta Range" passed={strike.rule_compliance.passes_delta_range} />
-          <RuleCheck label="Earnings Check" passed={strike.rule_compliance.passes_earnings_check} />
-          <RuleCheck label="Return Target" passed={strike.rule_compliance.passes_return_target} />
-        </div>
-        {strike.flags.length > 0 && (
-          <div className="mt-2 text-xs text-yellow-600 dark:text-yellow-400">
-            Flags: {strike.flags.join(', ')}
+    <ScannerColumnHeader
+      field={field}
+      label={label}
+      tooltip={tooltip}
+      active={sortField === field}
+      sortDir={sortDir}
+      onSort={onSort}
+      align={align}
+    />
+  );
+}
+
+// Non-sortable Bid/Ask header with a tooltip. The bid/ask spread isn't a
+// sortable metric (no single numeric column), but it deserves an explainer.
+function BidAskHeader() {
+  return (
+    <ScannerColumnHeader
+      field="bid_ask"
+      label="Bid/Ask"
+      tooltip={SCANNER_COLUMN_TOOLTIPS.bid_ask}
+      align="right"
+    />
+  );
+}
+
+function ExpandedDetails({ strike, strategy = 'covered_call', costBasis = null }) {
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-6 text-sm">
+        <div>
+          <h4 className="font-medium text-slate-900 dark:text-white mb-2">
+            Greeks
+            {strike.greeks_source && strike.greeks_source !== 'market' && (
+              <span className="ml-1.5 text-[10px] font-normal px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400">
+                {strike.greeks_source === 'calculated' ? 'BS calc' : strike.greeks_source}
+              </span>
+            )}
+          </h4>
+          <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
+            <div>Delta: {strike.delta?.toFixed(3) ?? 'N/A'}</div>
+            <div>Gamma: {strike.gamma?.toFixed(4) ?? 'N/A'}</div>
+            <div>Theta: {strike.theta?.toFixed(4) ?? 'N/A'}</div>
+            <div>Vega: {strike.vega?.toFixed(4) ?? 'N/A'}</div>
+            <div>IV: {strike.iv ? (strike.iv * 100).toFixed(1) + '%' : 'N/A'}</div>
           </div>
-        )}
+        </div>
+        <div>
+          <h4 className="font-medium text-slate-900 dark:text-white mb-2">Metrics</h4>
+          <div className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
+            <div>Premium/Contract: ${strike.premium_per_contract.toFixed(2)}</div>
+            <div>Max Profit: ${strike.max_profit.toFixed(2)}</div>
+            {strike.breakeven != null && <div>Breakeven: ${strike.breakeven.toFixed(2)}</div>}
+            {strike.distance_from_basis_pct != null && <div>Dist. from Basis: {strike.distance_from_basis_pct.toFixed(1)}%</div>}
+            <div>50% Target: ${strike.fifty_pct_profit_target.toFixed(2)}</div>
+          </div>
+        </div>
+        <div>
+          <h4 className="font-medium text-slate-900 dark:text-white mb-2">Rule Compliance</h4>
+          <div className="space-y-1 text-xs">
+            <RuleCheck label="10% Rule" passed={strike.rule_compliance.passes_10pct_rule} />
+            <RuleCheck label="DTE Range" passed={strike.rule_compliance.passes_dte_range} />
+            <RuleCheck label="Delta Range" passed={strike.rule_compliance.passes_delta_range} />
+            <RuleCheck label="Earnings Check" passed={strike.rule_compliance.passes_earnings_check} />
+            <RuleCheck label="Return Target" passed={strike.rule_compliance.passes_return_target} />
+          </div>
+          {strike.flags.length > 0 && (
+            <div className="mt-2 text-xs text-yellow-600 dark:text-yellow-400">
+              Flags: {strike.flags.join(', ')}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+      {/* Plain-English commitment panel — appended below the existing
+          Greeks / Metrics / Rule Compliance grid (spec §4.3). */}
+      <ScannerStrikeRowExpansion
+        strategy={strategy}
+        strike={strike.strike}
+        premium_per_contract={strike.premium_per_contract}
+        breakeven={strike.breakeven}
+        cost_basis_per_share={costBasis}
+        contracts={strike.contracts ?? 1}
+        earnings_in_window={
+          strike.rule_compliance?.passes_earnings_check === false
+        }
+      />
+    </>
   );
 }
 

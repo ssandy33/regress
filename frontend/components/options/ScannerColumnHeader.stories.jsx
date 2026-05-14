@@ -1,33 +1,14 @@
-// Phase 1.5 mock — placeholder for spec implementation. Replace during Phase 3.
-//
 // Stories for ScannerColumnHeader (issue #190, Affordance 2).
 // Wraps the header in a real <table> shell so the tooltip positioning and
 // sort affordance are inspectable in the same context they ship in.
 
 import ScannerColumnHeader from './ScannerColumnHeader';
+import { SCANNER_COLUMN_TOOLTIPS } from './scannerColumnTooltips';
 
 const TOOLTIPS = {
-  delta: {
-    definition:
-      'The option price\'s sensitivity to a $1 move in the underlying. Roughly the market-implied probability the option ends in the money.',
-    range: 'For wheel strategies: 0.20 to 0.35. Lower = safer, less premium.',
-    whyItMatters:
-      'Higher delta means more premium but a higher chance of assignment. Stay in your comfort zone.',
-  },
-  open_interest: {
-    definition:
-      'The number of outstanding contracts at this strike that have not been closed or exercised.',
-    range: 'Look for 500+ contracts. 100+ is acceptable on less liquid names.',
-    whyItMatters:
-      'Higher open interest = tighter bid/ask spreads and easier exits. Thin contracts can cost you 5-10% on slippage.',
-  },
-  annualized_return_pct: {
-    definition:
-      'The return on capital, scaled to a full year. Lets you compare 7-day premiums against 45-day premiums on equal footing.',
-    range: 'Target 20%+ annualized for wheel candidates. Below 15% is rarely worth the assignment risk.',
-    whyItMatters:
-      'A $1 premium on a 7-DTE contract beats a $1.50 premium on 45-DTE every time, once you scale it.',
-  },
+  delta: SCANNER_COLUMN_TOOLTIPS.delta,
+  open_interest: SCANNER_COLUMN_TOOLTIPS.open_interest,
+  annualized_return_pct: SCANNER_COLUMN_TOOLTIPS.annualized_return_pct,
 };
 
 function HeaderHarness({ field, label, tooltipKey, active = false, forceTooltipOpen = false }) {

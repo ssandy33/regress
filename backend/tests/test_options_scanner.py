@@ -543,3 +543,95 @@ class TestExpirationFiltering:
         valid = scanner._get_valid_expirations(exp_date_map, 25, 50, earnings, 5)
         assert len(valid) == 1
         assert valid[0] == (today + timedelta(days=45)).strftime("%Y-%m-%d")
+
+
+class TestHumanReasonsPopulated:
+    """Issue #190 — every ``RejectedStrike`` carries a parallel human_reasons list."""
+
+    @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
+    @patch("app.services.options_scanner.SchwabClient")
+    def test_rejected_strikes_have_human_reasons(self, mock_client_cls, _earnings, scanner, cc_request):
+        """The scanner populates ``human_reasons`` parallel to ``rejection_reasons``."""
+        dte = 30
+        exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
+
+        # Mix of failing contracts to exercise multiple rejection codes.
+        contracts = [
+            # Fails 10pct rule — strike $15.5 only 3% above $15 cost basis
+            _make_schwab_contract(
+                strike=15.5, bid=0.30, ask=0.40, mark=0.35,
+                delta=-0.30, oi=500, dte=dte,
+            ),
+            # Low OI — strike $17 (passes 10pct), OI=10 < 50
+            _make_schwab_contract(
+                strike=17.0, bid=0.30, ask=0.40, mark=0.35,
+                delta=-0.25, oi=10, dte=dte,
+            ),
+            # Zero bid — strike $18 (passes 10pct), bid 0.0
+            _make_schwab_contract(
+                strike=18.0, bid=0.0, ask=0.40, mark=0.20,
+                delta=-0.20, oi=500, dte=dte,
+            ),
+        ]
+        chain_resp = _make_schwab_chain_response(
+            underlying_price=14.0,
+            contracts=contracts,
+            contract_type="call",
+            exp_date=exp_date,
+            dte=dte,
+        )
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.return_value = chain_resp
+        mock_client.get_quote.return_value = {"lastPrice": 14.0}
+
+        result = scanner.scan(cc_request)
+
+        assert len(result["rejected"]) >= 1, "Test fixture should have produced rejected strikes"
+        for r in result["rejected"]:
+            # human_reasons must mirror rejection_reasons 1:1 in length and order.
+            assert len(r.human_reasons) == len(r.rejection_reasons)
+            # Each sentence is non-empty and not a raw code (no ": " parameter tail).
+            for sentence in r.human_reasons:
+                assert sentence, "human_reasons entries must be non-empty"
+                # Defensive: a raw code like "fails_10pct_rule: strike ..." would
+                # contain the lowercase code prefix. Human sentences should not.
+                assert "fails_10pct_rule" not in sentence
+                assert "low_open_interest" not in sentence
+
+    @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
+    @patch("app.services.options_scanner.SchwabClient")
+    def test_return_below_target_rejection_has_human_reason(self, mock_client_cls, _earnings, scanner, cc_request):
+        """The inline ``return_below_target`` branch also populates human_reasons."""
+        dte = 30
+        exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
+
+        # Strike $17 passes filters but premium yields tiny return (below cc_request.min_return_pct=0.5)
+        contract = _make_schwab_contract(
+            strike=17.0, bid=0.01, ask=0.02, mark=0.015,
+            delta=-0.20, oi=500, dte=dte,
+        )
+        chain_resp = _make_schwab_chain_response(
+            underlying_price=14.0,
+            contracts=[contract],
+            contract_type="call",
+            exp_date=exp_date,
+            dte=dte,
+        )
+
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_option_chain.return_value = chain_resp
+        mock_client.get_quote.return_value = {"lastPrice": 14.0}
+
+        result = scanner.scan(cc_request)
+
+        return_below = [
+            r for r in result["rejected"]
+            if any("return_below_target" in raw for raw in r.rejection_reasons)
+        ]
+        assert return_below, "Fixture should have produced a return_below_target rejection"
+        for r in return_below:
+            assert len(r.human_reasons) == len(r.rejection_reasons)
+            assert any("target return" in s for s in r.human_reasons)
