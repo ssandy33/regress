@@ -13,7 +13,7 @@ import { refreshStaleCache } from '../../api/client';
  *
  *   1. error — Schwab not configured / token invalid           (red)
  *   2. error — Cache very-stale > 0                            (red)
- *   3. warn  — Schwab token expiring within 7 days             (yellow)
+ *   3. warn  — Schwab token expiring within 2 days             (yellow)
  *   4. warn  — Cache stale > 0                                 (yellow)
  *   5. ok    — banner hidden
  *
@@ -24,7 +24,10 @@ import { refreshStaleCache } from '../../api/client';
  * banner if the underlying condition still holds (spec §14.1).
  */
 
-const TOKEN_EXPIRING_DAYS = 7;
+// Schwab refresh tokens last 7 days from issuance. A 7-day threshold would
+// fire on every re-auth and never clear; 2 days mirrors the 48-hour log
+// threshold in `backend/app/services/schwab_auth.py:_refresh_tokens`.
+const TOKEN_EXPIRING_DAYS = 2;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function tokenExpiresSoon(expiresAt) {
@@ -75,7 +78,7 @@ function resolveBannerCondition(status) {
     };
   }
 
-  // 3) Schwab token expiring within 7 days → warn
+  // 3) Schwab token expiring within 2 days → warn
   if (tokenExpiresSoon(schwab.expires_at)) {
     return {
       severity: 'warn',

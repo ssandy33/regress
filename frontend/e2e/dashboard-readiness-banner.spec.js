@@ -130,12 +130,12 @@ test.describe('DataReadinessBanner', () => {
   });
 
   test('cache very-stale renders as error (red) over schwab expiring (warn)', async ({ page }) => {
-    // Token expiring < 7 days (warn) + cache very_stale (error) → error wins.
-    const tomorrow = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString();
+    // Token expiring < 2 days (warn) + cache very_stale (error) → error wins.
+    const soon = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
     await mockDashboard(
       page,
       withStatus(BASE_PAYLOAD, {
-        schwab: { configured: true, valid: true, expires_at: tomorrow },
+        schwab: { configured: true, valid: true, expires_at: soon },
         cache: { fresh: 5, stale: 0, very_stale: 2, total: 7 },
       })
     );
@@ -145,6 +145,23 @@ test.describe('DataReadinessBanner', () => {
     const banner = page.getByTestId('data-readiness-banner');
     await expect(banner).toHaveAttribute('data-severity', 'error');
     await expect(banner).toContainText('very stale');
+  });
+
+  test('warn banner is hidden for a fresh 7-day Schwab token', async ({ page }) => {
+    // Regression: Schwab refresh tokens last 7 days from issuance, so the
+    // banner must stay silent immediately after re-auth. Previously the
+    // threshold matched the lifetime and fired permanently.
+    const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await mockDashboard(
+      page,
+      withStatus(BASE_PAYLOAD, {
+        schwab: { configured: true, valid: true, expires_at: sevenDays },
+      })
+    );
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByTestId('data-readiness-banner')).toHaveCount(0);
   });
 
   test('FRED missing does NOT surface on the dashboard banner', async ({ page }) => {
