@@ -164,8 +164,8 @@ class TestCacheVeryStaleTrigger:
 
 
 class TestSchwabTokenExpiringTrigger:
-    def test_emits_within_seven_days(self):
-        soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    def test_emits_when_within_threshold(self):
+        soon = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
         actions = compute_next_actions(
             status=_status(schwab_expires_at=soon),
             kpis=_kpis(open_legs=1),
@@ -175,7 +175,7 @@ class TestSchwabTokenExpiringTrigger:
         ids = {a["action_id"] for a in actions}
         assert "data.schwab_token_expiring" in ids
 
-    def test_does_not_emit_when_more_than_seven_days(self):
+    def test_does_not_emit_when_far_from_expiry(self):
         far = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         actions = compute_next_actions(
             status=_status(schwab_expires_at=far),
@@ -186,10 +186,27 @@ class TestSchwabTokenExpiringTrigger:
         ids = {a["action_id"] for a in actions}
         assert "data.schwab_token_expiring" not in ids
 
+    def test_does_not_emit_immediately_after_fresh_seven_day_grant(self):
+        # Regression: Schwab refresh tokens last exactly 7 days. A 7-day
+        # threshold here caused the P1 "Renew Schwab token" card to fire
+        # right after every re-auth, displaying "in 6 days" because
+        # ``delta.days`` floor-truncates. The threshold lives in
+        # ``TOKEN_EXPIRING_DAYS`` and must be strictly below the token
+        # lifetime so fresh grants are silent.
+        fresh = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+        actions = compute_next_actions(
+            status=_status(schwab_expires_at=fresh),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "data.schwab_token_expiring" not in ids
+
     def test_does_not_emit_when_disconnected(self):
         # Disconnected case is handled by `data.schwab_disconnected`. No
         # double-emit when both conditions hold.
-        soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+        soon = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
         actions = compute_next_actions(
             status=_status(schwab_configured=False, schwab_expires_at=soon),
             kpis=_kpis(open_legs=1),

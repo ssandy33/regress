@@ -31,9 +31,10 @@ from urllib.parse import quote
 MAX_ACTIONS = 8
 
 # How soon a Schwab refresh-token expiry should trigger a P1 warning
-# action. Aligns with the 7-day token lifetime documented in
-# ``schwab_auth.py``.
-TOKEN_EXPIRING_DAYS = 7
+# action. Schwab refresh tokens last 7 days from issuance, so a 7-day
+# threshold would fire immediately after every re-auth and never clear.
+# Mirrors the 48-hour log threshold in ``schwab_auth.py:_refresh_tokens``.
+TOKEN_EXPIRING_DAYS = 2
 
 # Large-loser thresholds (spec §2.2 / Q1). Whichever fires first.
 LARGE_LOSER_PCT_THRESHOLD = -0.05  # -5%
@@ -191,7 +192,7 @@ def _cache_very_stale_action(cache_status: dict) -> dict | None:
 def _schwab_token_expiring_action(
     schwab_status: dict, now: datetime | None = None
 ) -> dict | None:
-    """Build a ``data.schwab_token_expiring`` card when expiry is < 7 days."""
+    """Build a ``data.schwab_token_expiring`` card when expiry is within ``TOKEN_EXPIRING_DAYS``."""
     if schwab_status.get("configured") is not True or schwab_status.get("valid") is False:
         # Disconnected cases are handled by the P0 card above; don't
         # double-emit.
@@ -206,7 +207,7 @@ def _schwab_token_expiring_action(
         # Already expired — `data.schwab_disconnected` handles that case
         # via `valid == False`; this builder is for soon-to-expire only.
         return None
-    if delta.days > TOKEN_EXPIRING_DAYS:
+    if delta.total_seconds() > TOKEN_EXPIRING_DAYS * 86400:
         return None
     days = max(delta.days, 0)
     when = "today" if days == 0 else f"in {days} day{'s' if days != 1 else ''}"
