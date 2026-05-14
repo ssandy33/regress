@@ -1,9 +1,10 @@
-// Phase 1.5 mock — placeholder for spec implementation. Replace during Phase 3.
+// Top-of-page educational card explaining the current strategy (Covered Call
+// or Cash-Secured Put) in plain English.
 //
-// Top-of-page educational card that explains the current strategy (Covered Call
-// or Cash-Secured Put) in plain English. Collapsed by default; dismissal is
-// persisted per-strategy in localStorage. Re-shown via a "Show primers" link
-// rendered by ChainFilters footer.
+// Collapsed by default on first visit. Per-strategy collapse state is
+// persisted to localStorage so the primer stays out of the way once the user
+// has read it. Reacts to the active `strategy` prop so the copy and the
+// localStorage key swap together.
 //
 // Spec: frontend/design-specs/scanner-education-v0.5.7.md (Affordance 1)
 
@@ -38,27 +39,79 @@ const COPY = {
   },
 };
 
-export default function ScannerStrategyPrimer({
-  strategy = 'cc',
-  defaultExpanded = false,
-  onDismiss,
-}) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
-  const copy = COPY[strategy] || COPY.cc;
+const STORAGE_KEY_PREFIX = 'scanner-primer-collapsed-';
+
+// Map the strategy prop (which may be 'covered_call' / 'cash_secured_put' from
+// the API, or the short 'cc' / 'csp' used internally) into a stable copy/storage key.
+function normalizeStrategy(strategy) {
+  if (strategy === 'covered_call' || strategy === 'cc') return 'cc';
+  if (strategy === 'cash_secured_put' || strategy === 'csp') return 'csp';
+  return 'cc';
+}
+
+function readPersistedCollapsed(key) {
+  if (typeof window === 'undefined') return true;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return true; // default = collapsed on first visit
+    return raw === '1';
+  } catch {
+    return true;
+  }
+}
+
+function writePersistedCollapsed(key, collapsed) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, collapsed ? '1' : '0');
+  } catch {
+    // localStorage may be disabled (Safari private mode, etc.) — silently
+    // ignore. The primer will still toggle visually within the session.
+  }
+}
+
+export default function ScannerStrategyPrimer({ strategy = 'cc' }) {
+  const normalized = normalizeStrategy(strategy);
+  const storageKey = `${STORAGE_KEY_PREFIX}${normalized}`;
+
+  // Derived-state-from-props pattern. Keep the last seen storageKey alongside
+  // the collapsed flag; when the key changes (strategy toggled), refresh both
+  // during render. Avoids the react-hooks/set-state-in-effect rule (#198) — no
+  // useEffect needed for this kind of prop-driven re-derivation.
+  const [persisted, setPersisted] = useState(() => ({
+    key: storageKey,
+    collapsed: readPersistedCollapsed(storageKey),
+  }));
+  if (persisted.key !== storageKey) {
+    setPersisted({ key: storageKey, collapsed: readPersistedCollapsed(storageKey) });
+  }
+  const collapsed = persisted.collapsed;
+
+  const copy = COPY[normalized];
+  const expanded = !collapsed;
+
+  const handleToggle = () => {
+    const nextCollapsed = !collapsed;
+    setPersisted({ key: storageKey, collapsed: nextCollapsed });
+    writePersistedCollapsed(storageKey, nextCollapsed);
+  };
 
   return (
     <section
       data-testid="scanner-strategy-primer"
+      data-strategy={normalized}
       className="bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 rounded-xl"
     >
-      <header className="px-4 py-3 flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          data-testid="scanner-strategy-primer-toggle"
-          className="flex items-center gap-2 text-left flex-1 min-w-0"
-          aria-expanded={expanded}
-        >
+      <button
+        type="button"
+        onClick={handleToggle}
+        data-testid="scanner-strategy-primer-toggle"
+        className="w-full px-4 py-3 flex items-center justify-between gap-3 text-left focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-xl"
+        aria-expanded={expanded}
+        aria-controls="scanner-strategy-primer-body"
+        aria-label={`${expanded ? 'Hide' : 'Show'} strategy primer`}
+      >
+        <span className="flex items-center gap-2 min-w-0">
           <span
             className="text-blue-600 dark:text-blue-300 text-xs font-semibold uppercase tracking-wide"
             aria-hidden="true"
@@ -68,25 +121,17 @@ export default function ScannerStrategyPrimer({
           <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">
             {copy.title}
           </span>
-          <span
-            className="ml-auto text-slate-500 dark:text-slate-400 text-xs"
-            aria-hidden="true"
-          >
-            {expanded ? 'Hide' : 'Show'}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          data-testid="scanner-strategy-primer-dismiss"
-          className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-          aria-label="Dismiss primer"
+        </span>
+        <span
+          className="text-slate-500 dark:text-slate-400 text-xs shrink-0"
+          aria-hidden="true"
         >
-          Dismiss
-        </button>
-      </header>
+          {expanded ? 'Hide' : 'Show'}
+        </span>
+      </button>
       {expanded && (
         <div
+          id="scanner-strategy-primer-body"
           data-testid="scanner-strategy-primer-body"
           className="px-4 pb-4 pt-1 space-y-3 text-sm text-slate-700 dark:text-slate-200"
         >

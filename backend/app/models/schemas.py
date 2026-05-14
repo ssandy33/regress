@@ -247,9 +247,20 @@ class StrikeRecommendation(BaseModel):
 
 
 class RejectedStrike(BaseModel):
+    """A strike the scanner skipped, with raw codes and human sentences.
+
+    ``rejection_reasons`` preserves the machine-readable codes the scanner
+    emits (used by tests and internal debugging). ``human_reasons`` is the
+    plain-English render produced by
+    :func:`app.services.rejection_messages.humanize_reasons` — populated
+    server-side per issue #190 so the frontend can display sentences without
+    duplicating the mapper logic.
+    """
+
     strike: float
     expiration: str
     rejection_reasons: list[str]
+    human_reasons: list[str] = Field(default_factory=list)
 
 
 class MarketContext(BaseModel):

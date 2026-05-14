@@ -13,6 +13,7 @@ from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
 from app.services.alpha_vantage_client import get_next_earnings_date
 from app.services.greeks import calculate_greeks
+from app.services.rejection_messages import HumanizeContext, humanize_reasons
 from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,17 @@ class OptionScanner:
         candidates = []
         rejected = []
 
+        # Context for humanizing rejection codes — see #190 / scanner-education spec §5.
+        humanize_ctx: HumanizeContext = {
+            "cost_basis": request.cost_basis,
+            "current_price": current_price,
+            "min_call_distance_pct": request.min_call_distance_pct,
+            "min_delta": request.min_delta,
+            "max_delta": request.max_delta,
+            "min_return_pct": request.min_return_pct,
+            "max_return_pct": request.max_return_pct,
+        }
+
         valid_exps = set(self._get_valid_expirations(
             exp_date_map, request.min_dte, request.max_dte,
             earnings_date, request.exclude_earnings_dte,
@@ -165,6 +177,7 @@ class OptionScanner:
                         strike=strike,
                         expiration=exp_str,
                         rejection_reasons=reasons,
+                        human_reasons=humanize_reasons(reasons, humanize_ctx),
                     ))
                     continue
 
@@ -173,22 +186,26 @@ class OptionScanner:
                 )
 
                 if metrics["return_on_capital_pct"] < request.min_return_pct:
+                    return_below_reasons = [
+                        f"return_below_target: {metrics['return_on_capital_pct']:.2f}% < {request.min_return_pct}%"
+                    ]
                     rejected.append(RejectedStrike(
                         strike=strike,
                         expiration=exp_str,
-                        rejection_reasons=[
-                            f"return_below_target: {metrics['return_on_capital_pct']:.2f}% < {request.min_return_pct}%"
-                        ],
+                        rejection_reasons=return_below_reasons,
+                        human_reasons=humanize_reasons(return_below_reasons, humanize_ctx),
                     ))
                     continue
 
                 if request.max_return_pct and metrics["return_on_capital_pct"] > request.max_return_pct:
+                    return_above_reasons = [
+                        f"return_above_cap: {metrics['return_on_capital_pct']:.2f}% > {request.max_return_pct}%"
+                    ]
                     rejected.append(RejectedStrike(
                         strike=strike,
                         expiration=exp_str,
-                        rejection_reasons=[
-                            f"return_above_cap: {metrics['return_on_capital_pct']:.2f}% > {request.max_return_pct}%"
-                        ],
+                        rejection_reasons=return_above_reasons,
+                        human_reasons=humanize_reasons(return_above_reasons, humanize_ctx),
                     ))
                     continue
 

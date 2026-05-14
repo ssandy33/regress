@@ -3,8 +3,14 @@ import { useSchwabStatus } from '../../hooks/useSchwabStatus';
 import ChainFilters from './ChainFilters';
 import StrikeTable from './StrikeTable';
 import RiskRewardPanel from './RiskRewardPanel';
+import ScannerStrategyPrimer from './ScannerStrategyPrimer';
+import ScannerRejectedStrikes from './ScannerRejectedStrikes';
 import Header from '../layout/Header';
 import LoadingSkeleton from '../layout/LoadingSkeleton';
+
+function normalizePrimerStrategy(strategy) {
+  return strategy === 'cash_secured_put' ? 'csp' : 'cc';
+}
 
 export default function OptionScannerPage() {
   const scanner = useOptionScanner();
@@ -37,6 +43,12 @@ export default function OptionScannerPage() {
         />
 
         <main className="flex-1 overflow-y-auto p-6 space-y-4">
+          {/* Strategy Primer — top-of-page educational card per spec §4.1.
+              Collapsed by default on first visit, state persisted in
+              localStorage per-strategy. Reacts to the active strategy in the
+              filter sidebar so it stays in sync with the user's current choice. */}
+          <ScannerStrategyPrimer strategy={normalizePrimerStrategy(scanner.strategy)} />
+
           {/* Schwab API Status Banner */}
           {!schwab.loading && !schwab.isAvailable && (
             <div
@@ -192,6 +204,12 @@ export default function OptionScannerPage() {
                 selectedStrikes={scanner.selectedStrikes}
                 onToggleSelection={scanner.toggleStrikeSelection}
                 hasCapital={!!capitalData.utilization}
+                strategy={result.strategy}
+                costBasis={
+                  scanner.costBasis !== '' && scanner.costBasis != null
+                    ? Number(scanner.costBasis)
+                    : null
+                }
               />
 
               {/* Risk/Reward Comparison */}
@@ -200,25 +218,9 @@ export default function OptionScannerPage() {
                 strategy={result.strategy}
               />
 
-              {/* Rejected Strikes */}
-              {result.rejected.length > 0 && (
-                <details className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
-                  <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-xl">
-                    Rejected Strikes ({result.rejected.length})
-                  </summary>
-                  <div className="px-4 pb-4 space-y-1.5">
-                    {result.rejected.slice(0, 20).map((r, i) => (
-                      <div key={i} className="flex justify-between text-xs text-slate-600 dark:text-slate-400 py-1 border-b border-slate-100 dark:border-slate-700 last:border-0">
-                        <span className="font-medium">${r.strike.toFixed(2)} {r.expiration}</span>
-                        <span className="text-red-500 dark:text-red-400 text-right ml-4">{r.rejection_reasons.join('; ')}</span>
-                      </div>
-                    ))}
-                    {result.rejected.length > 20 && (
-                      <p className="text-xs text-slate-400">...and {result.rejected.length - 20} more</p>
-                    )}
-                  </div>
-                </details>
-              )}
+              {/* Rejected Strikes — humanized sentences via the backend
+                  `human_reasons` field. Spec §4.4. */}
+              <ScannerRejectedStrikes rejected={result.rejected} />
             </>
           )}
         </main>

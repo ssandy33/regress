@@ -1,5 +1,3 @@
-// Phase 1.5 mock — placeholder for spec implementation. Replace during Phase 3.
-//
 // Stories for ScannerStrikeRowExpansion (issue #190, Affordance 3).
 // Mirrors the F-position numbers from the spec: 100 shares, $13.21 basis,
 // $0.18 premium, 36 DTE.
