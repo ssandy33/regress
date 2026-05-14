@@ -57,20 +57,24 @@ export default function ScannerColumnHeader({
       className={`px-3 py-2 text-${align} text-xs font-medium text-slate-500 dark:text-slate-400 select-none relative`}
     >
       <span className="inline-flex items-center gap-1" ref={tooltipRef}>
-        <button
-          type="button"
-          onClick={() => onSort?.(field)}
-          data-testid={`scanner-col-sort-${field}`}
-          className="hover:text-slate-700 dark:hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-          aria-label={`Sort by ${label}`}
-        >
-          {label}
-          {active && (
-            <span className="ml-0.5" aria-hidden="true">
-              {sortDir === 'asc' ? '↑' : '↓'}
-            </span>
-          )}
-        </button>
+        {onSort ? (
+          <button
+            type="button"
+            onClick={() => onSort(field)}
+            data-testid={`scanner-col-sort-${field}`}
+            className="hover:text-slate-700 dark:hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+            aria-label={`Sort by ${label}`}
+          >
+            {label}
+            {active && (
+              <span className="ml-0.5" aria-hidden="true">
+                {sortDir === 'asc' ? '↑' : '↓'}
+              </span>
+            )}
+          </button>
+        ) : (
+          <span data-testid={`scanner-col-label-${field}`}>{label}</span>
+        )}
         {tooltip && (
           <button
             type="button"
