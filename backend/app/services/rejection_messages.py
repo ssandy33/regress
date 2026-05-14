@@ -126,11 +126,11 @@ def _fmt_fails_10pct(raw: str, ctx: HumanizeContext) -> str:
     min_pct = float(match.group("min"))
     cost_basis = ctx.get("cost_basis")
     basis_clause = (
-        f"your ${cost_basis:.2f} basis" if cost_basis else "your cost basis"
+        f"your ${cost_basis:.2f} basis" if cost_basis is not None else "your cost basis"
     )
     return (
         f"Strike sits {pct:.1f}% above {basis_clause}, but the {min_pct:.1f}% "
-        f"rule requires at least that much room."
+        "rule requires at least that much room."
     )
 
 

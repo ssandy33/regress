@@ -79,6 +79,7 @@ export default function ScannerColumnHeader({
             className="w-4 h-4 inline-flex items-center justify-center rounded-full border border-slate-300 dark:border-slate-600 text-[10px] text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-300 hover:border-blue-400 dark:hover:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-help"
             aria-label={`What is ${label}?`}
             aria-expanded={isOpen}
+            aria-describedby={isOpen ? `scanner-col-tooltip-${field}` : undefined}
           >
             i
           </button>
@@ -86,6 +87,7 @@ export default function ScannerColumnHeader({
       </span>
       {isOpen && tooltip && (
         <div
+          id={`scanner-col-tooltip-${field}`}
           data-testid={`scanner-col-tooltip-${field}`}
           role="tooltip"
           className={`absolute z-20 top-full mt-1 ${align === 'right' ? 'right-0' : 'left-0'} w-64 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg p-3 text-left text-xs text-slate-700 dark:text-slate-200 space-y-2 font-normal normal-case`}

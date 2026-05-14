@@ -55,7 +55,12 @@ function cspScenarios({ strike, premium_per_contract, breakeven, contracts = 1 }
   const premiumTotal = premium_per_contract * contracts;
   const sharesAtRisk = 100 * contracts;
   const cashAtRisk = strike * sharesAtRisk;
-  const effectiveEntry = breakeven ?? strike - premium_per_contract;
+  // `strike` is per-share; `premium_per_contract` is dollars-per-contract
+  // (= per-share × 100). Divide before subtracting so the fallback produces a
+  // per-share entry price. In practice `breakeven` is always populated for
+  // CSPs by the backend (options_scanner.py L434) so this branch is unreached
+  // — kept for defensive correctness.
+  const effectiveEntry = breakeven ?? strike - premium_per_contract / 100;
   return {
     obligation: `You set aside ${formatUsd(cashAtRisk)} as collateral. If assigned, you buy ${sharesAtRisk} share${sharesAtRisk === 100 ? '' : 's'} at $${strike.toFixed(2)}.`,
     premium: `You collect ${formatUsd(premiumTotal)} in premium right now — yours to keep regardless of outcome.`,
