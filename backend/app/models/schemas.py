@@ -760,3 +760,149 @@ class DashboardResponse(BaseModel):
     # New in V0.5.4 — server-side ranked action engine output. See
     # decision-dashboard-v05.md §2.2 / §14.7.
     next_actions: list[DashboardNextAction] = []
+
+
+# --- Recovery Plan (V0.5.8, issue #182) ---
+
+RECOVERY_PLAN_STATE = Literal["populated", "not-applicable", "not-flagged"]
+RECOVERY_PATH_SLUG = Literal[
+    "sell-redeploy",
+    "wheel-cc",
+    "average-down",
+    "hold-monitor",
+]
+RECOVERY_PATH_ELIGIBILITY = Literal["eligible", "suppressed"]
+RECOVERY_SCORING_CRITERION = Literal[
+    "fastest_breakeven",
+    "lowest_additional_capital",
+    "lowest_opportunity_cost",
+    "strategy_preference_bonus",
+]
+
+
+class RecoveryMonthsRange(BaseModel):
+    """Three-point breakeven uncertainty range emitted per path.
+
+    Every component may be ``None`` (e.g. hold-monitor has no breakeven
+    because it takes no action).
+    """
+
+    best: Optional[float] = None
+    expected: Optional[float] = None
+    worst: Optional[float] = None
+
+
+class RecoveryPath(BaseModel):
+    """One forward path the engine emits for an underwater position.
+
+    Suppressed paths remain in ``paths[]`` but are never selected as the
+    recommended path. Frontend renders them with a de-emphasized treatment.
+    """
+
+    path_id: RECOVERY_PATH_SLUG
+    label: str
+    eligibility: RECOVERY_PATH_ELIGIBILITY
+    suppression_reason: Optional[str] = None
+    capital_tied_up: Optional[float] = None
+    months_to_breakeven: RecoveryMonthsRange
+    opportunity_cost_vs_baseline: Optional[float] = None
+    assumptions: list[str] = Field(default_factory=list)
+    # V0.6 (#181) fills this slot; reserved as None in V0.5.8.
+    narration: Optional[str] = None
+
+
+class RecoveryPositionSummary(BaseModel):
+    """Header summary the page chrome renders above the comparison cards."""
+
+    id: str
+    ticker: str
+    shares: int
+    adjusted_cost_basis: float
+    current_price: Optional[float] = None
+    unrealized_pl: Optional[float] = None
+    pl_pct: Optional[float] = None
+
+
+class RecoveryOkrInputs(BaseModel):
+    """Snapshot of OKR settings consumed by the engine + scoring layer."""
+
+    target_yield: Optional[float] = None
+    sizing_cap_dollars: Optional[float] = None
+    strategy_preference: Optional[str] = None
+
+
+class RecoveryInputs(BaseModel):
+    """Echo of the deterministic inputs that drove the response."""
+
+    current_price: Optional[float] = None
+    cost_basis: Optional[float] = None
+    shares: int
+    okr: RecoveryOkrInputs
+
+
+class RecoveryPathScoreCell(BaseModel):
+    """One cell in the criterion × eligible-path matrix."""
+
+    path_id: RECOVERY_PATH_SLUG
+    raw_value: Optional[float] = None
+    points: int
+    rank: int
+
+
+class RecoveryPathScoreRow(BaseModel):
+    """One criterion row in the scoring matrix (one entry per criterion)."""
+
+    criterion: RECOVERY_SCORING_CRITERION
+    weight: int
+    ranking: list[RecoveryPathScoreCell] = Field(default_factory=list)
+
+
+class RecoveryRankedPath(BaseModel):
+    """One entry in the recommendation's total-ranking list.
+
+    Suppressed paths have ``score`` and ``rank`` of ``None`` and carry the
+    ``suppression_reason`` straight from the engine.
+    """
+
+    path_id: RECOVERY_PATH_SLUG
+    score: Optional[int] = None
+    rank: Optional[int] = None
+    suppression_reason: Optional[str] = None
+
+
+class RecoveryRecommendation(BaseModel):
+    """Deterministic recommendation object layered on top of the path list."""
+
+    recommended_path_id: Optional[RECOVERY_PATH_SLUG] = None
+    recommendation_label: str
+    recommendation_reasons: list[str] = Field(default_factory=list)
+    ranked_paths: list[RecoveryRankedPath] = Field(default_factory=list)
+    path_scores: list[RecoveryPathScoreRow] = Field(default_factory=list)
+    tie_epsilon: float = 1.0
+    disclaimer: str
+
+
+class RecoveryAssumptionRow(BaseModel):
+    """One row in the Assumptions panel (audit surface)."""
+
+    label: str
+    value: str
+    source: str
+
+
+class RecoveryPlanResponse(BaseModel):
+    """Top-level response for ``POST /api/positions/{id}/recovery-plan``.
+
+    ``state == "populated"`` is the only state that carries paths +
+    recommendation. The other two short-circuit before the engine runs.
+    """
+
+    position_id: str
+    as_of: str
+    state: RECOVERY_PLAN_STATE
+    position: Optional[RecoveryPositionSummary] = None
+    inputs: Optional[RecoveryInputs] = None
+    paths: list[RecoveryPath] = Field(default_factory=list)
+    recommendation: Optional[RecoveryRecommendation] = None
+    assumptions: list[RecoveryAssumptionRow] = Field(default_factory=list)
+    disclaimer: Optional[str] = None

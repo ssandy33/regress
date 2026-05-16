@@ -318,4 +318,13 @@ export async function getDashboard() {
   return data;
 }
 
+// --- Recovery Plan (V0.5.8, issue #182) ---
+
+export async function getRecoveryPlan(id) {
+  const { data } = await api.post(
+    `/api/positions/${encodeURIComponent(id)}/recovery-plan`,
+  );
+  return data;
+}
+
 export default api;

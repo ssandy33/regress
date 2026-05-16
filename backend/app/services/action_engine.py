@@ -269,9 +269,12 @@ def _largest_loser_action(positions: Iterable[dict]) -> dict | None:
         "title": f"Review {ticker}",
         "subject": {"ticker": ticker, "amount": amount},
         "reason": "Position is below your review threshold (-5% or -$1,000).",
+        # V0.5.8 (#182): the CTA destination moved from the Journal filter
+        # page to the new Recovery Plan route. Same PR ships the
+        # destination so the link never 404s mid-deploy.
         "cta": {
             "label": f"Review {ticker}",
-            "href": f"/journal?position={quote(str(worst['id']), safe='')}",
+            "href": f"/positions/{quote(str(worst['id']), safe='')}/recovery",
             "kind": "link",
         },
     }
