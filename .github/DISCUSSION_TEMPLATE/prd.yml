@@ -1,0 +1,150 @@
+title: "[PRD]: <feature name>"
+labels: ["prd"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Product Requirements Document
+
+        Use this discussion to draft, review, and ratify a PRD before any issues
+        or implementation work begin. Keep it the single source of truth — edit
+        this post as the spec evolves, and use the thread below for review
+        comments and decisions.
+
+        > Once approved, link the issues created from this PRD back to this
+        > discussion so the trail stays connected.
+
+  - type: input
+    id: summary
+    attributes:
+      label: One-line summary
+      description: A single sentence describing what this delivers and for whom.
+      placeholder: "Give traders an earnings-calendar view so they can plan regressions around earnings dates."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      description: Current lifecycle stage of this PRD.
+      options:
+        - Draft
+        - In review
+        - Approved
+        - Shipped
+        - Shelved
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Relative urgency. Used to align with issue priority labels (P0–P4).
+      options:
+        - Critical
+        - High
+        - Medium
+        - Low
+      default: 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem & background
+      description: What problem are we solving? Who has it, and what is the cost of not solving it? Include context, current behavior, and any prior art.
+      placeholder: Describe the user pain, the current workaround, and why now.
+    validations:
+      required: true
+
+  - type: textarea
+    id: goals
+    attributes:
+      label: Goals
+      description: The specific, measurable outcomes this work must achieve.
+      value: |
+        -
+        -
+    validations:
+      required: true
+
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals / out of scope
+      description: Explicitly list what this work will NOT do, to prevent scope creep.
+      value: |
+        -
+    validations:
+      required: false
+
+  - type: textarea
+    id: users
+    attributes:
+      label: Target users & use cases
+      description: Who is this for? Describe the personas and the scenarios in which they use it.
+    validations:
+      required: false
+
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Proposed solution & requirements
+      description: Describe the proposed approach and the functional requirements. Use numbered requirements (R1, R2, …) so they can be referenced in review.
+      placeholder: |
+        R1. ...
+        R2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: User stories & acceptance criteria
+      description: Concrete, testable criteria. Per CLAUDE.md, every criterion here must become automated test coverage on the implementing PR.
+      value: |
+        - [ ] As a <user>, I can <do something> so that <benefit>
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: metrics
+    attributes:
+      label: Success metrics
+      description: How will we know this succeeded? Quantify where possible.
+    validations:
+      required: false
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Dependencies, risks & open questions
+      description: External dependencies, technical risks, and unresolved questions blocking approval.
+    validations:
+      required: false
+
+  - type: input
+    id: milestone
+    attributes:
+      label: Target milestone / release
+      description: The release or milestone this is planned for, if known.
+      placeholder: "v0.6.0"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submit checklist
+      options:
+        - label: I searched existing PRDs and issues to avoid duplicating an effort
+          required: true
+        - label: Goals and acceptance criteria are specific and testable
+          required: true
+        - label: Out-of-scope items are listed to bound the work
+          required: false
