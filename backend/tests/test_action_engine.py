@@ -273,6 +273,22 @@ class TestLargeLoserTrigger:
         assert len(loser_cards) == 1
         assert loser_cards[0]["subject"]["ticker"] == "BBB"
 
+    def test_cta_href_points_at_recovery_plan_route(self):
+        # V0.5.8 (#182): the loser CTA destination flipped from the journal
+        # filter page to the Recovery Plan route. Both shipped in the same
+        # PR so the link does not 404 between deploys.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position("p-loser", "TSLA", unrealized_pl=-2000.0, pl_pct=-0.20),
+            ],
+            open_legs=[],
+        )
+        loser_card = next(a for a in actions if a["action_id"] == "position.large_loser")
+        assert loser_card["cta"]["href"] == "/positions/p-loser/recovery"
+        assert "/journal?position=" not in loser_card["cta"]["href"]
+
 
 class TestItmShortDteTrigger:
     def test_emits_when_itm_and_short_dte(self):
