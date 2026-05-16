@@ -537,10 +537,7 @@ class TestTemplateSnapshots:
         "lowest_additional_capital_amount": (
             "Lowest additional capital required (${capital:,.0f} vs ${next_capital:,.0f} for the next option)"
         ),
-        "lowest_opportunity_cost_zero": "Lowest opportunity cost vs baseline (${opp_cost:,.0f})",
-        "lowest_opportunity_cost_amount": (
-            "Lowest opportunity cost vs baseline (${opp_cost:,.0f})"
-        ),
+        "lowest_opportunity_cost": "Lowest opportunity cost vs baseline (${opp_cost:,.0f})",
         "strategy_preference_match": "Matches your configured {preference} strategy preference",
         "within_sizing_cap": "Within your per-position sizing cap",
     }
