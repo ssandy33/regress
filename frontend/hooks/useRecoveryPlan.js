@@ -17,9 +17,13 @@ export function useRecoveryPlan(positionId) {
 
   const refetch = useCallback(async () => {
     if (!positionId) {
+      // Clear any previously-loaded plan so a stale position never lingers.
+      setData(null);
       setLoading(false);
       return;
     }
+    // Drop the prior position's plan before the new fetch resolves.
+    setData(null);
     setLoading(true);
     setError(null);
     try {

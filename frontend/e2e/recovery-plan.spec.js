@@ -406,9 +406,14 @@ test.describe('Recovery Plan panel', () => {
       'No clear best fit',
     );
 
-    // Ranked paths are still listed even with no recommended path.
+    // In the degradation state the banner intentionally has no templated
+    // `recommendation_reasons` (fixture leaves it `[]`). Instead it renders
+    // the top-two `ranked_paths` in the same `recovery-recommendation-reasons`
+    // list so the user still sees the close call. Assert those two entries.
     const reasons = page.getByTestId('recovery-recommendation-reasons').locator('li');
-    expect(await reasons.count()).toBeGreaterThanOrEqual(2);
+    expect(await reasons.count()).toBe(2);
+    await expect(reasons.first()).toContainText('Sell & redeploy');
+    await expect(reasons.nth(1)).toContainText('Wheel covered calls');
 
     // The path cards still render; none carries the recommended badge.
     await expect(page.getByTestId('recovery-path-grid')).toBeVisible();
@@ -442,5 +447,14 @@ test.describe('Recovery Plan panel', () => {
     await expect(page.getByTestId('recovery-plan-error')).toContainText(
       'Failed to build recovery plan',
     );
+  });
+
+  // Manual AC (CLAUDE.md — document non-automatable steps as a skipped test).
+  // The issue's PR test plan includes a manual visual review of the populated
+  // panel. Layout/visual fidelity is not asserted here; the structural,
+  // copy, and state-machine ACs above are the automated contract.
+  test.skip('manual: visual review of the populated panel layout', () => {
+    // Intentionally skipped — visual fidelity is verified by hand against the
+    // design intent before merge. Not automatable in Playwright assertions.
   });
 });

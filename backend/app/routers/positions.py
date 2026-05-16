@@ -103,14 +103,32 @@ def _read_okr_settings(db: DBSession) -> dict[str, Any]:
     }
 
 
-def _build_position_summary(position: dict, current_price: float | None) -> dict:
-    """Compute the header summary the frontend renders above the cards."""
+def _build_position_summary(
+    position: dict,
+    current_price: float | None,
+    *,
+    cost_basis: float | None = None,
+) -> dict:
+    """Compute the header summary the frontend renders above the cards.
+
+    ``cost_basis`` is the effective basis the caller resolved (adjusted
+    basis with a ``broker_cost_basis`` fallback). When omitted, the same
+    fallback is applied here so the P/L math never silently drops to
+    ``None`` for a position that has only a broker basis.
+    """
     shares = int(position.get("shares") or 0)
-    adjusted_basis = float(position.get("adjusted_cost_basis") or 0.0)
+    if cost_basis is not None:
+        effective_basis = float(cost_basis)
+    else:
+        effective_basis = float(
+            position.get("adjusted_cost_basis")
+            or position.get("broker_cost_basis")
+            or 0.0
+        )
     notional = (current_price or 0.0) * shares
-    if shares > 0 and adjusted_basis > 0:
-        unrealized_pl = notional - adjusted_basis
-        pl_pct = unrealized_pl / adjusted_basis
+    if shares > 0 and effective_basis > 0:
+        unrealized_pl = notional - effective_basis
+        pl_pct = unrealized_pl / effective_basis
     else:
         unrealized_pl = None
         pl_pct = None
@@ -118,7 +136,7 @@ def _build_position_summary(position: dict, current_price: float | None) -> dict
         "id": position["id"],
         "ticker": position["ticker"],
         "shares": shares,
-        "adjusted_cost_basis": adjusted_basis,
+        "adjusted_cost_basis": effective_basis,
         "current_price": current_price,
         "unrealized_pl": unrealized_pl,
         "pl_pct": pl_pct,
@@ -250,7 +268,7 @@ def build_recovery_plan(
             content={"detail": GENERIC_RECOVERY_500_DETAIL},
         )
 
-    summary = _build_position_summary(position, current_price)
+    summary = _build_position_summary(position, current_price, cost_basis=cost_basis)
     if not _is_flagged(summary["unrealized_pl"], summary["pl_pct"]):
         return RecoveryPlanResponse(
             position_id=position_id,

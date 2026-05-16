@@ -46,7 +46,8 @@ function PositionHeader({ position, state }) {
       </p>
       {state === 'populated' && (
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Flagged because P/L breached your review threshold (-5% or -$1,000).
+          Flagged because unrealized P/L breached your configured review
+          threshold.
         </p>
       )}
     </div>
@@ -139,7 +140,7 @@ export default function RecoveryPlanPage({ positionId }) {
               <EmptyState
                 testId="recovery-plan-not-flagged"
                 title="Position is above your review threshold"
-                body="The Recovery Plan engine only runs against positions that breach the -5% or -$1,000 review threshold. This position no longer qualifies."
+                body="The Recovery Plan engine only runs against positions that breach your configured review threshold. This position no longer qualifies."
               />
             )}
 
