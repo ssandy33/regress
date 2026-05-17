@@ -49,10 +49,6 @@ WHEEL_MONTHLY_PREMIUM_PCT: float = 0.015
 # worst case: 30% lower (slower grind).
 WHEEL_BE_MULTIPLIERS: tuple[float, float, float] = (0.8, 1.0, 1.3)
 
-# Hard-coded sizing cap used when ``okr_sizing_cap_dollars`` is unset. Per
-# the plan §5: defaults are documented in the Assumptions panel.
-DEFAULT_SIZING_CAP_DOLLARS: float = 5000.0
-
 # Canonical display labels. Stable per slug; rendered verbatim by the
 # frontend.
 _PATH_LABELS: dict[str, str] = {
@@ -356,7 +352,7 @@ def compute_recovery_paths(
     position: dict,
     current_price: float,
     target_yield: float | None,
-    sizing_cap_dollars: float | None,
+    sizing_cap_dollars: float,
 ) -> list[dict]:
     """Compute the four candidate recovery paths for a flagged position.
 
@@ -370,8 +366,9 @@ def compute_recovery_paths(
         target_yield: OKR target yield as a fraction (e.g. ``0.18``).
             ``None`` suppresses the sell-redeploy path and zeroes out
             opportunity-cost columns that depend on it.
-        sizing_cap_dollars: OKR per-position sizing cap in dollars. ``None``
-            falls back to :data:`DEFAULT_SIZING_CAP_DOLLARS`.
+        sizing_cap_dollars: Per-position sizing cap in dollars. The caller
+            resolves it from ``rules_config.position.sizing_cap_dollars``
+            (issue #156) and always supplies a concrete value.
 
     Returns:
         Four-element list in canonical order (sell-redeploy, wheel-cc,
@@ -385,11 +382,7 @@ def compute_recovery_paths(
         adjusted_cost_basis = float(position.get("broker_cost_basis") or 0.0)
 
     current_price = max(float(current_price or 0.0), 0.0)
-    cap = (
-        float(sizing_cap_dollars)
-        if sizing_cap_dollars is not None
-        else DEFAULT_SIZING_CAP_DOLLARS
-    )
+    cap = float(sizing_cap_dollars)
 
     # Realized loss for the sell-redeploy / wheel projections. If the
     # position is above water we still emit paths (the user can audit) but
@@ -443,7 +436,6 @@ def canonical_path_order() -> tuple[str, ...]:
 __all__ = [
     "WHEEL_MONTHLY_PREMIUM_PCT",
     "WHEEL_BE_MULTIPLIERS",
-    "DEFAULT_SIZING_CAP_DOLLARS",
     "compute_recovery_paths",
     "canonical_path_labels",
     "canonical_path_order",

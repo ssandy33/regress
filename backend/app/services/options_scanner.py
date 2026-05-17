@@ -14,6 +14,7 @@ from app.services.schwab_auth import SchwabAuthError
 from app.services.alpha_vantage_client import get_next_earnings_date
 from app.services.greeks import calculate_greeks
 from app.services.rejection_messages import HumanizeContext, humanize_reasons
+from app.services.rules_config import DEFAULT_RULES_CONFIG
 from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
@@ -27,8 +28,16 @@ class OptionScanner:
     """Scans option chains for wheel strategy opportunities (CC and CSP)."""
 
     def scan(self, request: OptionScanRequest) -> dict:
-        """Main entry point: fetch Schwab chain, filter strikes, rank, return."""
+        """Main entry point: fetch Schwab chain, filter strikes, rank, return.
+
+        Rule fields on ``request`` are normally resolved from the persisted
+        ``rules_config`` by the scan router (issue #156). Any field still
+        ``None`` here — a direct caller that skipped the router — is filled
+        defensively from the catalog defaults so ``scan`` never crashes on an
+        unresolved rule.
+        """
         self._validate_request(request)
+        self._resolve_rule_defaults(request)
 
         today = datetime.now().date()
         from_date = (today + timedelta(days=request.min_dte)).strftime("%Y-%m-%d")
@@ -101,6 +110,12 @@ class OptionScanner:
         candidates = []
         rejected = []
 
+        # IV rank gate (issue #156 / ADR-002): there is no IV-rank data source
+        # wired today, so ``iv_rank`` is always None and the gate is inert. The
+        # ``min_iv_rank`` rule and the ``iv_rank_below_floor`` rejection are
+        # plumbed so a future IV-rank feed (ADR-002 OQ4) needs no scanner change.
+        scan_iv_rank: Optional[float] = None
+
         # Context for humanizing rejection codes — see #190 / scanner-education spec §5.
         humanize_ctx: HumanizeContext = {
             "cost_basis": request.cost_basis,
@@ -111,6 +126,8 @@ class OptionScanner:
             "min_return_pct": request.min_return_pct,
             "max_return_pct": request.max_return_pct,
         }
+
+        iv_rank_reasons = self._check_iv_rank(request, scan_iv_rank)
 
         valid_exps = set(self._get_valid_expirations(
             exp_date_map, request.min_dte, request.max_dte,
@@ -169,8 +186,11 @@ class OptionScanner:
                     flags.append("calculated_greeks")
 
                 reasons = self._check_rejection(
-                    request, strike, current_price, delta, oi, bid, mid, dte,
+                    request, strike, current_price, delta, oi, bid, ask, mid, dte,
                 )
+                # IV rank is a per-scan gate; it applies uniformly to every
+                # strike. Inert today (no IV-rank data source — see above).
+                reasons = reasons + iv_rank_reasons
 
                 if reasons:
                     rejected.append(RejectedStrike(
@@ -256,11 +276,58 @@ class OptionScanner:
             "strategy": request.strategy,
             "scan_time": datetime.now(timezone.utc).isoformat(),
             "earnings_date": earnings_date,
-            "iv_rank": None,
+            "iv_rank": scan_iv_rank,
             "recommendations": ranked[:20],
             "rejected": rejected[:50],
             "market_context": market_context,
         }
+
+    # ---- Rule resolution ----
+
+    def _resolve_rule_defaults(self, req: OptionScanRequest) -> None:
+        """Backfill any unset rule field from the catalog defaults.
+
+        The scan router resolves rules from the stored ``rules_config`` before
+        calling :meth:`scan`; by the time this runs every field is usually
+        already set. This is a defensive fallback for a direct caller (tests,
+        the action engine's CC scan links) that bypasses the router — it fills
+        only the fields still ``None`` with :data:`DEFAULT_RULES_CONFIG`
+        values, never overriding an explicit value.
+        """
+        entry = DEFAULT_RULES_CONFIG.entry
+        universe = DEFAULT_RULES_CONFIG.universe
+
+        if req.min_dte is None:
+            req.min_dte = int(entry.dte_range.min)
+        if req.max_dte is None:
+            req.max_dte = int(entry.dte_range.max)
+        if req.min_return_pct is None:
+            req.min_return_pct = entry.min_monthly_return_pct
+        if req.exclude_earnings_dte is None:
+            req.exclude_earnings_dte = entry.earnings_buffer_days
+        if req.min_call_distance_pct is None:
+            req.min_call_distance_pct = entry.min_call_distance_pct
+        if req.min_call_distance_from_cost_basis_pct is None:
+            req.min_call_distance_from_cost_basis_pct = (
+                entry.min_call_distance_from_cost_basis_pct
+            )
+
+        delta_band = (
+            entry.delta_range_cc
+            if req.strategy == "covered_call"
+            else entry.delta_range_csp
+        )
+        if req.min_delta is None:
+            req.min_delta = delta_band.min
+        if req.max_delta is None:
+            req.max_delta = delta_band.max
+
+        if req.min_open_interest is None:
+            req.min_open_interest = universe.min_open_interest
+        if req.max_bid_ask_spread_pct is None:
+            req.max_bid_ask_spread_pct = universe.max_bid_ask_spread_pct
+        if req.min_iv_rank is None:
+            req.min_iv_rank = universe.min_iv_rank
 
     # ---- Validation ----
 
@@ -337,10 +404,17 @@ class OptionScanner:
         delta: Optional[float],
         oi: int,
         bid: float,
+        ask: float,
         mid: float,
         dte: int,
     ) -> list[str]:
-        """Return list of rejection reasons, or empty list if strike passes."""
+        """Return list of rejection reasons, or empty list if strike passes.
+
+        Rule thresholds (open-interest floor, spread cap, distance rules) are
+        resolved on ``req`` before the scan runs — they come from the
+        persisted ``rules_config`` via the scan router (issue #156). A rejected
+        strike is never dropped; reasons are surfaced on the response.
+        """
         reasons = []
 
         # Strategy-specific strike filter
@@ -352,6 +426,17 @@ class OptionScanner:
                     f"fails_10pct_rule: strike {distance:.1f}% above basis, "
                     f"requires {req.min_call_distance_pct}%"
                 )
+            # Cost-basis floor — an independent rule from the distance margin
+            # above (PRD #209 §R3). A strike below the cost-basis floor locks
+            # in a share loss if assigned. Gated on the per-request toggle.
+            if req.cost_basis_floor_enabled:
+                floor_pct = req.min_call_distance_from_cost_basis_pct or 0.0
+                cost_basis_floor = req.cost_basis * (1 + floor_pct / 100)
+                if strike < cost_basis_floor:
+                    reasons.append(
+                        f"below_cost_basis: strike ${strike:.2f} < "
+                        f"floor ${cost_basis_floor:.2f}"
+                    )
         else:  # cash_secured_put
             if strike > current_price:
                 reasons.append(
@@ -366,13 +451,40 @@ class OptionScanner:
                     f"[{req.min_delta}, {req.max_delta}]"
                 )
 
-        # Liquidity filter
-        if oi < 50:
-            reasons.append(f"low_open_interest: {oi} < 50")
+        # Liquidity filter — open-interest floor from rules_config.
+        if oi < req.min_open_interest:
+            reasons.append(f"low_open_interest: {oi} < {req.min_open_interest}")
         if bid <= 0:
             reasons.append("zero_bid")
 
+        # Bid/ask spread filter — a wide spread makes a strike costly to
+        # enter/exit. Threshold from rules_config (universe.max_bid_ask_spread_pct).
+        if req.max_bid_ask_spread_pct is not None and mid > 0 and ask > 0:
+            spread_pct = ((ask - bid) / mid) * 100
+            if spread_pct > req.max_bid_ask_spread_pct:
+                reasons.append(
+                    f"wide_bid_ask_spread: {spread_pct:.1f}% > "
+                    f"{req.max_bid_ask_spread_pct}%"
+                )
+
         return reasons
+
+    def _check_iv_rank(
+        self, req: OptionScanRequest, iv_rank: Optional[float]
+    ) -> list[str]:
+        """Return an ``iv_rank_below_floor`` reason when IV rank is too low.
+
+        The check is guarded on ``iv_rank is not None``. Because no IV-rank
+        data source is wired today (``iv_rank`` is always ``None``), this
+        returns an empty list in practice — the gate is plumbed but inert
+        (ADR-002 OQ4 / issue #156). Wiring a real IV-rank feed activates it
+        with no further scanner change.
+        """
+        if iv_rank is None or req.min_iv_rank is None:
+            return []
+        if iv_rank < req.min_iv_rank:
+            return [f"iv_rank_below_floor: {iv_rank:.1f} < {req.min_iv_rank}"]
+        return []
 
     def _passes_10pct_rule(self, req: OptionScanRequest, strike: float) -> bool:
         if req.strategy != "covered_call" or not req.cost_basis:

@@ -272,19 +272,41 @@ class MarketContext(BaseModel):
 
 
 class OptionScanRequest(BaseModel):
+    """Request body for ``POST /api/options/scan``.
+
+    Rule fields default to ``None`` and are backfilled by the scan router
+    from the persisted ``rules_config`` (see
+    :func:`app.services.rules_config.load_rules_config`). An explicit
+    non-``None`` value on the request still wins — per-request override is
+    preserved. Omitting a rule field is the common case; the resolved value
+    comes from the trader's configured Trading Rules.
+    """
+
     ticker: str
     strategy: str  # "cash_secured_put" | "covered_call"
     cost_basis: Optional[float] = None
     capital_available: Optional[float] = None
     shares_held: Optional[int] = 100
-    min_dte: int = 25
-    max_dte: int = 50
-    min_return_pct: float = 1.0
+    # Entry-rule fields — None means "resolve from rules_config" (issue #156).
+    min_dte: Optional[int] = None
+    max_dte: Optional[int] = None
+    min_return_pct: Optional[float] = None
     max_return_pct: Optional[float] = None
-    min_call_distance_pct: float = 10.0
-    max_delta: float = 0.35
-    min_delta: float = 0.15
-    exclude_earnings_dte: int = 5
+    min_call_distance_pct: Optional[float] = None
+    max_delta: Optional[float] = None
+    min_delta: Optional[float] = None
+    exclude_earnings_dte: Optional[int] = None
+    # Universe-rule fields — also resolved from rules_config when None.
+    min_open_interest: Optional[int] = None
+    max_bid_ask_spread_pct: Optional[float] = None
+    min_iv_rank: Optional[float] = None
+    # Covered-call cost-basis floor toggle. When True (default), a CC strike
+    # below the cost-basis floor is flagged with a ``below_cost_basis``
+    # rejection reason; the candidate is never dropped.
+    cost_basis_floor_enabled: bool = True
+    # Covered-call at-or-above-cost-basis floor margin, whole-percent — None
+    # means resolve from rules_config (entry.min_call_distance_from_cost_basis_pct).
+    min_call_distance_from_cost_basis_pct: Optional[float] = None
 
 
 class OptionScanResponse(BaseModel):

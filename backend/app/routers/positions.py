@@ -31,10 +31,10 @@ from app.models.database import AppSetting, get_db
 from app.models.schemas import RecoveryPlanResponse
 from app.services import journal
 from app.services.recovery_engine import (
-    DEFAULT_SIZING_CAP_DOLLARS,
     WHEEL_MONTHLY_PREMIUM_PCT,
     compute_recovery_paths,
 )
+from app.services.rules_config import load_rules_config
 from app.services.recovery_scoring import DISCLAIMER_TEXT, score_recovery_paths
 from app.services.schwab_client import SchwabClient
 
@@ -65,34 +65,31 @@ def _get_app_setting(db: DBSession, key: str) -> str | None:
 
 
 def _read_okr_settings(db: DBSession) -> dict[str, Any]:
-    """Read OKR scoring inputs from ``app_settings`` with defaults.
+    """Read the recovery-engine scoring inputs from settings.
 
-    Keys live alongside the existing ``cache_ttl_*`` keys and are
-    populated by #156/#157 when that work lands. Defaults documented in the
-    plan §5:
+    Two of these are OKR reads on flat ``app_settings`` keys (ADR-001: target
+    yield and strategy preference are OKRs):
 
     - ``okr_target_yield`` → ``None`` (suppresses sell-redeploy)
-    - ``okr_sizing_cap_dollars`` → :data:`DEFAULT_SIZING_CAP_DOLLARS`
     - ``okr_strategy_preference`` → ``None`` (dormant bonus row in V0.5.8)
+
+    The per-position sizing cap is **no longer** an ``okr_*`` flat key. Per
+    ADR-001 it is a Trading Rule, so it is resolved from
+    ``rules_config.position.sizing_cap_dollars`` via
+    :func:`app.services.rules_config.load_rules_config` (issue #156). With no
+    stored ``rules_config`` row that resolves to the catalog default ($5,000).
     """
     target_raw = _get_app_setting(db, "okr_target_yield")
-    cap_raw = _get_app_setting(db, "okr_sizing_cap_dollars")
     pref_raw = _get_app_setting(db, "okr_strategy_preference")
 
     target_yield: float | None
-    sizing_cap: float
-
     try:
         target_yield = float(target_raw) if target_raw not in (None, "") else None
     except (TypeError, ValueError):
         target_yield = None
 
-    try:
-        sizing_cap = (
-            float(cap_raw) if cap_raw not in (None, "") else DEFAULT_SIZING_CAP_DOLLARS
-        )
-    except (TypeError, ValueError):
-        sizing_cap = DEFAULT_SIZING_CAP_DOLLARS
+    # Sizing cap comes from rules_config (issue #156), not an okr_* flat key.
+    sizing_cap = load_rules_config(db).position.sizing_cap_dollars
 
     strategy_preference = pref_raw if pref_raw not in (None, "") else None
 
