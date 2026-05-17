@@ -1,18 +1,20 @@
-# Financial Regression Analysis Tool
+# Regress — Personal Wheel-Strategy Trading Cockpit
 
-A full-stack application for financial data analysis with linear, multi-factor, rolling, and comparison regression models. Fetches data from Schwab, FRED, Zillow, and Alpha Vantage, caches it locally, and presents interactive Plotly charts with statistical summaries.
+A personal trading operating system for disciplined wheel-strategy traders. Regress connects research, options scanning, portfolio-aware decision support, and trade journaling into one feedback loop — so you can define your system, run it consistently, find disciplined entries, and learn from outcomes.
+
+It is not broker execution, predictive AI, or a generic charting platform. It is the cockpit around your existing brokerage workflow.
 
 ![Screenshot placeholder](docs/screenshot.png)
 
 ## Features
 
-- **Linear Regression** — Price vs time trend with confidence intervals
-- **Multi-Factor Regression** — OLS with automatic frequency alignment across data sources
-- **Rolling Regression** — Sliding window trend analysis with auto-annotated trend breaks
-- **Comparison Mode** — Normalize 2-5 assets to a common base for side-by-side analysis
-- **Real Estate Analysis** — Case-Shiller metro indices and Zillow zip code data
-- **Session Management** — Save, reload, and share analysis configurations
-- **Chart Annotations** — Add custom notes to chart dates
+- **Options Scanning** — Surface disciplined wheel entries (cash-secured puts, covered calls) filtered by your rules, with earnings-adjacent expirations excluded
+- **Portfolio-Aware Decision Support** — Position context, assignment risk, and buying-power impact alongside every candidate trade
+- **Trade Journaling** — Capture entries, exits, and notes so each cycle feeds back into the next
+- **Regression Analysis** — Linear, multi-factor, and rolling models for the research side of the loop, with comparison mode to normalize 2-5 assets
+- **Macro & Real Estate Context** — FRED economic series, Case-Shiller metro indices, and Zillow zip-code data for broader market backdrop
+- **Session Management** — Save, reload, and share analysis configurations across the research loop
+- **Chart Annotations** — Mark dated events and decisions on charts
 - **Data Quality Indicators** — Source badges, staleness warnings, alignment notes
 - **Plain-English Interpretation** — Auto-generated summaries of statistical results
 - **Dark Mode** — Full dark/light theme support
@@ -96,8 +98,8 @@ pytest tests/ -v
 
 ```mermaid
 graph TB
-    User["Analyst"]
-    App["Regression Analysis Tool<br/><i>FastAPI + React</i>"]
+    User["Trader"]
+    App["Regress<br/><i>FastAPI + React</i>"]
     Schwab["Schwab API<br/><i>Stocks, indices, options</i>"]
     FRED["FRED API<br/><i>Rates, housing, economic data</i>"]
     Zillow["Zillow Research<br/><i>ZHVI home values by zip</i>"]
@@ -120,9 +122,9 @@ graph TB
 
 ```mermaid
 graph TB
-    User["Analyst"]
+    User["Trader"]
 
-    subgraph sys ["Regression Analysis Tool"]
+    subgraph sys ["Regress"]
         Frontend["Frontend SPA<br/><i>React 19, Plotly, Tailwind CSS</i>"]
         Backend["Backend API<br/><i>FastAPI, Python 3.12</i>"]
         DB[("SQLite<br/><i>Cache, sessions, settings</i>")]
