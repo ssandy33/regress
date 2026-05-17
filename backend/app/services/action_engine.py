@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import quote
 
+from app.services.rules_config import DEFAULT_RULES_CONFIG, RulesConfig
+
 # Cap from spec §2.2: anything beyond 8 cards is noise; the user should
 # triage in the destination tool.
 MAX_ACTIONS = 8
@@ -43,7 +45,11 @@ LARGE_LOSER_DOLLAR_THRESHOLD = -1000.0  # -$1,000
 # Cap on per-leg ITM short-DTE cards. Spec §2.2: "one card per leg, capped
 # at 3 most-urgent".
 ITM_SHORT_DTE_CAP = 3
-ITM_SHORT_DTE_MAX_DTE = 7
+
+# The DTE threshold for the ITM/short-DTE cards is a trading rule — it is
+# resolved from ``rules_config.management.expiration_warning_days`` (issue
+# #156) and passed in by the dashboard. The catalog default is 7, so the
+# behavior is unchanged when no ``rules_config`` row is stored.
 
 # Sort priority bases per spec §14.7. Lower number = ranked first inside
 # the priority bucket. Two sub-bucket keys live alongside these to break
@@ -280,13 +286,19 @@ def _largest_loser_action(positions: Iterable[dict]) -> dict | None:
     }
 
 
-def _itm_short_dte_actions(open_legs: Iterable[dict]) -> list[dict]:
-    """Build up to ``ITM_SHORT_DTE_CAP`` per-leg ``expiration.itm_short_dte`` cards."""
+def _itm_short_dte_actions(
+    open_legs: Iterable[dict], short_dte_max: int
+) -> list[dict]:
+    """Build up to ``ITM_SHORT_DTE_CAP`` per-leg ``expiration.itm_short_dte`` cards.
+
+    ``short_dte_max`` is the DTE threshold resolved from
+    ``rules_config.management.expiration_warning_days`` (issue #156).
+    """
     cards: list[dict] = []
     for leg in open_legs:
         dte = leg.get("dte")
         moneyness = leg.get("moneyness") or {}
-        if dte is None or dte > ITM_SHORT_DTE_MAX_DTE:
+        if dte is None or dte > short_dte_max:
             continue
         if moneyness.get("state") != "ITM":
             continue
@@ -320,17 +332,21 @@ def _itm_short_dte_actions(open_legs: Iterable[dict]) -> list[dict]:
     return cards[:ITM_SHORT_DTE_CAP]
 
 
-def _short_dte_aggregate_actions(open_legs: Iterable[dict]) -> list[dict]:
+def _short_dte_aggregate_actions(
+    open_legs: Iterable[dict], short_dte_max: int
+) -> list[dict]:
     """Build aggregated ``expiration.short_dte`` cards — one per ticker.
 
-    Aggregated because a 7-DTE OTM book often contains the same ticker
+    Aggregated because a short-DTE OTM book often contains the same ticker
     repeatedly, and per-leg cards would crowd out higher-priority signals.
+    ``short_dte_max`` is the DTE threshold resolved from
+    ``rules_config.management.expiration_warning_days`` (issue #156).
     """
     by_ticker: dict[str, dict] = {}
     for leg in open_legs:
         dte = leg.get("dte")
         moneyness = leg.get("moneyness") or {}
-        if dte is None or dte > ITM_SHORT_DTE_MAX_DTE:
+        if dte is None or dte > short_dte_max:
             continue
         if moneyness.get("state") == "ITM":
             # ITM legs are handled by the per-leg card.
@@ -358,11 +374,11 @@ def _short_dte_aggregate_actions(open_legs: Iterable[dict]) -> list[dict]:
                 "title": f"Review {ticker} legs",
                 "subject": {
                     "ticker": ticker,
-                    "amount": f"{count} {leg_word} ≤ {ITM_SHORT_DTE_MAX_DTE} DTE",
+                    "amount": f"{count} {leg_word} ≤ {short_dte_max} DTE",
                 },
                 "reason": (
                     f"{count} open {leg_word} on {ticker} expire within "
-                    f"{ITM_SHORT_DTE_MAX_DTE} days."
+                    f"{short_dte_max} days."
                 ),
                 "cta": {
                     "label": f"Manage {ticker}",
@@ -470,6 +486,7 @@ def compute_next_actions(
     kpis: dict,
     positions: list[dict],
     open_legs: list[dict],
+    rules: RulesConfig = DEFAULT_RULES_CONFIG,
     now: datetime | None = None,
 ) -> list[dict]:
     """Compute the ranked Next Actions list for the dashboard payload.
@@ -479,9 +496,18 @@ def compute_next_actions(
     deterministic for any given input — same input, same order, byte for
     byte.
 
+    ``rules`` is the resolved :class:`~app.services.rules_config.RulesConfig`
+    (issue #156); the caller — ``routers/dashboard.py`` via
+    ``build_dashboard_payload`` — resolves it so the engine keeps no DB
+    dependency. It defaults to the catalog defaults so a caller that omits it
+    behaves exactly as before.
+
     Returns at most :data:`MAX_ACTIONS` entries.
     """
     candidates: list[dict] = []
+
+    # DTE threshold for the ITM/short-DTE expiration cards — a trading rule.
+    short_dte_max = rules.management.expiration_warning_days
 
     schwab = status.get("schwab", {}) or {}
     cache = status.get("cache", {}) or {}
@@ -504,8 +530,8 @@ def compute_next_actions(
     if loser_card is not None:
         candidates.append(loser_card)
 
-    candidates.extend(_itm_short_dte_actions(open_legs))
-    candidates.extend(_short_dte_aggregate_actions(open_legs))
+    candidates.extend(_itm_short_dte_actions(open_legs, short_dte_max))
+    candidates.extend(_short_dte_aggregate_actions(open_legs, short_dte_max))
     candidates.extend(_cc_candidate_actions(positions, open_legs))
 
     no_legs_card = _no_open_legs_action(kpis)

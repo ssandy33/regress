@@ -105,12 +105,12 @@ class TestAC2_EarningsExclusionWorksInScanner:
                            "totalVolume": 5000000},
             "putExpDateMap": {
                 f"{exp_near}:30": {
-                    "90.0": [{"strikePrice": 90.0, "bid": 1.0, "ask": 1.2, "mark": 1.1,
+                    "90.0": [{"strikePrice": 90.0, "bid": 1.05, "ask": 1.15, "mark": 1.1,
                               "delta": -0.25, "gamma": 0.02, "theta": -0.03, "vega": 0.05,
                               "openInterest": 500, "totalVolume": 100, "volatility": 30.0}],
                 },
                 f"{exp_safe}:45": {
-                    "90.0": [{"strikePrice": 90.0, "bid": 1.5, "ask": 1.7, "mark": 1.6,
+                    "90.0": [{"strikePrice": 90.0, "bid": 1.55, "ask": 1.65, "mark": 1.6,
                               "delta": -0.25, "gamma": 0.02, "theta": -0.03, "vega": 0.05,
                               "openInterest": 500, "totalVolume": 100, "volatility": 30.0}],
                 },
@@ -163,7 +163,7 @@ class TestAC3_ScannerCompletesWhenAlphaVantageReturnsNone:
                            "totalVolume": 5000000},
             "putExpDateMap": {
                 f"{exp_date}:{dte}": {
-                    "90.0": [{"strikePrice": 90.0, "bid": 1.0, "ask": 1.2, "mark": 1.1,
+                    "90.0": [{"strikePrice": 90.0, "bid": 1.05, "ask": 1.15, "mark": 1.1,
                               "delta": -0.25, "gamma": 0.02, "theta": -0.03, "vega": 0.05,
                               "openInterest": 500, "totalVolume": 100, "volatility": 30.0}],
                 },

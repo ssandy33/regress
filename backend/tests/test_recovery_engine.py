@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from app.services.recovery_engine import (
-    DEFAULT_SIZING_CAP_DOLLARS,
     WHEEL_BE_MULTIPLIERS,
     WHEEL_MONTHLY_PREMIUM_PCT,
     canonical_path_order,
@@ -242,18 +241,19 @@ class TestAverageDownPath:
         # opp_cost = additional_capital * target_yield = $800 * 0.18 = $144
         assert avg["opportunity_cost_vs_baseline"] == pytest.approx(144.0)
 
-    def test_uses_default_sizing_cap_when_unset(self):
-        # When the OKR cap is None the engine falls back to the documented
-        # default. With the SOFI fixture, $4600 < $5000 default → eligible.
+    def test_uses_supplied_sizing_cap(self):
+        # The engine no longer carries its own default cap (issue #156):
+        # the caller resolves it from rules_config and always supplies a
+        # concrete value. With the SOFI fixture, $4600 < the $5000 catalog
+        # default cap → eligible.
         paths = compute_recovery_paths(
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=None,
+            sizing_cap_dollars=5000.0,
         )
         avg = next(p for p in paths if p["path_id"] == "average-down")
         assert avg["eligibility"] == "eligible"
-        assert DEFAULT_SIZING_CAP_DOLLARS == 5000.0
 
 
 # ---------------------------------------------------------------------------

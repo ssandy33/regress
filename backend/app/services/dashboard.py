@@ -27,6 +27,7 @@ from app.services.dashboard_legs import (
     filter_upcoming,
     parse_iso_to_utc,
 )
+from app.services.rules_config import load_rules_config
 from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
 from app.services.schwab_client import SchwabClient, SchwabClientError
 
@@ -610,6 +611,8 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
     )
 
     # Action engine — pure, deterministic, recomputed every call (spec §2.2).
+    # Trading rules are resolved here (the router/service layer) and passed
+    # in so the engine stays a pure function with no DB dependency (#156).
     next_actions = compute_next_actions(
         status={
             "schwab": schwab_status,
@@ -620,6 +623,7 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         kpis=kpis,
         positions=position_rows,
         open_legs=open_legs,
+        rules=load_rules_config(db),
     )
     _attach_next_suggested_actions(position_rows, next_actions, open_legs)
 

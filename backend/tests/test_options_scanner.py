@@ -75,6 +75,11 @@ def scanner():
     return OptionScanner()
 
 
+# Rule fields are explicit on these fixtures so the scanner can be exercised
+# in isolation (these tests bypass the router that would otherwise backfill
+# the universe rules from rules_config — see issue #156). The cost-basis
+# floor is disabled so the existing fails_10pct_rule assertions are not
+# perturbed by the new below_cost_basis rule.
 @pytest.fixture()
 def cc_request():
     return OptionScanRequest(
@@ -88,6 +93,10 @@ def cc_request():
         min_call_distance_pct=10.0,
         max_delta=0.35,
         min_delta=0.15,
+        min_open_interest=50,
+        max_bid_ask_spread_pct=10.0,
+        min_iv_rank=30.0,
+        cost_basis_floor_enabled=False,
     )
 
 
@@ -102,6 +111,9 @@ def csp_request():
         min_return_pct=0.5,
         max_delta=0.35,
         min_delta=0.15,
+        min_open_interest=50,
+        max_bid_ask_spread_pct=10.0,
+        min_iv_rank=30.0,
     )
 
 
@@ -127,7 +139,7 @@ class TestRejectionFilters:
         # Strike $16 is only 6.7% above $15 cost basis, needs 10%
         reasons = scanner._check_rejection(
             cc_request, strike=16.0, current_price=14.0,
-            delta=-0.20, oi=100, bid=0.30, mid=0.35, dte=30,
+            delta=-0.20, oi=100, bid=0.30, ask=0.32, mid=0.35, dte=30,
         )
         assert any("fails_10pct_rule" in r for r in reasons)
 
@@ -135,42 +147,42 @@ class TestRejectionFilters:
         # Strike $17 is 13.3% above $15 cost basis
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
-            delta=-0.20, oi=100, bid=0.30, mid=0.35, dte=30,
+            delta=-0.20, oi=100, bid=0.30, ask=0.32, mid=0.35, dte=30,
         )
         assert not any("fails_10pct_rule" in r for r in reasons)
 
     def test_delta_out_of_range_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
-            delta=-0.05, oi=100, bid=0.30, mid=0.35, dte=30,
+            delta=-0.05, oi=100, bid=0.30, ask=0.32, mid=0.35, dte=30,
         )
         assert any("delta_out_of_range" in r for r in reasons)
 
     def test_delta_in_range_passes(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
-            delta=-0.25, oi=100, bid=0.30, mid=0.35, dte=30,
+            delta=-0.25, oi=100, bid=0.30, ask=0.32, mid=0.35, dte=30,
         )
         assert not any("delta_out_of_range" in r for r in reasons)
 
     def test_missing_delta_not_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
-            delta=None, oi=100, bid=0.30, mid=0.35, dte=30,
+            delta=None, oi=100, bid=0.30, ask=0.32, mid=0.35, dte=30,
         )
         assert not any("delta" in r for r in reasons)
 
     def test_low_oi_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
-            delta=-0.20, oi=10, bid=0.30, mid=0.35, dte=30,
+            delta=-0.20, oi=10, bid=0.30, ask=0.32, mid=0.35, dte=30,
         )
         assert any("low_open_interest" in r for r in reasons)
 
     def test_zero_bid_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
-            delta=-0.20, oi=100, bid=0.0, mid=0.10, dte=30,
+            delta=-0.20, oi=100, bid=0.0, ask=0.10, mid=0.10, dte=30,
         )
         assert any("zero_bid" in r for r in reasons)
 
@@ -178,7 +190,7 @@ class TestRejectionFilters:
         # Put strike $15 > current price $14
         reasons = scanner._check_rejection(
             csp_request, strike=15.0, current_price=14.0,
-            delta=-0.50, oi=100, bid=1.50, mid=1.60, dte=30,
+            delta=-0.50, oi=100, bid=1.50, ask=1.55, mid=1.60, dte=30,
         )
         assert any("itm_put" in r for r in reasons)
 
@@ -186,7 +198,7 @@ class TestRejectionFilters:
         # Put strike $13 < current price $14
         reasons = scanner._check_rejection(
             csp_request, strike=13.0, current_price=14.0,
-            delta=-0.25, oi=100, bid=0.30, mid=0.35, dte=30,
+            delta=-0.25, oi=100, bid=0.30, ask=0.32, mid=0.35, dte=30,
         )
         assert not any("itm_put" in r for r in reasons)
 
@@ -310,8 +322,10 @@ class TestScanWithSchwabChain:
         dte = 30
         exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
 
+        # Spread kept inside the 10% bid/ask rule so the new
+        # wide_bid_ask_spread check (issue #156) does not reject the strike.
         contract = _make_schwab_contract(
-            strike=17.0, bid=0.40, ask=0.50, mark=0.45,
+            strike=17.0, bid=0.43, ask=0.47, mark=0.45,
             delta=-0.20, gamma=0.03, theta=-0.02, vega=0.04,
             oi=500, volume=100, volatility=35.0, dte=dte,
         )
@@ -347,8 +361,9 @@ class TestScanWithSchwabChain:
         dte = 30
         exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
 
+        # Spread kept inside the 10% bid/ask rule (issue #156).
         contract = _make_schwab_contract(
-            strike=13.0, bid=0.35, ask=0.45, mark=0.40,
+            strike=13.0, bid=0.38, ask=0.42, mark=0.40,
             delta=-0.25, gamma=0.02, theta=-0.01, vega=0.03,
             oi=200, volume=50, volatility=40.0, dte=dte,
         )
@@ -607,9 +622,11 @@ class TestHumanReasonsPopulated:
         dte = 30
         exp_date = (datetime.now().date() + timedelta(days=dte)).strftime("%Y-%m-%d")
 
-        # Strike $17 passes filters but premium yields tiny return (below cc_request.min_return_pct=0.5)
+        # Strike $17 passes filters but premium yields tiny return (below
+        # cc_request.min_return_pct=0.5). Spread kept inside the 10% bid/ask
+        # rule so the new wide_bid_ask_spread check (#156) is not the reason.
         contract = _make_schwab_contract(
-            strike=17.0, bid=0.01, ask=0.02, mark=0.015,
+            strike=17.0, bid=0.0145, ask=0.0155, mark=0.015,
             delta=-0.20, oi=500, dte=dte,
         )
         chain_resp = _make_schwab_chain_response(

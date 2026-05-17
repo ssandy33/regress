@@ -50,6 +50,18 @@ _RETURN_ABOVE_RE = re.compile(
     r"^return_above_cap:\s*(?P<pct>-?\d+(?:\.\d+)?)%\s*>\s*"
     r"(?P<max>-?\d+(?:\.\d+)?)%\s*$"
 )
+_BELOW_COST_BASIS_RE = re.compile(
+    r"^below_cost_basis:\s*strike\s*\$(?P<strike>-?\d+(?:\.\d+)?)\s*<\s*"
+    r"floor\s*\$(?P<floor>-?\d+(?:\.\d+)?)\s*$"
+)
+_WIDE_SPREAD_RE = re.compile(
+    r"^wide_bid_ask_spread:\s*(?P<pct>-?\d+(?:\.\d+)?)%\s*>\s*"
+    r"(?P<max>-?\d+(?:\.\d+)?)%\s*$"
+)
+_IV_RANK_BELOW_RE = re.compile(
+    r"^iv_rank_below_floor:\s*(?P<rank>-?\d+(?:\.\d+)?)\s*<\s*"
+    r"(?P<min>-?\d+(?:\.\d+)?)\s*$"
+)
 
 
 class HumanizeContext(TypedDict, total=False):
@@ -112,6 +124,12 @@ def _humanize_one(raw: str, ctx: HumanizeContext) -> str:
         return _fmt_return_below_target(raw, ctx)
     if raw.startswith("return_above_cap"):
         return _fmt_return_above_cap(raw, ctx)
+    if raw.startswith("below_cost_basis"):
+        return _fmt_below_cost_basis(raw, ctx)
+    if raw.startswith("wide_bid_ask_spread"):
+        return _fmt_wide_bid_ask_spread(raw, ctx)
+    if raw.startswith("iv_rank_below_floor"):
+        return _fmt_iv_rank_below_floor(raw, ctx)
 
     # Unknown code — fall back so we never lose information.
     return raw
@@ -224,4 +242,43 @@ def _fmt_return_above_cap(raw: str, ctx: HumanizeContext) -> str:
         f"Premium is {pct:.2f}% of capital — above your "
         f"{max_pct:.1f}% cap. Usually means the strike is too close to the "
         "money for the risk."
+    )
+
+
+def _fmt_below_cost_basis(raw: str, ctx: HumanizeContext) -> str:
+    """Render ``below_cost_basis: strike $X < floor $Y``."""
+    match = _BELOW_COST_BASIS_RE.match(raw)
+    if not match:
+        return raw
+    strike = float(match.group("strike"))
+    floor = float(match.group("floor"))
+    return (
+        f"Strike ${strike:.2f} is below your ${floor:.2f} cost-basis floor — "
+        "if assigned, you'd lock in a loss on the shares."
+    )
+
+
+def _fmt_wide_bid_ask_spread(raw: str, ctx: HumanizeContext) -> str:
+    """Render ``wide_bid_ask_spread: X% > Y%``."""
+    match = _WIDE_SPREAD_RE.match(raw)
+    if not match:
+        return raw
+    pct = float(match.group("pct"))
+    max_pct = float(match.group("max"))
+    return (
+        f"The bid/ask spread is {pct:.1f}% of the mid price — wider than your "
+        f"{max_pct:.1f}% limit, so entering and exiting would cost too much."
+    )
+
+
+def _fmt_iv_rank_below_floor(raw: str, ctx: HumanizeContext) -> str:
+    """Render ``iv_rank_below_floor: X < Y``."""
+    match = _IV_RANK_BELOW_RE.match(raw)
+    if not match:
+        return raw
+    rank = float(match.group("rank"))
+    min_rank = float(match.group("min"))
+    return (
+        f"IV rank is {rank:.0f} — below your {min_rank:.0f} floor, so the "
+        "premium on offer is likely too thin for selling options."
     )
