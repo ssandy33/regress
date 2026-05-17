@@ -1,0 +1,272 @@
+title: "ADR: [Short decision title]"
+labels: ["adr"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Architecture Decision Record
+
+        An ADR records one architectural decision: the codebase reality it
+        must fit, the chosen approach, and the boundaries an implementation
+        agent works within.
+
+        **Write an ADR before building** when the work adds a service or
+        module, changes a data model or a public contract, introduces a
+        cross-cutting pattern, or chooses between approaches that are
+        expensive to reverse. Skip it for small, local changes.
+
+        **How to use this discussion:**
+        - The authoring (CTO) agent fills every section from a real review of
+          the current code.
+        - The implementation agent treats **Decision**, **Implementation
+          guidance**, and **Agent boundaries** as binding.
+        - Keep this post the single source of truth — edit it as the decision
+          evolves; use the thread for review and sign-off.
+        - Link the issues and PRs created from this ADR back to this discussion.
+
+        > ⚠️ This ADR must describe the codebase **as it is today**, not an
+        > idealized architecture. If a section can't be grounded in the actual
+        > code, say so explicitly instead of guessing.
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      description: Lifecycle stage of this decision.
+      options:
+        - Proposed
+        - Accepted
+        - Superseded
+        - Deprecated
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: feature
+    attributes:
+      label: Feature or initiative
+      description: The work this decision enables. Link the PRD, issue, epic, project, or discussion.
+      placeholder: "PRD #209 / epic #156 / discussions/210"
+    validations:
+      required: true
+
+  - type: textarea
+    id: codebase-review
+    attributes:
+      label: Codebase review summary
+      description: The primary input — what was actually read in the current codebase before deciding.
+      value: |
+        **Code reviewed:** <files, modules, services, jobs inspected>
+
+        **Current architecture:** <how the relevant slice works today>
+
+        **Existing patterns:** <conventions this decision must stay consistent with>
+
+        **Relevant surfaces:**
+        - Files / modules:
+        - APIs / contracts:
+        - Services / jobs:
+        - Database tables:
+        - Frontend surfaces:
+
+        **Current tests & validation:** <suites, fixtures, CI checks covering this area>
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: Why a decision is needed now.
+      value: |
+        - **Problem:** <what we are solving>
+        - **Why decide now:** <what forces the decision>
+        - **Cost of doing nothing:** <what happens if we don't>
+    validations:
+      required: true
+
+  - type: textarea
+    id: goals
+    attributes:
+      label: Goals
+      description: What this decision should enable. Specific and checkable.
+      value: |
+        -
+        -
+    validations:
+      required: false
+
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-goals
+      description: What this decision deliberately does NOT attempt to solve.
+      value: |
+        -
+    validations:
+      required: false
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Hard limits the decision must respect.
+      value: |
+        - **Product:**
+        - **Technical:**
+        - **Backward compatibility:**
+        - **Security / privacy:**
+        - **Performance:**
+        - **Operational:**
+    validations:
+      required: false
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options considered
+      description: The realistic approaches, each with honest pros and cons.
+      value: |
+        ### Option A — <name>
+        - Pros:
+        - Cons:
+
+        ### Option B — <name>
+        - Pros:
+        - Cons:
+
+        ### Option C — <name>
+        - Pros:
+        - Cons:
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Decision
+      description: The choice. Binding for the implementation agent.
+      value: |
+        **Chosen:** <Option X>
+
+        **We will:** <what gets built>
+
+        **We will NOT:** <what is explicitly out of scope for this decision>
+    validations:
+      required: true
+
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Rationale
+      description: Why this option, why not the others, what tradeoffs are accepted.
+      value: |
+        - **Why this option:**
+        - **Why the alternatives were rejected:**
+        - **Tradeoffs accepted:**
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation guidance for AI agent
+      description: Concrete direction for the implementation agent.
+      value: |
+        - **Files / modules to modify:**
+        - **Integration points:**
+        - **Data model / schema changes:**
+        - **API / contract changes:**
+        - **Feature flags:**
+        - **Error handling expectations:**
+        - **Observability:** <logs, metrics, traces to add>
+        - **Security / privacy requirements:**
+        - **Performance considerations:**
+    validations:
+      required: true
+
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Agent boundaries
+      description: Guardrails for the implementation agent.
+      value: |
+        - **Allowed to change:**
+        - **Do NOT change:**
+        - **Patterns to follow:**
+        - **Patterns to avoid:**
+        - **Stop and ask when:** <conditions that require human or CTO clarification before proceeding>
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete and testable. Per CLAUDE.md, every criterion must become automated test coverage on the implementing PR.
+      value: |
+        - [ ] Functional: <expected behavior>
+        - [ ] Edge cases: <boundary and failure behavior>
+        - [ ] Tests: <coverage added>
+        - [ ] Documentation: <what gets updated>
+        - [ ] Rollout: <flag, migration, or deploy requirement met>
+    validations:
+      required: true
+
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing and validation plan
+      description: How the change is proven correct.
+      value: |
+        - **Unit tests:**
+        - **Integration tests:**
+        - **E2E / manual QA:**
+        - **Required validation commands:** <exact commands the agent and CI must run, e.g. `cd backend && python -m pytest`>
+    validations:
+      required: false
+
+  - type: textarea
+    id: rollout
+    attributes:
+      label: Rollout and rollback plan
+      value: |
+        - **Feature flag strategy:**
+        - **Migration plan:**
+        - **Rollout steps:**
+        - **Rollback steps:**
+    validations:
+      required: false
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and mitigations
+      value: |
+        - **Risk:** <...> — **Mitigation:** <...>
+    validations:
+      required: false
+
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      value: |
+        -
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      value: |
+        - PRD:
+        - Issues:
+        - Pull requests:
+        - Related ADRs:
+        - Design docs:
+        - Relevant code paths:
+    validations:
+      required: false
