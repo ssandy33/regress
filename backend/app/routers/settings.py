@@ -22,6 +22,12 @@ from app.services.schwab_auth import (
 from app.models.database import AppSetting, CacheEntry, get_db
 from app.models.schemas import CacheStatsResponse, SettingUpdate, SettingsResponse
 from app.services.backup import create_backup, list_backups, restore_backup
+from app.services.rules_config import (
+    RULES_CONFIG_KEY,
+    RULES_CONFIG_SCHEMA_VERSION,
+    RulesConfig,
+    load_rules_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +67,43 @@ def update_setting(req: SettingUpdate, db: DBSession = Depends(get_db)):
         db.add(entry)
     db.commit()
     return {"status": "ok", "key": req.key}
+
+
+# --- Trading Rules config (issue #158 — edit surface for the #156 keystone) ---
+
+
+@router.get("/rules", response_model=RulesConfig)
+def get_rules_config(db: DBSession = Depends(get_db)):
+    """Get the Trading Rules config.
+
+    Backed by :func:`app.services.rules_config.load_rules_config`, which
+    merges any stored ``rules_config`` row over the typed defaults and never
+    raises — so this endpoint always returns a complete, valid config.
+    """
+    return load_rules_config(db)
+
+
+@router.put("/rules", response_model=RulesConfig)
+def update_rules_config(config: RulesConfig, db: DBSession = Depends(get_db)):
+    """Persist the Trading Rules config.
+
+    FastAPI validates the body against :class:`RulesConfig` (the same Pydantic
+    model the engines read), so out-of-range values are rejected with a 422
+    before anything is written. The validated config is stored as a single
+    JSON document in the ``app_settings`` row keyed ``rules_config``.
+    """
+    # Re-stamp the schema version so a client cannot persist a stale value.
+    config = config.model_copy(update={"schema_version": RULES_CONFIG_SCHEMA_VERSION})
+    payload = config.model_dump_json()
+
+    entry = db.query(AppSetting).filter(AppSetting.key == RULES_CONFIG_KEY).first()
+    if entry:
+        entry.value = payload
+    else:
+        entry = AppSetting(key=RULES_CONFIG_KEY, value=payload)
+        db.add(entry)
+    db.commit()
+    return config
 
 
 @router.get("/cache", response_model=CacheStatsResponse)
