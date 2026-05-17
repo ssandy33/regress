@@ -14,6 +14,9 @@ Covered:
   the response (never dropped); ``cost_basis_floor_enabled=False`` suppresses it.
 - A stored ``min_open_interest`` rejects a strike the default floor would pass.
 - The recovery endpoint honors a stored ``sizing_cap_dollars``.
+- The action engine's ITM/short-DTE card honors a non-default
+  ``management.expiration_warning_days`` — the boundary shifts with the stored
+  value, not the catalog default.
 - A fresh DB with no ``rules_config`` row still yields working scans (rollout
   AC — no migration required).
 """
@@ -28,8 +31,9 @@ import pytest
 
 from app.models.database import AppSetting, Position, get_db
 from app.models.schemas import OptionScanRequest
+from app.services.action_engine import compute_next_actions
 from app.services.options_scanner import OptionScanner
-from app.services.rules_config import RULES_CONFIG_KEY
+from app.services.rules_config import DEFAULT_RULES_CONFIG, RULES_CONFIG_KEY, RulesConfig
 from app.services.schwab_client import SchwabClient
 
 
@@ -414,3 +418,65 @@ def test_iv_rank_gate_rejects_low_rank_strike():
     IV-rank feed activates the gate with no scanner change. There is no
     end-to-end assertion to make until that feed exists.
     """
+
+
+# ---------------------------------------------------------------------------
+# Action engine — ITM/short-DTE card honors rules_config.management
+# ---------------------------------------------------------------------------
+
+
+def _itm_short_dte_ids(rules: RulesConfig) -> list[str]:
+    """Run ``compute_next_actions`` for a single 10-DTE ITM leg under ``rules``.
+
+    The leg's 10 DTE deliberately sits *between* the catalog default
+    ``expiration_warning_days`` (7) and the non-default threshold exercised
+    below (14), so the presence of the ``expiration.itm_short_dte`` card is a
+    direct readout of which threshold the engine actually resolved.
+    """
+    status = {
+        "schwab": {"configured": True, "valid": True, "expires_at": None},
+        "cache": {"fresh": 0, "stale": 0, "very_stale": 0, "total": 0},
+    }
+    leg = {
+        "id": "leg-1",
+        "ticker": "SOFI",
+        "type": "put",
+        "strike": 14.0,
+        "expiration": "2026-05-27",
+        "dte": 10,
+        "moneyness": {"state": "ITM", "distance_pct": 0.01, "distance_dollars": 0.5},
+        "position_id": "pos-sofi",
+    }
+    actions = compute_next_actions(
+        status=status,
+        kpis={"open_legs": 1, "open_positions": 1},
+        positions=[],
+        open_legs=[leg],
+        rules=rules,
+    )
+    return [a["action_id"] for a in actions]
+
+
+def test_action_engine_default_threshold_excludes_10dte_itm_leg():
+    """With the default 7-day window, a 10-DTE ITM leg is outside the warning.
+
+    Pins the lower side of the boundary: ``DEFAULT_RULES_CONFIG`` resolves
+    ``expiration_warning_days = 7``, so a leg at 10 DTE does NOT emit the card.
+    """
+    assert "expiration.itm_short_dte" not in _itm_short_dte_ids(DEFAULT_RULES_CONFIG)
+
+
+def test_action_engine_honors_non_default_expiration_warning_days():
+    """A stored ``expiration_warning_days`` of 14 shifts the ITM/short-DTE boundary.
+
+    Issue #156 requires the action engine to honor the stored management
+    thresholds — not the catalog default. With ``expiration_warning_days``
+    raised from the default 7 to 14, a 10-DTE ITM leg now falls inside the
+    warning window and the ``expiration.itm_short_dte`` card appears. Paired
+    with :func:`test_action_engine_default_threshold_excludes_10dte_itm_leg`,
+    this pins the boundary on both sides and would catch a regression that
+    ignored ``rules`` and silently fell back to the hard-coded ``7``.
+    """
+    rules = RulesConfig(management={"expiration_warning_days": 14})
+    assert rules.management.expiration_warning_days == 14
+    assert "expiration.itm_short_dte" in _itm_short_dte_ids(rules)
