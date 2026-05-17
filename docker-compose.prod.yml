@@ -78,6 +78,9 @@ services:
   backend:
     build: ./backend
     # No ports exposed — only accessible via Caddy through Docker network
+    # Run as the non-root appuser (UID/GID 1000) created in backend/Dockerfile.
+    # See SECURITY.md section 2.
+    user: "1000:1000"
     env_file:
       - path: ./backend/.env
         required: false
@@ -112,6 +115,9 @@ services:
   frontend:
     build: ./frontend
     # No ports exposed to host — only accessible via Caddy through Docker network
+    # Run as the non-root node user (UID/GID 1000) from the Node base image.
+    # See SECURITY.md section 2.
+    user: "1000:1000"
     environment:
       - HOSTNAME=0.0.0.0
       - INTERNAL_API_ORIGIN=http://backend:8000
