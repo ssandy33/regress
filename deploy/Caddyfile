@@ -3,6 +3,14 @@
 	encode gzip
 
 	# Security headers
+	#
+	# Content-Security-Policy is deliberately NOT set here (issue #33). CSP is
+	# now nonce-based and owned by the Next.js app: frontend/middleware.js mints
+	# a fresh per-request nonce and emits the `Content-Security-Policy` header
+	# with `script-src 'nonce-...'` instead of `'unsafe-inline'`. Caddy's
+	# `header` directive *replaces* a header, so setting CSP here would clobber
+	# the per-request nonce and the policy would never take effect. The
+	# `/grafana/*` handler below still clears CSP for Grafana, which owns its own.
 	header {
 		X-Frame-Options "DENY"
 		X-Content-Type-Options "nosniff"
@@ -10,7 +18,6 @@
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'"
 		-Server
 	}
 

@@ -362,6 +362,14 @@ Deploy to a single VPS (Hetzner, DigitalOcean, or similar) with automatic HTTPS 
 
 **Estimated cost:** $4.50–6/month for a small VPS with 2GB+ RAM.
 
+> **Before deploying, read [SECURITY.md](SECURITY.md).** It documents the
+> mandatory hardening requirements for a production deployment: SQLite database
+> file permissions and service-account ownership, running as a non-root user,
+> and keeping FastAPI port 8000 behind a reverse proxy. The bundled `deploy/`
+> scripts and `docker-compose.prod.yml` satisfy these requirements; the doc
+> explains how to verify them and how to reproduce the hardened setup on other
+> infrastructure.
+
 ### Prerequisites
 
 - A VPS with 2GB+ RAM running Ubuntu/Debian
@@ -451,7 +459,11 @@ Internet → Caddy (HTTPS, :80/:443)
               └── /*      → Frontend (nginx, internal only)
 ```
 
-Backend port 8000 is **not** exposed to the internet — only Caddy can reach it via Docker's internal network.
+Backend port 8000 is **not** exposed to the internet — only Caddy can reach it
+via Docker's internal network. This is a **security requirement**, not just an
+architectural choice: FastAPI port 8000 must never be published directly to the
+internet, and a reverse proxy with HTTPS (Caddy or nginx) is required for any
+production deployment. See [SECURITY.md](SECURITY.md) section 3 for details.
 
 ## Contributing
 
