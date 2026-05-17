@@ -4,6 +4,13 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    """Application configuration loaded from environment variables and ``.env``.
+
+    Only backend-owned settings are declared as fields. Undeclared keys in
+    ``.env`` (such as the frontend-only NextAuth credentials) are ignored
+    rather than rejected — see ``model_config`` and issue #222.
+    """
+
     fred_api_key: str = ""
     schwab_app_key: str = ""
     schwab_app_secret: str = ""
@@ -17,7 +24,16 @@ class Settings(BaseSettings):
     cache_ttl_monthly_days: int = 7
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # ``extra="ignore"`` so undeclared keys in ``.env`` (e.g. the
+    # frontend-only NextAuth ``GITHUB_ID`` / ``GITHUB_SECRET``) do not trip
+    # pydantic-settings v2's default ``extra="forbid"`` — which raises a
+    # ``ValidationError`` at import and echoes the offending secret value
+    # into the traceback. See issue #222.
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
 
 settings = Settings()
