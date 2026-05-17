@@ -135,6 +135,20 @@ export async function updateSetting(key, value) {
   return data;
 }
 
+// Trading Rules config (issue #158) — typed read/write for the `rules_config`
+// keystone (#156). The generic `GET /api/settings` returns a fixed shape and
+// cannot read `rules_config` back, so #158 added `GET`/`PUT /api/settings/rules`.
+// These helpers keep the component agnostic of the endpoint shape.
+export async function getRulesConfig() {
+  const { data } = await api.get('/api/settings/rules');
+  return data;
+}
+
+export async function saveRulesConfig(config) {
+  const { data } = await api.put('/api/settings/rules', config);
+  return data;
+}
+
 export async function getCacheStats() {
   const { data } = await api.get('/api/settings/cache');
   return data;
