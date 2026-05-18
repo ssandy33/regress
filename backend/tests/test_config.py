@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.config import get_fred_api_key, get_schwab_credentials
+from app.config import Settings, get_fred_api_key, get_schwab_credentials
 from app.models.database import AppSetting, Base
 from app.services.encryption import encrypt_value
 
@@ -230,3 +230,34 @@ class TestGetSchwabCredentials:
             mock_settings.schwab_app_key = ""
             mock_settings.schwab_app_secret = ""
             assert get_schwab_credentials() == ("", "")
+
+
+class TestSettingsExtraIgnore:
+    """``Settings`` must tolerate undeclared environment keys. See issue #222.
+
+    ``backend/.env`` carries frontend-only NextAuth credentials
+    (``GITHUB_ID`` / ``GITHUB_SECRET``). pydantic-settings v2 defaults to
+    ``extra="forbid"``, which would raise a ``ValidationError`` at
+    construction — breaking ``pytest`` collection and echoing the real
+    ``GITHUB_SECRET`` into the traceback. ``extra="ignore"`` prevents this.
+    """
+
+    def test_model_config_sets_extra_ignore(self):
+        """``Settings`` ``model_config`` declares ``extra="ignore"``."""
+        assert Settings.model_config.get("extra") == "ignore"
+
+    def test_undeclared_env_keys_do_not_raise(self, monkeypatch):
+        """Constructing ``Settings()`` with undeclared env keys does not raise.
+
+        Simulates a developer ``.env`` carrying the frontend NextAuth
+        credentials. With ``extra="ignore"`` the keys are silently dropped
+        instead of triggering ``extra_forbidden``.
+        """
+        monkeypatch.setenv("GITHUB_ID", "frontend-only-id")
+        monkeypatch.setenv("GITHUB_SECRET", "frontend-only-secret")
+        monkeypatch.setenv("SOME_OTHER_UNDECLARED_KEY", "value")
+        # ``_env_file=None`` so the test does not depend on a local ``.env``.
+        settings = Settings(_env_file=None)
+        # Undeclared keys are ignored, not absorbed as attributes.
+        assert not hasattr(settings, "github_id")
+        assert not hasattr(settings, "github_secret")

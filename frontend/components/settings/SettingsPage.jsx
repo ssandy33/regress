@@ -8,6 +8,7 @@ import {
 } from '../../api/client';
 import DangerZone from './DangerZone';
 import ReconcileJournal from './ReconcileJournal';
+import TradingRulesSection from './TradingRulesSection';
 import { useJournal } from '../../hooks/useJournal';
 
 function freshnessColor(freshness) {
@@ -29,6 +30,10 @@ export default function SettingsPage() {
   // ``positions`` is also used as the gate for the Reconcile journal section
   // (issue #139) so it disables both buttons on an empty journal.
   const { clearAllData, reconcilePreview, reconcileApply, positions } = useJournal();
+  // Page-scoped tab state (issue #158, Option B). "General" holds the existing
+  // infrastructure/data settings; "Trading Rules" holds the rules_config edit
+  // surface. A V1.1 "Trading OKRs" tab slots in here with zero rework.
+  const [activeTab, setActiveTab] = useState('general');
   const [settings, setSettings] = useState(null);
   const [cacheStats, setCacheStats] = useState(null);
   const [fredKey, setFredKey] = useState('');
@@ -155,24 +160,20 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-white dark:bg-slate-900 flex items-center justify-center">
-        <svg className="w-8 h-8 animate-spin text-blue-600" viewBox="0 0 24 24" fill="none">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-        </svg>
-      </div>
-    );
-  }
-
   const cacheSizeKB = cacheStats ? (cacheStats.total_size_bytes / 1024).toFixed(1) : 0;
+
+  const tabClass = (tab) =>
+    `px-4 py-2 text-sm font-medium rounded-lg ${
+      activeTab === tab
+        ? 'bg-blue-600 text-white'
+        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+    }`;
 
   return (
     <div className="min-h-screen bg-white dark:bg-slate-900">
       <div className="max-w-2xl mx-auto px-6 py-8">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Settings</h1>
           <Link
             href="/"
@@ -182,7 +183,47 @@ export default function SettingsPage() {
           </Link>
         </div>
 
-        <div className="space-y-8">
+        {/* Page-scoped tab bar (issue #158). "Trading OKRs" joins here in V1.1. */}
+        <div
+          role="tablist"
+          aria-label="Settings sections"
+          className="flex gap-2 mb-8 border-b border-slate-200 dark:border-slate-700 pb-4"
+        >
+          <button
+            type="button"
+            role="tab"
+            data-testid="settings-tab-general"
+            aria-selected={activeTab === 'general'}
+            onClick={() => setActiveTab('general')}
+            className={tabClass('general')}
+          >
+            General
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="settings-rules-tab"
+            aria-selected={activeTab === 'rules'}
+            onClick={() => setActiveTab('rules')}
+            className={tabClass('rules')}
+          >
+            Trading Rules
+          </button>
+        </div>
+
+        {activeTab === 'rules' ? (
+          <div role="tabpanel" aria-label="Trading Rules">
+            <TradingRulesSection />
+          </div>
+        ) : loading ? (
+          <div className="flex items-center justify-center py-24">
+            <svg className="w-8 h-8 animate-spin text-blue-600" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          </div>
+        ) : (
+        <div role="tabpanel" aria-label="General" className="space-y-8">
           {/* Data Source Status */}
           <section className="bg-slate-50 dark:bg-slate-800 rounded-xl p-6 border border-slate-200 dark:border-slate-700">
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Data Source Status</h2>
@@ -591,6 +632,7 @@ export default function SettingsPage() {
           {/* Danger Zone — destructive cross-cutting actions (clear all journal data) */}
           <DangerZone onClear={clearAllData} />
         </div>
+        )}
       </div>
     </div>
   );

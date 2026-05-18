@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Rules settings — mock for Issue #158</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    /* Match the app's body styles from frontend/app/globals.css */
+    body { margin: 0; min-height: 100vh; }
+    html.dark body { background-color: rgb(15 23 42); color: rgb(241 245 249); }
+  </style>
+</head>
+<body class="antialiased font-sans">
+
+<!-- =========================================================================
+     SELF-DOCUMENTATION
+     ========================================================================= -->
+<section class="border-b-4 border-blue-600 bg-slate-800/60">
+  <div class="max-w-3xl mx-auto px-6 py-5">
+    <div class="flex items-start justify-between flex-wrap gap-3">
+      <div>
+        <div class="text-[11px] font-semibold uppercase tracking-wider text-blue-400 mb-1">Static design mock — not production code</div>
+        <h1 class="text-xl font-semibold text-white">Settings — Trading Rules section — Issue #158</h1>
+        <p class="text-sm text-slate-400 mt-1 max-w-3xl">
+          Read-only HTML/Tailwind mock of the new Trading Rules editing surface on the Settings page. Each state below is
+          rendered as its own stacked section. Click-throughs are visual cues only — nothing is interactive. Layout follows
+          Option B from the spec §3 (Settings becomes a tabbed page; Trading Rules is its own tab).
+        </p>
+        <p class="text-xs text-slate-500 mt-2">
+          States covered:
+          <span class="text-slate-300">1. Populated (all five rule groups, defaults + edits)</span> ·
+          <span class="text-slate-300">2. Optional fields — unset vs set</span> ·
+          <span class="text-slate-300">3. Inline validation errors</span> ·
+          <span class="text-slate-300">4. Saving (form disabled)</span> ·
+          <span class="text-slate-300">5. Save success</span> ·
+          <span class="text-slate-300">6. Save failure banner</span> ·
+          <span class="text-slate-300">7. Loading skeleton</span> ·
+          <span class="text-slate-300">8. Load error</span>.
+        </p>
+      </div>
+      <div class="text-xs text-slate-400 text-right space-y-0.5">
+        <div>Last updated <span class="text-slate-200 font-medium">2026-05-17</span></div>
+        <div>Issue: <span class="text-blue-400">#158 — Settings page Trading Rules section</span></div>
+        <div>Spec: <span class="font-mono text-slate-300">frontend/design-specs/issue-158-trading-rules-settings.md</span></div>
+        <div>Mock: <span class="font-mono text-slate-300">frontend/design-specs/issue-158-trading-rules-settings-mock.html</span></div>
+        <div>Field source: <span class="font-mono text-slate-300">PRD #209 §R2–R6 · ADR-002 #216</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- =========================================================================
+     PRODUCTION-LIKE APP HEADER (rendered once; identical chrome wraps every state)
+     Mirrors frontend/components/layout/Header.jsx so the page chrome reads as real.
+     ========================================================================= -->
+<header class="h-14 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between px-4 shrink-0">
+  <a href="#" class="text-lg font-semibold text-slate-900 dark:text-white hover:text-blue-400">Regression Analysis Tool</a>
+  <div class="flex items-center gap-3">
+    <span class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium">Account ▾</span>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Dashboard</a>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Analysis</a>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Options</a>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Journal</a>
+    <a href="#" class="p-2 rounded-lg bg-slate-700 text-slate-200" aria-label="Settings">
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+    </a>
+    <a href="#" class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Help">
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+    </a>
+    <button class="p-2 rounded-lg hover:bg-slate-700 text-slate-300" aria-label="Toggle dark mode">
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+    </button>
+  </div>
+</header>
+
+
+<!-- ============================================================
+     STATE 1 — POPULATED (all five rule groups)
+     Spec §4–§8, §11.4 · the normal resting state
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-900/40 text-green-300 border border-green-700">State 1</span>
+      <h2 class="text-base font-semibold text-white">Populated — all five rule groups, required fields valued, no errors</h2>
+      <span class="text-xs text-slate-400 ml-auto">Tabbed page §3.2 · Groups §5–§7 · Footer §10.3</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <!-- Page header -->
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-white">Settings</h1>
+      <a href="#" class="text-sm text-blue-400 hover:text-blue-300">Back to Analysis</a>
+    </div>
+
+    <!-- Page-scoped tab bar (spec §3.1 Option B — first tabbed page, not a shared primitive) -->
+    <div role="tablist" class="flex items-center gap-1 border-b border-slate-700 mb-6">
+      <button role="tab" aria-selected="false" data-testid="settings-tab-general"
+        class="px-4 py-2 text-sm font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent">General</button>
+      <button role="tab" aria-selected="true" data-testid="settings-rules-tab"
+        class="px-4 py-2 text-sm font-medium text-white border-b-2 border-blue-500">Trading Rules</button>
+      <!-- V1.1 adds a third tab here — "Trading OKRs" — zero rework -->
+      <span class="px-4 py-2 text-sm font-medium text-slate-600 italic">Trading OKRs <span class="text-[10px] not-italic">(V1.1)</span></span>
+    </div>
+
+    <!-- ===== Trading Rules section ===== -->
+    <form data-testid="settings-rules-form" class="space-y-8">
+      <!-- Section header — the mental model from the issue -->
+      <div>
+        <h2 class="text-lg font-semibold text-white">Trading Rules</h2>
+        <p class="text-sm text-slate-400">Configure your system. Set once.</p>
+        <!-- defaults note (§11.2) — shown until first save -->
+        <p data-testid="settings-rules-defaults-note" class="text-xs text-slate-500 mt-2 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2">
+          You haven't changed any rules yet — these are the recommended defaults. Edit any field and save to make them yours.
+        </p>
+      </div>
+
+      <!-- ===== GROUP 1 — UNIVERSE ===== -->
+      <section data-testid="rules-group-universe" class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+        <h3 class="text-lg font-semibold text-white">Universe</h3>
+        <p class="text-sm text-slate-400 mb-4">May I trade this underlying at all? Checked before any option chain is scanned.</p>
+        <div class="space-y-5 border-t border-slate-700 pt-5">
+
+          <!-- field: min_open_interest -->
+          <div>
+            <label for="f-min_open_interest" class="block text-sm text-slate-300 mb-1">Min option open interest</label>
+            <div class="flex">
+              <input id="f-min_open_interest" data-testid="rules-field-min_open_interest" type="number" value="500"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <!-- trailing units affix -->
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">contracts</span>
+            </div>
+            <p id="f-min_open_interest-help" class="text-xs text-slate-500 mt-1">Below this, bid-ask spreads widen enough to erode the edge. The standard liquidity floor for retail premium sellers.</p>
+          </div>
+
+          <!-- field: max_bid_ask_spread_pct -->
+          <div>
+            <label for="f-max_bid_ask_spread_pct" class="block text-sm text-slate-300 mb-1">Max bid-ask spread</label>
+            <div class="flex">
+              <input id="f-max_bid_ask_spread_pct" data-testid="rules-field-max_bid_ask_spread_pct" type="number" value="10"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">A wider spread means you give up too much on entry and exit. A cheap proxy for tradeable liquidity.</p>
+          </div>
+
+          <!-- field: min_iv_rank -->
+          <div>
+            <label for="f-min_iv_rank" class="block text-sm text-slate-300 mb-1">IV Rank floor</label>
+            <input id="f-min_iv_rank" data-testid="rules-field-min_iv_rank" type="number" value="30"
+              class="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+            <p class="text-xs text-slate-500 mt-1">Below IV Rank 30, options are historically cheap and selling premium has no statistical edge. 30 is the minimum gate; 50+ is preferred.</p>
+          </div>
+
+          <!-- field: min_iv_percentile — OPTIONAL, shown UNSET here. Full unset/set treatment in State 2. -->
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <label for="f-min_iv_percentile" class="block text-sm text-slate-300">IV Percentile floor</label>
+              <span class="text-xs text-slate-400 bg-slate-700 rounded-full px-2 py-0.5">Optional</span>
+            </div>
+            <input id="f-min_iv_percentile" data-testid="rules-field-min_iv_percentile" type="number" placeholder="Not set — no limit"
+              class="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-500 placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500" />
+            <p class="text-xs text-slate-500 mt-1">Complementary to IV Rank — more stable against outlier spikes. Leave blank to skip this check. Proposed value if you set it: 30.</p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===== GROUP 2 — ENTRY ===== -->
+      <section data-testid="rules-group-entry" class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+        <h3 class="text-lg font-semibold text-white">Entry</h3>
+        <p class="text-sm text-slate-400 mb-4">What trade may I open? Checked when a new option trade is opened or previewed in the scanner.</p>
+        <div class="space-y-5 border-t border-slate-700 pt-5">
+
+          <!-- range field: dte_range — one row, two inputs joined by "to" (§4.3) -->
+          <div>
+            <label class="block text-sm text-slate-300 mb-1">DTE range</label>
+            <div class="flex items-center gap-2">
+              <input data-testid="rules-field-dte_range_min" type="number" value="21" aria-label="DTE minimum"
+                class="w-28 px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="text-xs text-slate-500">to</span>
+              <input data-testid="rules-field-dte_range_max" type="number" value="45" aria-label="DTE maximum"
+                class="w-28 px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="text-xs text-slate-400">days</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">The wheel sweet spot — far enough for meaningful theta decay, near enough to avoid locking capital for months. Below 21 days gamma risk dominates.</p>
+          </div>
+
+          <!-- range field: delta_range_csp -->
+          <div>
+            <label class="block text-sm text-slate-300 mb-1">Delta range (cash-secured puts)</label>
+            <div class="flex items-center gap-2">
+              <input data-testid="rules-field-delta_range_csp_min" type="number" step="0.01" value="0.20" aria-label="CSP delta minimum"
+                class="w-28 px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="text-xs text-slate-500">to</span>
+              <input data-testid="rules-field-delta_range_csp_max" type="number" step="0.01" value="0.30" aria-label="CSP delta maximum"
+                class="w-28 px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <p class="text-xs text-slate-500 mt-1">A probability-of-assignment proxy. 0.20–0.30 is roughly a 70–80% chance the put expires worthless — the mainstream CSP consensus.</p>
+          </div>
+
+          <!-- range field: delta_range_cc -->
+          <div>
+            <label class="block text-sm text-slate-300 mb-1">Delta range (covered calls)</label>
+            <div class="flex items-center gap-2">
+              <input data-testid="rules-field-delta_range_cc_min" type="number" step="0.01" value="0.20" aria-label="CC delta minimum"
+                class="w-28 px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="text-xs text-slate-500">to</span>
+              <input data-testid="rules-field-delta_range_cc_max" type="number" step="0.01" value="0.35" aria-label="CC delta maximum"
+                class="w-28 px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Slightly wider — a higher delta is fine when you want shares called away above cost basis. Tighten it when you want to keep the shares.</p>
+          </div>
+
+          <!-- field: min_monthly_return_pct — EDITED value (23 vs default 2) to show default-as-placeholder is overridden -->
+          <!-- annotation: the value 23 is a trader edit; placeholder 2 would show only when empty -->
+          <div>
+            <label for="f-min_monthly_return_pct" class="block text-sm text-slate-300 mb-1">Min monthly return</label>
+            <div class="flex">
+              <input id="f-min_monthly_return_pct" data-testid="rules-field-min_monthly_return_pct" type="number" value="3" placeholder="2"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">A premium-yield floor. A trade earning under 2%/month doesn't justify the capital lockup and assignment risk.</p>
+          </div>
+
+          <!-- field: earnings_buffer_days -->
+          <div>
+            <label for="f-earnings_buffer_days" class="block text-sm text-slate-300 mb-1">Earnings buffer</label>
+            <div class="flex">
+              <input id="f-earnings_buffer_days" data-testid="rules-field-earnings_buffer_days" type="number" value="7"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">days</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Don't open within this many days of earnings — earnings gaps blow straight through strikes.</p>
+          </div>
+
+          <!-- field: min_call_distance_pct -->
+          <div>
+            <label for="f-min_call_distance_pct" class="block text-sm text-slate-300 mb-1">Min call distance</label>
+            <div class="flex">
+              <input id="f-min_call_distance_pct" data-testid="rules-field-min_call_distance_pct" type="number" value="5"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">The covered-call strike must sit at least this far above the trader's adjusted cost basis — the scanner measures this from cost basis, not from spot price.</p>
+          </div>
+
+          <!-- field: min_call_distance_from_cost_basis_pct -->
+          <div>
+            <label for="f-min_call_distance_from_cost_basis_pct" class="block text-sm text-slate-300 mb-1">Min call distance from cost basis</label>
+            <div class="flex">
+              <input id="f-min_call_distance_from_cost_basis_pct" data-testid="rules-field-min_call_distance_from_cost_basis_pct" type="number" value="0"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Never sell a covered call below your adjusted cost basis — that locks in a guaranteed loss if called away. 0 means "at or above cost basis."</p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===== GROUP 3 — POSITION ===== -->
+      <section data-testid="rules-group-position" class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+        <h3 class="text-lg font-semibold text-white">Position</h3>
+        <p class="text-sm text-slate-400 mb-4">How big, how many? Caps on the capital tied up in any one position.</p>
+        <div class="space-y-5 border-t border-slate-700 pt-5">
+
+          <!-- field: sizing_cap_dollars — $ renders as a LEADING affix (§4.2) -->
+          <div>
+            <label for="f-sizing_cap_dollars" class="block text-sm text-slate-300 mb-1">Per-position sizing cap</label>
+            <div class="flex">
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-r-0 border-slate-600 rounded-l-lg bg-slate-700/50">$</span>
+              <input id="f-sizing_cap_dollars" data-testid="rules-field-sizing_cap_dollars" type="number" value="5000"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-r-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <p class="text-xs text-slate-500 mt-1">An absolute-dollar ceiling on capital tied up in one position — caps worst-case single-name loss regardless of account size.</p>
+          </div>
+
+          <!-- field: max_ticker_concentration_pct -->
+          <div>
+            <label for="f-max_ticker_concentration_pct" class="block text-sm text-slate-300 mb-1">Ticker concentration cap</label>
+            <div class="flex">
+              <input id="f-max_ticker_concentration_pct" data-testid="rules-field-max_ticker_concentration_pct" type="number" value="25"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">No single ticker exceeds this share of total notional — survives a single-name blow-up.</p>
+          </div>
+
+          <!-- field: max_open_positions — OPTIONAL, shown UNSET here -->
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <label for="f-max_open_positions" class="block text-sm text-slate-300">Max open positions</label>
+              <span class="text-xs text-slate-400 bg-slate-700 rounded-full px-2 py-0.5">Optional</span>
+            </div>
+            <input id="f-max_open_positions" data-testid="rules-field-max_open_positions" type="number" placeholder="Not set — no limit"
+              class="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-500 placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500" />
+            <p class="text-xs text-slate-500 mt-1">A breadth guardrail — beyond a manageable count, monitoring discipline degrades. Leave blank for no cap. Most wheel practitioners cite 8–10.</p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===== GROUP 4 — RISK ===== -->
+      <section data-testid="rules-group-risk" class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+        <h3 class="text-lg font-semibold text-white">Risk</h3>
+        <p class="text-sm text-slate-400 mb-4">When do I intervene? Thresholds that flag a position for a deliberate look.</p>
+        <div class="space-y-5 border-t border-slate-700 pt-5">
+
+          <!-- field: loss_review_threshold_pct -->
+          <div>
+            <label for="f-loss_review_threshold_pct" class="block text-sm text-slate-300 mb-1">Loss-review threshold</label>
+            <div class="flex">
+              <input id="f-loss_review_threshold_pct" data-testid="rules-field-loss_review_threshold_pct" type="number" value="-15"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">A position down this much unrealized warrants a deliberate look — is the thesis still intact? Enter a negative number.</p>
+          </div>
+
+          <!-- field: hard_max_loss_pct — OPTIONAL, shown UNSET here -->
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <label for="f-hard_max_loss_pct" class="block text-sm text-slate-300">Hard max-loss / stop</label>
+              <span class="text-xs text-slate-400 bg-slate-700 rounded-full px-2 py-0.5">Optional</span>
+            </div>
+            <div class="flex">
+              <input id="f-hard_max_loss_pct" data-testid="rules-field-hard_max_loss_pct" type="number" placeholder="Not set — no hard stop"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-500 placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Past this loss, the position is a capital trap — decide via the recovery plan rather than hoping. Leave blank for no hard stop. Proposed: -25.</p>
+          </div>
+
+          <!-- field: max_consecutive_rolls — OPTIONAL, shown UNSET here -->
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <label for="f-max_consecutive_rolls" class="block text-sm text-slate-300">Max consecutive rolls</label>
+              <span class="text-xs text-slate-400 bg-slate-700 rounded-full px-2 py-0.5">Optional</span>
+            </div>
+            <div class="flex">
+              <input id="f-max_consecutive_rolls" data-testid="rules-field-max_consecutive_rolls" type="number" placeholder="Not set — no cap"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-500 placeholder-slate-500 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">×</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Rolling more than 2–3 times on the same loser usually just delays an inevitable assignment. At the cap, the system forces a decision. Leave blank for no cap.</p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===== GROUP 5 — MANAGEMENT TRIGGERS ===== -->
+      <section data-testid="rules-group-management" class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+        <h3 class="text-lg font-semibold text-white">Management triggers</h3>
+        <p class="text-sm text-slate-400 mb-4">When do I act on an open leg? Thresholds that fire Next Actions on positions you already hold.</p>
+        <div class="space-y-5 border-t border-slate-700 pt-5">
+
+          <!-- field: profit_review_pct -->
+          <div>
+            <label for="f-profit_review_pct" class="block text-sm text-slate-300 mb-1">Profit-take review</label>
+            <div class="flex">
+              <input id="f-profit_review_pct" data-testid="rules-field-profit_review_pct" type="number" value="50"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Buy back a short option at this share of max profit — locks gains, frees capital, sheds tail risk. Research across 200K+ trades supports 50%.</p>
+          </div>
+
+          <!-- field: dte_review_days -->
+          <div>
+            <label for="f-dte_review_days" class="block text-sm text-slate-300 mb-1">DTE review</label>
+            <div class="flex">
+              <input id="f-dte_review_days" data-testid="rules-field-dte_review_days" type="number" value="21"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">days</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">At this DTE, decide roll vs close vs hold. Inside it, gamma risk accelerates and a small adverse move can wipe out weeks of theta.</p>
+          </div>
+
+          <!-- field: expiration_warning_days -->
+          <div>
+            <label for="f-expiration_warning_days" class="block text-sm text-slate-300 mb-1">Expiration warning</label>
+            <div class="flex">
+              <input id="f-expiration_warning_days" data-testid="rules-field-expiration_warning_days" type="number" value="7"
+                class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+              <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">days</span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">Inside this many days to expiry, assignment mechanics dominate and the position needs attention.</p>
+          </div>
+
+          <!-- field: assignment_risk_review — enum select (§4.4 decision point) -->
+          <div>
+            <label for="f-assignment_risk_review" class="block text-sm text-slate-300 mb-1">Assignment-risk review</label>
+            <select id="f-assignment_risk_review" data-testid="rules-field-assignment_risk_review"
+              class="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500">
+              <option>Off</option><option>Low</option><option>Medium</option><option selected>High</option>
+            </select>
+            <p class="text-xs text-slate-500 mt-1">The sensitivity for flagging ITM-near-expiry positions that need an explicit decision. <span class="text-amber-400">Designer-proposed enum — confirm vs #156 model.</span></p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===== ACTION FOOTER (§10.3) — sticky on a real long form ===== -->
+      <div class="flex items-center justify-between gap-3 bg-slate-800 rounded-xl p-4 border border-slate-700">
+        <button type="button" data-testid="settings-reset-rules"
+          class="px-4 py-2 text-sm border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700">Reset to defaults</button>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-slate-500">Last saved 3:14 PM</span>
+          <button type="button" data-testid="settings-save-rules"
+            class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save trading rules</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     STATE 2 — OPTIONAL FIELDS: UNSET vs SET (clearable)
+     Spec §8 · the four Optional rules render blank-and-clearable
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-900/40 text-blue-300 border border-blue-700">State 2</span>
+      <h2 class="text-base font-semibold text-white">Optional fields — unset (no default invented) vs set (with Clear)</h2>
+      <span class="text-xs text-slate-400 ml-auto">Spec §8 · unset ≠ 0</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <p class="text-xs text-slate-400 mb-4 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2">
+      Detail view of <span class="font-mono text-slate-300">max_open_positions</span> in both states. The unset placeholder is a
+      non-numeric hint ("Not set — no limit"), never a proposed number, so empty is unambiguous. A set Optional field shows a
+      "Clear" affordance that returns it to unset. Saving keeps unset as <span class="font-mono">null</span> — never 0.
+    </p>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 space-y-6">
+
+      <!-- UNSET -->
+      <div>
+        <div class="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Unset — input empty, greyed non-numeric placeholder</div>
+        <div class="flex items-center gap-2 mb-1">
+          <label class="block text-sm text-slate-300">Max open positions</label>
+          <span class="text-xs text-slate-400 bg-slate-700 rounded-full px-2 py-0.5">Optional</span>
+        </div>
+        <input type="number" placeholder="Not set — no limit"
+          class="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-500 placeholder-slate-500 outline-none" />
+        <p class="text-xs text-slate-500 mt-1">A breadth guardrail … Leave blank for no cap. Most wheel practitioners cite 8–10.</p>
+      </div>
+
+      <div class="border-t border-slate-700"></div>
+
+      <!-- SET — Clear button appears at the row's right edge -->
+      <div>
+        <div class="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Set — value entered, Clear affordance shown</div>
+        <div class="flex items-center justify-between mb-1">
+          <div class="flex items-center gap-2">
+            <label class="block text-sm text-slate-300">Max open positions</label>
+            <span class="text-xs text-slate-400 bg-slate-700 rounded-full px-2 py-0.5">Optional</span>
+          </div>
+          <!-- Clear returns field to unset; data-testid rules-field-{key}-clear -->
+          <button type="button" data-testid="rules-field-max_open_positions-clear" class="text-xs text-slate-500 hover:text-slate-300">Clear</button>
+        </div>
+        <input type="number" value="10"
+          class="w-full px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none" />
+        <p class="text-xs text-slate-500 mt-1">A breadth guardrail … Leave blank for no cap. Most wheel practitioners cite 8–10.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     STATE 3 — INLINE VALIDATION ERRORS
+     Spec §10.2 · aria-invalid + aria-describedby; Save blocked
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-900/40 text-rose-300 border border-rose-700">State 3</span>
+      <h2 class="text-base font-semibold text-white">Inline validation — red ring, error text, Save blocked with fix count</h2>
+      <span class="text-xs text-slate-400 ml-auto">Spec §10.2 · validators mirror backend Pydantic</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8 space-y-5">
+
+    <!-- error 1: range min not < max -->
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <label class="block text-sm text-slate-300 mb-1">DTE range</label>
+      <div class="flex items-center gap-2">
+        <!-- annotation: invalid input gets red ring + aria-invalid="true" -->
+        <input type="number" value="45" aria-invalid="true" aria-describedby="dte-help dte-err" aria-label="DTE minimum"
+          class="w-28 px-3 py-2 text-sm border border-rose-500 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-rose-500" />
+        <span class="text-xs text-slate-500">to</span>
+        <input type="number" value="21" aria-invalid="true" aria-describedby="dte-help dte-err" aria-label="DTE maximum"
+          class="w-28 px-3 py-2 text-sm border border-rose-500 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-rose-500" />
+        <span class="text-xs text-slate-400">days</span>
+      </div>
+      <p id="dte-help" class="text-xs text-slate-500 mt-1">The wheel sweet spot — far enough for meaningful theta decay, near enough to avoid locking capital for months.</p>
+      <p id="dte-err" data-testid="rules-field-dte_range-error" role="alert" class="text-xs text-rose-400 mt-1">Minimum must be less than maximum.</p>
+    </div>
+
+    <!-- error 2: delta out of 0–1 range -->
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <label for="e-delta" class="block text-sm text-slate-300 mb-1">Delta range (cash-secured puts)</label>
+      <div class="flex items-center gap-2">
+        <input type="number" step="0.01" value="0.20" aria-label="CSP delta minimum"
+          class="w-28 px-3 py-2 text-sm border border-slate-600 rounded-lg bg-slate-700 text-slate-100 outline-none" />
+        <span class="text-xs text-slate-500">to</span>
+        <input id="e-delta" type="number" step="0.01" value="1.40" aria-invalid="true" aria-describedby="delta-help delta-err" aria-label="CSP delta maximum"
+          class="w-28 px-3 py-2 text-sm border border-rose-500 rounded-lg bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-rose-500" />
+      </div>
+      <p id="delta-help" class="text-xs text-slate-500 mt-1">A probability-of-assignment proxy. 0.20–0.30 is the mainstream CSP consensus.</p>
+      <p id="delta-err" data-testid="rules-field-delta_range_csp-error" role="alert" class="text-xs text-rose-400 mt-1">Delta must be between 0 and 1.</p>
+    </div>
+
+    <!-- footer with Save disabled + fix count -->
+    <div class="flex items-center justify-between gap-3 bg-slate-800 rounded-xl p-4 border border-slate-700">
+      <button type="button" class="px-4 py-2 text-sm border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700">Reset to defaults</button>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-rose-400">Fix 2 fields before saving</span>
+        <!-- Save disabled while any field invalid (§10.2) -->
+        <button type="button" disabled class="px-4 py-2 text-sm bg-blue-600/50 text-white/70 rounded-lg cursor-not-allowed">Save trading rules</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     STATE 4 — SAVING (form disabled, button pending)
+     Spec §10.4 · all fields + buttons disabled mid-write
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-900/40 text-amber-300 border border-amber-700">State 4</span>
+      <h2 class="text-base font-semibold text-white">Saving — fields and buttons disabled, Save shows pending spinner</h2>
+      <span class="text-xs text-slate-400 ml-auto">Spec §10.4</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8 space-y-5">
+    <!-- representative group card, dimmed -->
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700 opacity-50">
+      <h3 class="text-lg font-semibold text-white">Risk</h3>
+      <p class="text-sm text-slate-400 mb-4">When do I intervene? Thresholds that flag a position for a deliberate look.</p>
+      <div class="space-y-5 border-t border-slate-700 pt-5">
+        <div>
+          <label class="block text-sm text-slate-300 mb-1">Loss-review threshold</label>
+          <div class="flex">
+            <input type="number" value="-15" disabled class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg bg-slate-700 text-slate-100" />
+            <span class="inline-flex items-center px-3 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-700/50">%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- footer: Save shows spinner + "Saving…", both buttons disabled -->
+    <div class="flex items-center justify-between gap-3 bg-slate-800 rounded-xl p-4 border border-slate-700">
+      <button type="button" disabled class="px-4 py-2 text-sm border border-slate-600 text-slate-500 rounded-lg cursor-not-allowed">Reset to defaults</button>
+      <button type="button" disabled class="inline-flex items-center gap-2 px-4 py-2 text-sm bg-blue-600/70 text-white rounded-lg cursor-not-allowed">
+        <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+        Saving…
+      </button>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     STATE 5 — SAVE SUCCESS (toast + inline glyph)
+     Spec §10.4 · react-hot-toast success + green checkmark
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-900/40 text-green-300 border border-green-700">State 5</span>
+      <h2 class="text-base font-semibold text-white">Save success — toast, brief inline confirmation glyph, last-saved updated</h2>
+      <span class="text-xs text-slate-400 ml-auto">Spec §10.4</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8 relative">
+    <!-- simulated react-hot-toast (top-right) -->
+    <div class="absolute top-4 right-6 flex items-center gap-2 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 shadow-lg">
+      <svg class="w-4 h-4 text-green-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-8 8a1 1 0 01-1.4 0l-4-4a1 1 0 011.4-1.4L8 12.6l7.3-7.3a1 1 0 011.4 0z" clip-rule="evenodd"/></svg>
+      <span class="text-sm text-slate-100">Trading rules saved</span>
+    </div>
+
+    <!-- footer: inline green checkmark next to Save, last-saved refreshed, unsaved hint cleared -->
+    <div class="flex items-center justify-between gap-3 bg-slate-800 rounded-xl p-4 border border-slate-700 mt-8">
+      <button type="button" class="px-4 py-2 text-sm border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700">Reset to defaults</button>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-slate-500">Saved just now</span>
+        <!-- brief confirmation glyph (~2s) — data-testid settings-rules-save-success -->
+        <span data-testid="settings-rules-save-success" class="inline-flex items-center gap-1 text-xs text-green-400">
+          <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-8 8a1 1 0 01-1.4 0l-4-4a1 1 0 011.4-1.4L8 12.6l7.3-7.3a1 1 0 011.4 0z" clip-rule="evenodd"/></svg>
+          Saved
+        </span>
+        <button type="button" class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save trading rules</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     STATE 6 — SAVE FAILURE (generic inline banner)
+     Spec §10.4 · CLAUDE.md — never surface raw exception text
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-900/40 text-rose-300 border border-rose-700">State 6</span>
+      <h2 class="text-base font-semibold text-white">Save failure — generic inline error banner, fields re-enabled for retry</h2>
+      <span class="text-xs text-slate-400 ml-auto">Spec §10.4 · generic message only</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8 space-y-5">
+    <!-- inline failure banner at the top of the section -->
+    <div data-testid="settings-rules-save-error" role="alert"
+      class="flex items-start justify-between gap-3 bg-red-900/30 border border-red-800 text-red-300 rounded-lg px-4 py-3">
+      <div>
+        <div class="text-sm font-medium">Couldn't save your trading rules.</div>
+        <div class="text-xs text-red-300/80 mt-0.5">Please try again. <!-- generic copy — no str(e) leak per CLAUDE.md --></div>
+      </div>
+      <button type="button" class="text-red-300/70 hover:text-red-200 text-sm" aria-label="Dismiss">✕</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h3 class="text-lg font-semibold text-white">Universe</h3>
+      <p class="text-sm text-slate-400">Fields are re-enabled so the trader can adjust and retry.</p>
+    </div>
+
+    <div class="flex items-center justify-between gap-3 bg-slate-800 rounded-xl p-4 border border-slate-700">
+      <button type="button" class="px-4 py-2 text-sm border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700">Reset to defaults</button>
+      <div class="flex items-center gap-3">
+        <span class="text-xs text-amber-400">You have unsaved changes</span>
+        <button type="button" class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save trading rules</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     STATE 7 — LOADING SKELETON
+     Spec §11.1 · skeleton form while config GET resolves
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-slate-700 text-slate-300 border border-slate-600">State 7</span>
+      <h2 class="text-base font-semibold text-white">Loading — skeleton form (not a bare spinner) while the config GET resolves</h2>
+      <span class="text-xs text-slate-400 ml-auto">Spec §11.1</span>
+    </div>
+  </div>
+
+  <div data-testid="settings-rules-loading" class="max-w-3xl mx-auto px-6 py-8 space-y-8">
+    <!-- two skeleton group cards, each with shimmer rows -->
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <div class="h-5 w-32 bg-slate-700 rounded animate-pulse mb-2"></div>
+      <div class="h-3 w-80 bg-slate-700/60 rounded animate-pulse mb-5"></div>
+      <div class="space-y-5 border-t border-slate-700 pt-5">
+        <div><div class="h-3 w-40 bg-slate-700 rounded animate-pulse mb-2"></div><div class="h-9 w-full bg-slate-700/70 rounded-lg animate-pulse"></div></div>
+        <div><div class="h-3 w-36 bg-slate-700 rounded animate-pulse mb-2"></div><div class="h-9 w-full bg-slate-700/70 rounded-lg animate-pulse"></div></div>
+        <div><div class="h-3 w-44 bg-slate-700 rounded animate-pulse mb-2"></div><div class="h-9 w-full bg-slate-700/70 rounded-lg animate-pulse"></div></div>
+      </div>
+    </div>
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <div class="h-5 w-24 bg-slate-700 rounded animate-pulse mb-2"></div>
+      <div class="h-3 w-72 bg-slate-700/60 rounded animate-pulse mb-5"></div>
+      <div class="space-y-5 border-t border-slate-700 pt-5">
+        <div><div class="h-3 w-40 bg-slate-700 rounded animate-pulse mb-2"></div><div class="h-9 w-full bg-slate-700/70 rounded-lg animate-pulse"></div></div>
+        <div><div class="h-3 w-36 bg-slate-700 rounded animate-pulse mb-2"></div><div class="h-9 w-full bg-slate-700/70 rounded-lg animate-pulse"></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================================
+     STATE 8 — LOAD ERROR
+     Spec §11.3 · GET failed — error block + Retry, no guessed form
+     ============================================================ -->
+<section class="border-b border-slate-700">
+  <div class="bg-slate-800/40 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-900/40 text-rose-300 border border-rose-700">State 8</span>
+      <h2 class="text-base font-semibold text-white">Load error — config GET failed; error block + Retry, form not rendered</h2>
+      <span class="text-xs text-slate-400 ml-auto">Spec §11.3 · generic message only</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <!-- no form rendered with guessed values — only the error + retry -->
+    <div data-testid="settings-rules-load-error" role="alert"
+      class="bg-red-900/30 border border-red-800 rounded-lg px-5 py-6 text-center">
+      <div class="text-sm font-medium text-red-300">Couldn't load your trading rules.</div>
+      <p class="text-xs text-red-300/80 mt-1">The configuration could not be retrieved. Your saved rules are safe.</p>
+      <button type="button" class="mt-4 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">Retry</button>
+    </div>
+  </div>
+</section>
+
+
+<!-- =========================================================================
+     FOOTER
+     ========================================================================= -->
+<footer class="max-w-3xl mx-auto px-6 py-8 text-xs text-slate-500">
+  <p>Static design mock for Issue #158 — Settings Trading Rules section. Generated by the Designer agent, 2026-05-17.
+     Not production code; fixture data only. See <span class="font-mono text-slate-400">issue-158-trading-rules-settings.md</span> for the full spec, including the §3 Option A/B decision point.</p>
+</footer>
+
+</body>
+</html>
