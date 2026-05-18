@@ -49,7 +49,8 @@ function assumptions() {
     {
       label: 'Sizing cap (Average down)',
       value: '$5,000',
-      source: 'Settings → OKRs',
+      // The sizing cap is a Trading Rule (issue #235), not an OKR.
+      source: 'Settings → Trading Rules',
     },
     {
       label: 'Strategy preference',
@@ -207,6 +208,31 @@ function noClearBestFitPayload() {
       { path_id: 'sell-redeploy', score: 6, rank: 1, suppression_reason: null },
       { path_id: 'wheel-cc', score: 6, rank: 2, suppression_reason: null },
       { path_id: 'hold-monitor', score: 3, rank: 3, suppression_reason: null },
+      {
+        path_id: 'average-down',
+        score: null,
+        rank: null,
+        suppression_reason:
+          'Exceeds per-position sizing cap ($4,752 vs $5,000 — would breach)',
+      },
+    ],
+    path_scores: pathScores(),
+    tie_epsilon: 1.0,
+    disclaimer: DISCLAIMER,
+  };
+  return base;
+}
+
+// no-eligible-path payload: every path is suppressed by the sizing cap, so
+// the banner renders the amber "Adjust caps →" CTA (issue #235 routes it at
+// the Settings → Trading Rules tab).
+function noEligiblePathPayload() {
+  const base = populatedPayload();
+  base.recommendation = {
+    recommended_path_id: null,
+    recommendation_label: 'No eligible path under current sizing rules',
+    recommendation_reasons: [],
+    ranked_paths: [
       {
         path_id: 'average-down',
         score: null,
@@ -447,6 +473,56 @@ test.describe('Recovery Plan panel', () => {
     await expect(page.getByTestId('recovery-plan-error')).toContainText(
       'Failed to build recovery plan',
     );
+  });
+
+  test('sizing-cap suppression CTA routes to Settings → Trading Rules', async ({
+    page,
+  }) => {
+    // Issue #235 Bug 2: the suppressed average-down card's "Adjust cap →"
+    // CTA must route to /settings?tab=rules, never the dead /settings#okrs.
+    await mockRecoveryPlan(page, populatedPayload());
+    await openRecoveryPlan(page);
+
+    const cta = page.getByTestId('recovery-path-card-average-down-suppression-cta');
+    await expect(cta).toBeVisible();
+    await expect(cta).toContainText('Adjust cap');
+    await expect(cta).toHaveAttribute('href', '/settings?tab=rules');
+    const href = await cta.getAttribute('href');
+    expect(href).not.toContain('#okrs');
+  });
+
+  test('no-eligible-path banner CTA routes to Settings → Trading Rules', async ({
+    page,
+  }) => {
+    // Issue #235 Bug 2: the amber banner's "Adjust caps →" CTA points at the
+    // Trading Rules tab — caps are Trading Rules, not OKRs.
+    await mockRecoveryPlan(page, noEligiblePathPayload());
+    await openRecoveryPlan(page);
+
+    const banner = page.getByTestId('recovery-recommendation-banner');
+    await expect(banner).toHaveAttribute('data-state', 'no-eligible-path');
+    await expect(banner).toContainText('Settings → Trading Rules');
+
+    const cta = page.getByTestId('recovery-recommendation-adjust-caps');
+    await expect(cta).toBeVisible();
+    await expect(cta).toHaveAttribute('href', '/settings?tab=rules');
+    const href = await cta.getAttribute('href');
+    expect(href).not.toContain('#okrs');
+  });
+
+  test('assumptions panel attributes the sizing cap to Trading Rules', async ({
+    page,
+  }) => {
+    // Issue #235 Bug 2: the Sizing-cap assumption row reads "Settings →
+    // Trading Rules"; the target-yield row stays attributed to OKRs.
+    await mockRecoveryPlan(page, populatedPayload());
+    await openRecoveryPlan(page);
+
+    const panel = page.getByTestId('recovery-assumptions-panel');
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText('Settings → Trading Rules');
+    // Target yield is a genuine OKR — still attributed to OKRs.
+    await expect(panel).toContainText('Settings → OKRs');
   });
 
   // Manual AC (CLAUDE.md — document non-automatable steps as a skipped test).

@@ -9,9 +9,15 @@ export function suppressionReasonToCta(reason) {
   if (!reason || typeof reason !== 'string') return null;
   const low = reason.toLowerCase();
   if (low.includes('sizing cap') || low.includes('sizing rule')) {
-    return { label: 'Adjust cap →', href: '/settings#okrs' };
+    // The sizing cap is a Trading Rule (issue #156) — route to the Settings
+    // → Trading Rules tab via the `?tab=rules` deep link (issue #235).
+    return { label: 'Adjust cap →', href: '/settings?tab=rules' };
   }
   if (low.includes('target yield')) {
+    // Target yield is a genuine OKR. Intentionally left pointing at
+    // `/settings#okrs`: there is no Settings → OKRs UI until V1.1, so this
+    // CTA still dead-ends — that half of #207 stays open and out of scope
+    // for #235 (which only fixes the sizing-cap CTA).
     return { label: 'Set target yield →', href: '/settings#okrs' };
   }
   return null;

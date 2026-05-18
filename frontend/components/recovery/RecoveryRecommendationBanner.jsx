@@ -148,8 +148,8 @@ export default function RecoveryRecommendationBanner({
             <>
               <p className="text-sm text-amber-700 dark:text-amber-300 mt-2">
                 Every path violates your per-position sizing cap or another
-                configured constraint. Adjust your caps in Settings → OKRs, or
-                evaluate paths manually using the matrix below.
+                configured constraint. Adjust your caps in Settings → Trading
+                Rules, or evaluate paths manually using the matrix below.
               </p>
               <ul
                 data-testid="recovery-recommendation-reasons"
@@ -168,7 +168,7 @@ export default function RecoveryRecommendationBanner({
               </ul>
               <div className="mt-3">
                 <Link
-                  href="/settings#okrs"
+                  href="/settings?tab=rules"
                   data-testid="recovery-recommendation-adjust-caps"
                   className="text-sm font-medium text-amber-800 dark:text-amber-200 hover:underline"
                 >

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   getSettings, updateSetting, getCacheStats, clearCache, checkFredHealth,
@@ -33,7 +34,17 @@ export default function SettingsPage() {
   // Page-scoped tab state (issue #158, Option B). "General" holds the existing
   // infrastructure/data settings; "Trading Rules" holds the rules_config edit
   // surface. A V1.1 "Trading OKRs" tab slots in here with zero rework.
-  const [activeTab, setActiveTab] = useState('general');
+  //
+  // Lazy-initialized from the `?tab=` query param (issue #235) so a deep link
+  // such as /settings?tab=rules — e.g. a recovery-page "Adjust cap →" CTA —
+  // lands directly on the Trading Rules tab. Query params are the established
+  // codebase pattern (useOptionScanner, JournalPage); URL hashes are used
+  // nowhere. Lazy init runs once on mount; later in-page tab clicks are not
+  // re-overridden by the param.
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = useState(() =>
+    searchParams?.get('tab') === 'rules' ? 'rules' : 'general'
+  );
   const [settings, setSettings] = useState(null);
   const [cacheStats, setCacheStats] = useState(null);
   const [fredKey, setFredKey] = useState('');
