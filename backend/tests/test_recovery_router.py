@@ -18,11 +18,13 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
 
 from app.models.database import AppSetting, Position
+from app.services.rules_config import RULES_CONFIG_KEY
 from app.services.schwab_client import SchwabClient
 
 
@@ -78,6 +80,20 @@ def _seed_setting(client, key: str, value: str) -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _seed_rules_config(client, *, loss_review_threshold_pct: float) -> None:
+    """Persist a ``rules_config`` row overriding the loss-review threshold.
+
+    ``loss_review_threshold_pct`` is whole-percent (e.g. ``-5.0`` for −5%).
+    Only the ``risk`` group is provided; :func:`load_rules_config` merges it
+    onto the catalog defaults for every other group.
+    """
+    document = {
+        "schema_version": 1,
+        "risk": {"loss_review_threshold_pct": loss_review_threshold_pct},
+    }
+    _seed_setting(client, RULES_CONFIG_KEY, json.dumps(document))
 
 
 def _quote(last_price: float) -> dict:
@@ -140,6 +156,105 @@ def test_recovery_plan_not_flagged_above_threshold(client):
     # Header summary IS rendered (per spec — frontend EmptyState wants the
     # ticker / shares / basis context).
     assert payload["position"]["ticker"] == "SOFI"
+
+
+# ---------------------------------------------------------------------------
+# Flag gate honors rules_config.risk.loss_review_threshold_pct (issue #235)
+# ---------------------------------------------------------------------------
+
+
+def test_recovery_flag_gate_uses_configured_loss_review_threshold(client):
+    """The flag gate resolves its loss-review percentage from ``rules_config``.
+
+    An −8% loser is between the retired hardcoded −5% constant and the
+    default −15% rule. With a stored −5% rule it is ``populated``; with a
+    stored −15% rule the same position is ``not-flagged``. This is the
+    headline AC for issue #235.
+
+    A $3,800 basis at $34.96 → $3,496 notional → −$304 / −8%.
+    """
+    # Stored -5% rule → -8% loser IS flagged.
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    _seed_rules_config(client, loss_review_threshold_pct=-5.0)
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(34.96)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "populated"
+
+
+def test_recovery_flag_gate_not_flagged_when_rule_stricter_than_loss(client):
+    """A −8% loser is ``not-flagged`` when the stored rule is −15%."""
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    _seed_rules_config(client, loss_review_threshold_pct=-15.0)
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(34.96)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "not-flagged"
+
+
+def test_recovery_default_rules_not_flagged_between_5_and_15_pct(client):
+    """With no ``rules_config`` row the default −15% rule applies.
+
+    A −8% loser — between the retired −5% constant and the −15% default —
+    is ``not-flagged``, proving the old hardcoded −5% behavior is gone.
+    """
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    # No rules_config row seeded → catalog default -15%.
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(34.96)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "not-flagged"
+
+
+def test_recovery_default_rules_flagged_below_15_pct(client):
+    """A −39% loser flags under the default −15% rule (conversion check).
+
+    Pins the whole-percent → fraction conversion: −0.39 ``pl_pct`` vs the
+    −15.0 whole-percent rule must compare as ``-0.39 <= -15.0 / 100``.
+    A $3,800 basis at $23.18 → $2,318 notional → −39%.
+    """
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(23.18)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "populated"
+
+
+def test_recovery_dollar_secondary_trigger_still_fires(client):
+    """The −$1,000 absolute trigger flags a shallow-percent large position.
+
+    A $100,000 basis at $98.50 → $98,500 notional → −$1,500 / −1.5%. The
+    percentage is far above any loss-review rule, but the retained dollar
+    trigger still flags it — proving the secondary OR-trigger survives.
+    """
+    _seed_position(client, broker_cost_basis=100000.0, shares=1000)
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(98.50)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "populated"
+
+
+def test_recovery_assumptions_sizing_cap_source_is_trading_rules(client):
+    """The Sizing-cap assumption row is attributed to Settings → Trading Rules.
+
+    Strategy-preference and target-yield rows stay attributed to OKRs —
+    those are genuine OKRs, not Trading Rules (issue #235).
+    """
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["state"] == "populated"
+    by_label = {a["label"]: a for a in payload["assumptions"]}
+    assert by_label["Sizing cap (Average down)"]["source"] == (
+        "Settings → Trading Rules"
+    )
+    # Genuine OKRs are untouched.
+    assert by_label["Target yield (Sell & redeploy)"]["source"] == (
+        "Settings → OKRs"
+    )
+    assert by_label["Strategy preference"]["source"] == "Settings → OKRs (V0.6)"
 
 
 # ---------------------------------------------------------------------------

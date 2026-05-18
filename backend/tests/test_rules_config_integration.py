@@ -400,6 +400,58 @@ def test_recovery_endpoint_default_sizing_cap_with_no_rules_row(client):
 
 
 # ---------------------------------------------------------------------------
+# Loss-review threshold — recovery flag gate ↔ dashboard largest-loser card
+# must agree (issue #235, AC2 "no new drift")
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("loss_review_threshold_pct", "pl_pct"),
+    [
+        (-15.0, -0.08),  # default rule, mild loser → neither flags
+        (-15.0, -0.20),  # default rule, deep loser → both flag
+        (-5.0, -0.08),   # strict rule, mild loser → both flag
+        (-20.0, -0.18),  # lenient rule, -18% loser → neither flags
+    ],
+)
+def test_flag_gate_and_largest_loser_card_agree(
+    loss_review_threshold_pct, pl_pct
+):
+    """The recovery flag gate and the dashboard largest-loser card agree.
+
+    Issue #235 AC2: both surfaces honor the same configured
+    ``loss_review_threshold_pct``. A user must never click a dashboard
+    "Review" card and land on a ``not-flagged`` recovery empty state. This
+    runs the same P/L through ``_is_flagged`` (recovery) and
+    ``_largest_loser_action`` (dashboard) and asserts an identical verdict.
+    """
+    from app.routers.positions import _is_flagged
+    from app.services.action_engine import _largest_loser_action
+
+    # An unrealized_pl too small to trip the -$1,000 dollar trigger, so the
+    # percentage rule alone decides — isolating the loss_review comparison.
+    unrealized_pl = -100.0
+
+    recovery_flagged = _is_flagged(
+        unrealized_pl, pl_pct, loss_review_threshold_pct
+    )
+    card = _largest_loser_action(
+        [
+            {
+                "id": "p-1",
+                "ticker": "SOFI",
+                "unrealized_pl": unrealized_pl,
+                "pl_pct": pl_pct,
+            }
+        ],
+        loss_review_threshold_pct,
+    )
+    dashboard_flagged = card is not None
+
+    assert recovery_flagged == dashboard_flagged
+
+
+# ---------------------------------------------------------------------------
 # IV-rank gate — plumbed but inert (ADR-002 OQ4 / issue #156)
 # ---------------------------------------------------------------------------
 

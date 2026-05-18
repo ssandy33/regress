@@ -20,6 +20,19 @@ from app.services.action_engine import (
     MAX_ACTIONS,
     compute_next_actions,
 )
+from app.services.rules_config import RiskRules, RulesConfig
+
+
+def _rules(loss_review_threshold_pct: float) -> RulesConfig:
+    """Build a :class:`RulesConfig` with a custom loss-review threshold.
+
+    Other rule groups keep their catalog defaults — only the largest-loser
+    flag threshold (``rules_config.risk.loss_review_threshold_pct``) varies.
+    The value is whole-percent (e.g. ``-15.0`` for −15%).
+    """
+    return RulesConfig(
+        risk=RiskRules(loss_review_threshold_pct=loss_review_threshold_pct)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,13 +231,15 @@ class TestSchwabTokenExpiringTrigger:
 
 
 class TestLargeLoserTrigger:
-    def test_emits_at_pct_threshold_minus_five_pct(self):
-        # Whichever-fires-first: -5% trips even when dollars are small.
+    def test_emits_at_default_pct_threshold_minus_fifteen_pct(self):
+        # Whichever-fires-first: the default loss-review threshold (-15%)
+        # trips even when dollars are small. With no `rules` override the
+        # engine uses the catalog default (issue #235).
         actions = compute_next_actions(
             status=_status(),
             kpis=_kpis(open_legs=1),
             positions=[
-                _position("p-loser", "TSLA", unrealized_pl=-50.0, pl_pct=-0.05),
+                _position("p-loser", "TSLA", unrealized_pl=-50.0, pl_pct=-0.15),
             ],
             open_legs=[],
         )
@@ -232,7 +247,8 @@ class TestLargeLoserTrigger:
         assert "position.large_loser" in ids
 
     def test_emits_at_dollar_threshold_minus_1000(self):
-        # Whichever-fires-first: -$1000 trips even at -1% basis.
+        # Whichever-fires-first: -$1000 trips even at -1% basis. The dollar
+        # trigger is a hardcoded heuristic, independent of the rules config.
         actions = compute_next_actions(
             status=_status(),
             kpis=_kpis(open_legs=1),
@@ -245,17 +261,77 @@ class TestLargeLoserTrigger:
         assert "position.large_loser" in ids
 
     def test_does_not_emit_just_below_thresholds(self):
-        # -4.9% and -$999 should NOT trigger.
+        # -14.9% and -$999 should NOT trigger under the default -15% rule.
         actions = compute_next_actions(
             status=_status(),
             kpis=_kpis(open_legs=1),
             positions=[
-                _position("p-ok", "MSFT", unrealized_pl=-999.0, pl_pct=-0.049),
+                _position("p-ok", "MSFT", unrealized_pl=-999.0, pl_pct=-0.149),
             ],
             open_legs=[],
         )
         ids = {a["action_id"] for a in actions}
         assert "position.large_loser" not in ids
+
+    def test_default_rule_does_not_emit_between_5_and_15_pct(self):
+        # Issue #235: the old hardcoded -5% constant is gone. An -8% loser
+        # — between the retired -5% and the configured -15% — must NOT flag
+        # under default rules, proving the migration to rules_config landed.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position("p-mild", "NVDA", unrealized_pl=-200.0, pl_pct=-0.08),
+            ],
+            open_legs=[],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "position.large_loser" not in ids
+
+    def test_largest_loser_honors_configured_loss_review_threshold(self):
+        # Issue #235: a stricter-than-default threshold (-5%) flags an -8%
+        # loser that the default -15% rule would leave alone — proving the
+        # card is wired to rules_config.risk.loss_review_threshold_pct.
+        position = _position("p-mild", "NVDA", unrealized_pl=-200.0, pl_pct=-0.08)
+        # Default -15% rule: not flagged.
+        default_actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[position],
+            open_legs=[],
+        )
+        assert "position.large_loser" not in {
+            a["action_id"] for a in default_actions
+        }
+        # Stored -5% rule: flagged.
+        strict_actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[position],
+            open_legs=[],
+            rules=_rules(-5.0),
+        )
+        assert "position.large_loser" in {
+            a["action_id"] for a in strict_actions
+        }
+
+    def test_reason_copy_reflects_configured_threshold_no_hardcoded_pct(self):
+        # Issue #235: the card's `reason` string must report the configured
+        # threshold, never a hardcoded "-5%". Here a stored -20% rule.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position("p-loser", "TSLA", unrealized_pl=-3000.0, pl_pct=-0.25),
+            ],
+            open_legs=[],
+            rules=_rules(-20.0),
+        )
+        loser_card = next(
+            a for a in actions if a["action_id"] == "position.large_loser"
+        )
+        assert "-20%" in loser_card["reason"]
+        assert "-5%" not in loser_card["reason"]
 
     def test_only_single_largest_loser_emitted(self):
         # Three losers — engine surfaces only the worst.
@@ -263,9 +339,9 @@ class TestLargeLoserTrigger:
             status=_status(),
             kpis=_kpis(open_legs=1),
             positions=[
-                _position("p-a", "AAA", unrealized_pl=-500.0, pl_pct=-0.10),
-                _position("p-b", "BBB", unrealized_pl=-2000.0, pl_pct=-0.20),
-                _position("p-c", "CCC", unrealized_pl=-1500.0, pl_pct=-0.15),
+                _position("p-a", "AAA", unrealized_pl=-500.0, pl_pct=-0.20),
+                _position("p-b", "BBB", unrealized_pl=-2000.0, pl_pct=-0.30),
+                _position("p-c", "CCC", unrealized_pl=-1500.0, pl_pct=-0.25),
             ],
             open_legs=[],
         )
