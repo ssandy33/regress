@@ -9,9 +9,12 @@ Branch shape:
 - 404 — ``Position not found``
 - ``state == "not-applicable"`` — option-only positions (``shares == 0``)
   or closed positions; engine never runs.
-- ``state == "not-flagged"`` — position above the review threshold (-5% or
-  -$1,000); engine never runs. Returned with the position summary so the
-  frontend can render the EmptyState.
+- ``state == "not-flagged"`` — position above the review threshold; engine
+  never runs. The percentage threshold is the configured
+  ``rules_config.risk.loss_review_threshold_pct`` (Trading Rules Layer,
+  issue #156); the -$1,000 dollar trigger is a retained absolute-loss floor.
+  Returned with the position summary so the frontend can render the
+  EmptyState.
 - ``state == "populated"`` — full payload with paths + recommendation.
 - 500 — Schwab quote failure. Generic detail message per CLAUDE.md; no
   ``str(e)`` leaks.
@@ -34,7 +37,7 @@ from app.services.recovery_engine import (
     WHEEL_MONTHLY_PREMIUM_PCT,
     compute_recovery_paths,
 )
-from app.services.rules_config import load_rules_config
+from app.services.rules_config import RulesConfig, load_rules_config
 from app.services.recovery_scoring import DISCLAIMER_TEXT, score_recovery_paths
 from app.services.schwab_client import SchwabClient
 
@@ -42,10 +45,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/positions", tags=["positions"])
 
-# Largest-loser flag thresholds — must mirror
+# Largest-loser dollar flag threshold. The *percentage* side of the flag
+# gate is the configured ``rules_config.risk.loss_review_threshold_pct``
+# (Trading Rules Layer, issue #156) — resolved per-request and passed into
+# :func:`_is_flagged`. This dollar threshold is an intentionally-retained
+# absolute-loss secondary OR-trigger: PRD #209 §R5 models the loss-review
+# rule as a percentage only, so a large-share position with a shallow
+# percentage loss still flags on absolute dollars. It is a hardcoded
+# heuristic, not a trader-facing rule (ADR-002), and must mirror
 # :mod:`app.services.action_engine` so the dashboard CTA and the recovery
 # page agree on what "flagged" means.
-LARGE_LOSER_PCT_THRESHOLD: float = -0.05
 LARGE_LOSER_DOLLAR_THRESHOLD: float = -1000.0
 
 # Cost-basis-zero positions can't be meaningfully underwater (recovery
@@ -64,7 +73,7 @@ def _get_app_setting(db: DBSession, key: str) -> str | None:
     return entry.value if entry else None
 
 
-def _read_okr_settings(db: DBSession) -> dict[str, Any]:
+def _read_okr_settings(db: DBSession, rules: RulesConfig) -> dict[str, Any]:
     """Read the recovery-engine scoring inputs from settings.
 
     Two of these are OKR reads on flat ``app_settings`` keys (ADR-001: target
@@ -74,10 +83,10 @@ def _read_okr_settings(db: DBSession) -> dict[str, Any]:
     - ``okr_strategy_preference`` → ``None`` (dormant bonus row in V0.5.8)
 
     The per-position sizing cap is **no longer** an ``okr_*`` flat key. Per
-    ADR-001 it is a Trading Rule, so it is resolved from
-    ``rules_config.position.sizing_cap_dollars`` via
-    :func:`app.services.rules_config.load_rules_config` (issue #156). With no
-    stored ``rules_config`` row that resolves to the catalog default ($5,000).
+    ADR-001 it is a Trading Rule, so it is read from the already-resolved
+    ``rules.position.sizing_cap_dollars`` (issue #156). The caller resolves
+    the :class:`RulesConfig` once and passes it in; with no stored
+    ``rules_config`` row it carries the catalog default ($5,000).
     """
     target_raw = _get_app_setting(db, "okr_target_yield")
     pref_raw = _get_app_setting(db, "okr_strategy_preference")
@@ -89,7 +98,7 @@ def _read_okr_settings(db: DBSession) -> dict[str, Any]:
         target_yield = None
 
     # Sizing cap comes from rules_config (issue #156), not an okr_* flat key.
-    sizing_cap = load_rules_config(db).position.sizing_cap_dollars
+    sizing_cap = rules.position.sizing_cap_dollars
 
     strategy_preference = pref_raw if pref_raw not in (None, "") else None
 
@@ -140,13 +149,27 @@ def _build_position_summary(
     }
 
 
-def _is_flagged(unrealized_pl: float | None, pl_pct: float | None) -> bool:
-    """Mirror the action-engine flag rule: either threshold trips it."""
+def _is_flagged(
+    unrealized_pl: float | None,
+    pl_pct: float | None,
+    loss_review_threshold_pct: float,
+) -> bool:
+    """Decide whether a position is flagged for a recovery plan.
+
+    Mirrors the action-engine largest-loser rule: either trigger trips it.
+
+    - ``loss_review_threshold_pct`` is the configured
+      ``rules_config.risk.loss_review_threshold_pct`` — a *whole-percent*
+      value (e.g. ``-15.0`` for −15%). ``pl_pct`` is a *fraction* (e.g.
+      ``-0.15``), so the threshold is divided by 100 before comparison.
+    - :data:`LARGE_LOSER_DOLLAR_THRESHOLD` is the retained absolute-loss
+      secondary OR-trigger.
+    """
     if unrealized_pl is None:
         return False
     if unrealized_pl <= LARGE_LOSER_DOLLAR_THRESHOLD:
         return True
-    if pl_pct is not None and pl_pct <= LARGE_LOSER_PCT_THRESHOLD:
+    if pl_pct is not None and pl_pct <= loss_review_threshold_pct / 100.0:
         return True
     return False
 
@@ -185,7 +208,7 @@ def _build_assumptions_panel(
         {
             "label": "Sizing cap (Average down)",
             "value": _format_dollar(okr.get("sizing_cap_dollars")),
-            "source": "Settings → OKRs",
+            "source": "Settings → Trading Rules",
         },
         {
             "label": "Strategy preference",
@@ -265,8 +288,16 @@ def build_recovery_plan(
             content={"detail": GENERIC_RECOVERY_500_DETAIL},
         )
 
+    # Resolve the Trading Rules config once (issue #156) — the flag gate's
+    # loss-review threshold and the sizing cap both come from it.
+    rules = load_rules_config(db)
+
     summary = _build_position_summary(position, current_price, cost_basis=cost_basis)
-    if not _is_flagged(summary["unrealized_pl"], summary["pl_pct"]):
+    if not _is_flagged(
+        summary["unrealized_pl"],
+        summary["pl_pct"],
+        rules.risk.loss_review_threshold_pct,
+    ):
         return RecoveryPlanResponse(
             position_id=position_id,
             as_of=as_of,
@@ -279,7 +310,7 @@ def build_recovery_plan(
             disclaimer=DISCLAIMER_TEXT,
         )
 
-    okr = _read_okr_settings(db)
+    okr = _read_okr_settings(db, rules)
 
     paths = compute_recovery_paths(
         position=position,

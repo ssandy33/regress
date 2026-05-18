@@ -128,6 +128,55 @@ test.describe('Settings → Trading Rules — page & tabs', () => {
   });
 });
 
+test.describe('Settings → Trading Rules — deep link (issue #235)', () => {
+  test('/settings?tab=rules opens the Trading Rules tab without a click', async ({
+    page,
+  }) => {
+    await mockRulesEndpoint(page);
+    await page.goto('/settings?tab=rules');
+
+    // The Trading Rules tab is active on arrival — the recovery-page
+    // "Adjust cap →" CTAs deep-link here.
+    await expect(page.getByTestId('settings-rules-tab')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(page.getByTestId('settings-tab-general')).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+    await expect(page.getByTestId('settings-rules-form')).toBeVisible();
+  });
+
+  test('/settings with no param still defaults to the General tab', async ({
+    page,
+  }) => {
+    await mockRulesEndpoint(page);
+    await page.goto('/settings');
+
+    await expect(page.getByTestId('settings-tab-general')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(page.getByTestId('settings-rules-tab')).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+  });
+
+  test('an unrecognized tab param falls back to the General tab', async ({
+    page,
+  }) => {
+    await mockRulesEndpoint(page);
+    await page.goto('/settings?tab=bogus');
+
+    await expect(page.getByTestId('settings-tab-general')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+});
+
 test.describe('Settings → Trading Rules — field render', () => {
   test('a field renders with its label, helper text and value', async ({
     page,

@@ -234,7 +234,8 @@ def _average_down_path(
 
     # Sizing cap gate. Per design spec §3.3 the reason text contains the
     # word "sizing cap" so the frontend CTA mapper routes the user to
-    # /settings#okrs.
+    # the Settings → Trading Rules tab (/settings?tab=rules) — the sizing
+    # cap is a Trading Rule (issue #156), not an OKR.
     if capital_tied_up > sizing_cap_dollars:
         return {
             "path_id": "average-down",
@@ -248,7 +249,7 @@ def _average_down_path(
             "months_to_breakeven": _empty_range(),
             "opportunity_cost_vs_baseline": None,
             "assumptions": [
-                f"Sizing cap from Settings → OKRs: {_format_dollar(sizing_cap_dollars)}.",
+                f"Sizing cap from Settings → Trading Rules: {_format_dollar(sizing_cap_dollars)}.",
                 (
                     f"Adding {_format_dollar(additional_capital)} would tie up "
                     f"{_format_dollar(capital_tied_up)} total."

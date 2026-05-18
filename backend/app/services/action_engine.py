@@ -38,8 +38,16 @@ MAX_ACTIONS = 8
 # Mirrors the 48-hour log threshold in ``schwab_auth.py:_refresh_tokens``.
 TOKEN_EXPIRING_DAYS = 2
 
-# Large-loser thresholds (spec §2.2 / Q1). Whichever fires first.
-LARGE_LOSER_PCT_THRESHOLD = -0.05  # -5%
+# Large-loser dollar threshold (spec §2.2 / Q1). The *percentage* side of the
+# largest-loser trigger is the configured
+# ``rules_config.risk.loss_review_threshold_pct`` (Trading Rules Layer, issue
+# #156), resolved by the dashboard and passed into ``_largest_loser_action``.
+# This dollar threshold is an intentionally-retained absolute-loss secondary
+# OR-trigger — PRD #209 §R5 models the loss-review rule as a percentage only,
+# so a large-share position with a shallow percentage loss still flags on
+# absolute dollars. It is a hardcoded heuristic, not a trader-facing rule
+# (ADR-002), and mirrors :mod:`app.routers.positions` so the dashboard CTA and
+# the recovery page agree on what "flagged" means.
 LARGE_LOSER_DOLLAR_THRESHOLD = -1000.0  # -$1,000
 
 # Cap on per-leg ITM short-DTE cards. Spec §2.2: "one card per leg, capped
@@ -234,12 +242,21 @@ def _schwab_token_expiring_action(
     }
 
 
-def _largest_loser_action(positions: Iterable[dict]) -> dict | None:
+def _largest_loser_action(
+    positions: Iterable[dict], loss_review_threshold_pct: float
+) -> dict | None:
     """Build a ``position.large_loser`` card for the single worst loser.
 
     Spec §2.2: surface only the single largest loser per cycle, even when
     multiple positions breach the threshold. Trigger is whichever-fires-first
-    between ``unrealized_pl_pct <= -5%`` and ``unrealized_pl <= -$1,000``.
+    between the configured loss-review threshold and ``-$1,000``.
+
+    ``loss_review_threshold_pct`` is the configured
+    ``rules_config.risk.loss_review_threshold_pct`` — a *whole-percent* value
+    (e.g. ``-15.0`` for −15%). ``pl_pct`` is a *fraction* (e.g. ``-0.15``), so
+    the threshold is divided by 100 before comparison. This mirrors
+    :func:`app.routers.positions._is_flagged` so the dashboard largest-loser
+    card and the recovery flag gate agree.
     """
     candidates: list[tuple[float, dict]] = []
     for row in positions:
@@ -248,7 +265,7 @@ def _largest_loser_action(positions: Iterable[dict]) -> dict | None:
             continue
         pct = row.get("pl_pct")
         triggered = unrealized_pl <= LARGE_LOSER_DOLLAR_THRESHOLD or (
-            pct is not None and pct <= LARGE_LOSER_PCT_THRESHOLD
+            pct is not None and pct <= loss_review_threshold_pct / 100.0
         )
         if not triggered:
             continue
@@ -274,7 +291,10 @@ def _largest_loser_action(positions: Iterable[dict]) -> dict | None:
         "priority": "P0",
         "title": f"Review {ticker}",
         "subject": {"ticker": ticker, "amount": amount},
-        "reason": "Position is below your review threshold (-5% or -$1,000).",
+        "reason": (
+            f"Position is below your {loss_review_threshold_pct:g}% "
+            "review threshold (or -$1,000 absolute)."
+        ),
         # V0.5.8 (#182): the CTA destination moved from the Journal filter
         # page to the new Recovery Plan route. Same PR ships the
         # destination so the link never 404s mid-deploy.
@@ -526,7 +546,9 @@ def compute_next_actions(
     if token_card is not None:
         candidates.append(token_card)
 
-    loser_card = _largest_loser_action(positions)
+    loser_card = _largest_loser_action(
+        positions, rules.risk.loss_review_threshold_pct
+    )
     if loser_card is not None:
         candidates.append(loser_card)
 
