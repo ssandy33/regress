@@ -24,8 +24,9 @@ import { test, expect } from '@playwright/test';
  *
  * Auth-aware (mirrors `csp-nonce.spec.js`): with `NEXTAUTH_SECRET` set when the
  * server starts, `/dashboard` 307s to `/auth/signin` (matcher-excluded) and the
- * rendered-page assertions skip with a documented reason. The full suite runs
- * when auth is off (the CI default).
+ * rendered-page assertions skip with a documented reason. Run with auth off
+ * (`NEXTAUTH_SECRET` unset) to exercise the full suite — CI does not run this
+ * suite today (see issue #231 to wire it in).
  */
 
 /**
