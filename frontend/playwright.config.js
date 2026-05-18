@@ -2,6 +2,9 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
+  // `*.prod.spec.js` needs a production build — it runs under
+  // `playwright.prod.config.js` (`npm run test:e2e:prod`), not `next dev`.
+  testIgnore: /.*\.prod\.spec\.js/,
   timeout: 60000,
   use: {
     baseURL: 'http://localhost:3000',
