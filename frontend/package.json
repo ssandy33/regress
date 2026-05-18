@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:e2e": "playwright test",
+    "test:e2e:prod": "playwright test --config playwright.prod.config.js",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },
