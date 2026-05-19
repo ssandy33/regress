@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Card from '../common/Card';
 import EmptyState from '../common/EmptyState';
-import { formatPercent } from '../../utils/formatters';
+import { formatCurrency, formatPercent } from '../../utils/formatters';
 
 /**
  * OpenLegsCard — triage-grade table of every open short option leg, and the
@@ -271,6 +271,16 @@ function RuleStatusCell({ leg, rule }) {
  */
 function InspectPanel({ leg }) {
   const optionLetter = leg.type === 'put' ? 'P' : 'C';
+  // Credit received as whole-position dollars, so `Credit − Cost = P&L`
+  // reconciles on screen (#246, spec §3.4). When both dollar figures are
+  // present they reconcile by construction (pnl + cost = premium×100×qty);
+  // a degraded leg with no mid falls back to the per-contract scale.
+  let creditReceived = null;
+  if (leg.pnl_dollars != null && leg.cost_to_close != null) {
+    creditReceived = leg.pnl_dollars + leg.cost_to_close;
+  } else if (leg.premium != null) {
+    creditReceived = leg.premium * 100;
+  }
   const verdict = leg.verdict || 'hold';
   // A "closing" verdict gets a "Buy to close" CTA; a quiet/review leg does not.
   const showCloseCta =
@@ -284,9 +294,66 @@ function InspectPanel({ leg }) {
       data-testid={`dashboard-leg-inspect-${leg.id}`}
       className="col-span-12 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg mt-1 mb-2 p-4"
     >
-      <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
-        {leg.ticker} ${leg.strike} {optionLetter} · exp {leg.expiration} ·{' '}
-        {leg.dte} DTE
+      {/*
+        Identity header (#246): the coverage badge is echoed top-right so a
+        user inspecting a leg sees its coverage restated in context. The
+        `coverageBadge` helper stays pure — the echo wraps it in its own
+        inspect-specific testid span.
+      */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+          {leg.ticker} ${leg.strike} {optionLetter} · exp {leg.expiration} ·{' '}
+          {leg.dte} DTE
+        </div>
+        {leg.coverage && (
+          <span data-testid={`dashboard-leg-inspect-coverage-${leg.id}`}>
+            {coverageBadge(leg.coverage)}
+          </span>
+        )}
+      </div>
+      {/*
+        Economics summary line (#246, spec §3.4) — four dot-separated labeled
+        figures between the identity header and the Rule-evaluation table.
+        Credit received is always real; Cost to close / P&L degrade to `—`
+        with no live mid. `formatCurrency` is used for the unsigned figures;
+        `pnlDollarsText` (a local signed helper) for the signed P&L.
+      */}
+      <div
+        data-testid={`dashboard-leg-inspect-economics-${leg.id}`}
+        className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-3 mt-1"
+      >
+        <span>
+          <span className="text-slate-500 dark:text-slate-400">
+            Credit received{' '}
+          </span>
+          <span className="tabular-nums text-slate-700 dark:text-slate-200">
+            {creditReceived == null ? '—' : formatCurrency(creditReceived)}
+          </span>
+        </span>
+        <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
+          ·
+        </span>
+        <span>
+          <span className="text-slate-500 dark:text-slate-400">
+            Cost to close{' '}
+          </span>
+          <span
+            className={`tabular-nums ${
+              leg.cost_to_close == null
+                ? 'text-slate-400'
+                : 'text-slate-700 dark:text-slate-200'
+            }`}
+          >
+            {leg.cost_to_close == null ? '—' : formatCurrency(leg.cost_to_close)}
+          </span>
+        </span>
+        <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
+          ·
+        </span>
+        <span>
+          <span className="text-slate-500 dark:text-slate-400">P&amp;L </span>
+          {pnlDollarsText(leg.pnl_dollars)}
+        </span>
       </div>
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
         Rule evaluation — checked against your Management Triggers
