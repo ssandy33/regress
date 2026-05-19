@@ -200,11 +200,11 @@ function makeCard(overrides = {}) {
     action_id: actionId,
     priority: overrides.priority || 'P1',
     tone: overrides.tone,
-    title: overrides.title || 'Profit-take review',
+    title: overrides.title || 'Buy-to-close review',
     subject: overrides.subject || { ticker: 'F', amount: '15C' },
     reason: overrides.reason || 'Your 50% profit-take rule triggered — 60% of max premium captured.',
     cta: {
-      label: 'Inspect rule',
+      label: 'Review buy-to-close',
       href:
         overrides.href ||
         '/positions/pos-ford/legs/leg-ford-15c/btc',
