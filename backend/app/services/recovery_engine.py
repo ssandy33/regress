@@ -262,12 +262,29 @@ def _average_down_path(
     total_shares = max(shares, 0) * 2
     if total_shares > 0:
         new_basis_per_share = new_basis_total / total_shares
-        # Months to breakeven: when does the average-of-old + new exceed the
-        # new per-share cost? Without a price-recovery model we cannot
-        # answer that deterministically — surface the range as null and let
-        # the assumption note explain why.
-        months_range = _empty_range()
+        # Breakeven projection: grind wheel-CC premium against the remaining
+        # unrealized loss measured against the NEW blended basis. Mirrors
+        # _wheel_cc_path's 1.5%/month heuristic, but premium accrues on the
+        # *doubled* share count since the user now holds total_shares.
+        # Deterministic — no price-recovery model required (see #237).
+        remaining_loss = max(new_basis_total - current_price * total_shares, 0.0)
+        monthly_premium = (
+            WHEEL_MONTHLY_PREMIUM_PCT * max(current_price, 0.0) * total_shares
+        )
+        if monthly_premium > 0 and remaining_loss > 0:
+            base_months = remaining_loss / monthly_premium
+            months_range = {
+                "best": math.ceil(base_months * WHEEL_BE_MULTIPLIERS[0]),
+                "expected": math.ceil(base_months * WHEEL_BE_MULTIPLIERS[1]),
+                "worst": math.ceil(base_months * WHEEL_BE_MULTIPLIERS[2]),
+            }
+        else:
+            # No breakeven gap to project: current_price == 0 (monthly_premium
+            # collapses to 0) or the position is already at/above the new
+            # blended basis (remaining_loss == 0).
+            months_range = _empty_range()
     else:
+        # shares == 0 — no position to average down.
         new_basis_per_share = 0.0
         months_range = _empty_range()
 
@@ -284,7 +301,10 @@ def _average_down_path(
             "per share."
         ),
         f"Within {_format_dollar(sizing_cap_dollars)} sizing cap.",
-        "Breakeven horizon depends on price-recovery assumptions not modeled.",
+        (
+            f"Breakeven projects {WHEEL_MONTHLY_PREMIUM_PCT * 100:.1f}%/month "
+            "wheel-CC premium on the doubled position against the remaining loss."
+        ),
     ]
 
     return {
