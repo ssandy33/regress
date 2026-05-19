@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Link from 'next/link';
 import Card from '../common/Card';
 import EmptyState from '../common/EmptyState';
@@ -21,8 +21,11 @@ import { formatCurrency, formatPercent } from '../../utils/formatters';
  *     journal navigation relocated into the panel's "Open in Journal" CTA.
  *   - A leading chevron cell shows the expand state; Ticker shrank 2→1 cols
  *     to make room (spec §5.1 Q8).
- *   - The card seeds its expanded set from `initialExpandedLegId` (the
- *     `#leg-{id}` deep-link from a card CTA — spec §4.4 Q7).
+ *
+ * V1.0.6 (issue #244): the dead `#leg-{id}` hash deep-link was removed. The
+ * rule-monitor card "Inspect rule →" CTA now navigates to the dedicated
+ * per-leg buy-to-close detail screen. The inline expandable inspect row
+ * (toggled by clicking the leg row) is unchanged.
  *
  * V0.5 columns (issue #150) — %CAPTURED, RISK, earnings ⚠ glyph — unchanged.
  *
@@ -433,11 +436,10 @@ function InspectPanel({ leg }) {
   );
 }
 
-function LegRow({ leg, isExpanded, onToggle, rowRef }) {
+function LegRow({ leg, isExpanded, onToggle }) {
   return (
     <button
       type="button"
-      ref={rowRef}
       onClick={() => onToggle(leg.id)}
       aria-expanded={isExpanded}
       aria-controls={`dashboard-leg-inspect-${leg.id}`}
@@ -541,29 +543,9 @@ function HeaderRow() {
   );
 }
 
-export default function OpenLegsCard({ legs, loading, initialExpandedLegId }) {
-  // A Set of expanded leg ids — multi-open (spec §3.2 Q2). Seeded with the
-  // `#leg-{id}` deep-link target, if any, on mount (spec §4.4 Q7).
-  const [expanded, setExpanded] = useState(() => {
-    const seed = new Set();
-    if (initialExpandedLegId) seed.add(initialExpandedLegId);
-    return seed;
-  });
-  const [deepLinkRow, setDeepLinkRow] = useState(null);
-
-  // Scroll the deep-linked row into view once it mounts, honoring
-  // prefers-reduced-motion (mirrors issue-182 §12.3).
-  useEffect(() => {
-    if (!initialExpandedLegId || !deepLinkRow) return;
-    const motionOK =
-      typeof window !== 'undefined' &&
-      window.matchMedia &&
-      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    deepLinkRow.scrollIntoView({
-      behavior: motionOK ? 'smooth' : 'auto',
-      block: 'center',
-    });
-  }, [initialExpandedLegId, deepLinkRow]);
+export default function OpenLegsCard({ legs, loading }) {
+  // A Set of expanded leg ids — multi-open (spec §3.2 Q2).
+  const [expanded, setExpanded] = useState(() => new Set());
 
   function toggle(legId) {
     setExpanded((prev) => {
@@ -618,9 +600,6 @@ export default function OpenLegsCard({ legs, loading, initialExpandedLegId }) {
                       leg={leg}
                       isExpanded={isExpanded}
                       onToggle={toggle}
-                      rowRef={
-                        leg.id === initialExpandedLegId ? setDeepLinkRow : null
-                      }
                     />
                   </div>
                   {isExpanded && <InspectPanel leg={leg} />}

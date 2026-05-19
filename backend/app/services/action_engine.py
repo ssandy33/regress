@@ -468,7 +468,10 @@ def _leg_profit_take_review_actions(
                 ),
                 "cta": {
                     "label": "Inspect rule",
-                    "href": f"/dashboard#leg-{quote(str(leg['id']), safe='')}",
+                    "href": (
+                        f"/positions/{quote(str(leg['position_id']), safe='')}"
+                        f"/legs/{quote(str(leg['id']), safe='')}/btc"
+                    ),
                     "kind": "link",
                 },
                 "triggered_rules": triggered_rules,
@@ -518,7 +521,10 @@ def _leg_dte_review_actions(
                 ),
                 "cta": {
                     "label": "Inspect rule",
-                    "href": f"/dashboard#leg-{quote(str(leg['id']), safe='')}",
+                    "href": (
+                        f"/positions/{quote(str(leg['position_id']), safe='')}"
+                        f"/legs/{quote(str(leg['id']), safe='')}/btc"
+                    ),
                     "kind": "link",
                 },
                 "triggered_rules": triggered_rules,

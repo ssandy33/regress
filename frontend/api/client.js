@@ -341,4 +341,14 @@ export async function getRecoveryPlan(id) {
   return data;
 }
 
+// --- Buy-to-close leg detail (V1.0.6, issue #244) ---
+
+export async function getBtcDetail(positionId, legId) {
+  const { data } = await api.get(
+    `/api/positions/${encodeURIComponent(positionId)}` +
+      `/legs/${encodeURIComponent(legId)}/btc`,
+  );
+  return data;
+}
+
 export default api;

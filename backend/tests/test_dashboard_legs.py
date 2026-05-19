@@ -209,6 +209,42 @@ class TestDeriveOpenLegs:
         assert legs[0]["dte"] == 3
         assert legs[0]["moneyness"]["state"] == "ITM"
 
+    def test_exposes_raw_current_mid_passthrough(self):
+        # Issue #244 — the leg dict carries the raw matched option mid so the
+        # BTC detail endpoint can compute cost-to-close. `None` when no mark.
+        positions = [
+            self._position(
+                "AAPL",
+                "pos-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_put",
+                        "strike": 175.0,
+                        "expiration": "2026-05-08",
+                        "premium": 2.25,
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        marks = {("AAPL", "put", 175.0, "2026-05-08"): 0.90}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 174.50},
+            today=date(2026, 5, 5),
+            option_marks=marks,
+        )
+        assert legs[0]["current_mid"] == 0.90
+        assert legs[0]["quantity"] == 1
+        # No mark for this contract → current_mid is None.
+        no_mark = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 174.50},
+            today=date(2026, 5, 5),
+        )
+        assert no_mark[0]["current_mid"] is None
+
     def test_sorts_by_dte_then_ticker(self):
         positions = [
             self._position(
