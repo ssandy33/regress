@@ -849,7 +849,9 @@ class TestProfitTakeReviewCard:
         assert card["id"] == "leg.profit_take_review.l-1"
         assert card["triggered_rules"]
 
-    def test_card_cta_deep_links_to_leg_hash(self):
+    def test_card_cta_links_to_btc_detail_route(self):
+        # Issue #244 — the CTA repoints from the dead `/dashboard#leg-{id}`
+        # hash to the dedicated per-leg buy-to-close detail route.
         actions = compute_next_actions(
             status=_status(),
             kpis=_kpis(open_legs=1),
@@ -857,7 +859,7 @@ class TestProfitTakeReviewCard:
             open_legs=[_verdict_leg("l-1", verdict="profit_take_review")],
         )
         card = next(a for a in actions if a["action_id"] == "leg.profit_take_review")
-        assert card["cta"]["href"] == "/dashboard#leg-l-1"
+        assert card["cta"]["href"] == "/positions/p-1/legs/l-1/btc"
 
     def test_not_emitted_for_hold_verdict(self):
         actions = compute_next_actions(

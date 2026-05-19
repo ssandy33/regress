@@ -19,7 +19,16 @@ const CLOSE_REASONS = [
   { value: 'called_away', label: 'Called Away' },
 ];
 
-export default function TradeEntryForm({ positionId, onSubmit, onCancel }) {
+export default function TradeEntryForm({
+  positionId,
+  initialValues,
+  onSubmit,
+  onCancel,
+}) {
+  // `initialValues` (issue #244) lets a caller pre-fill the form — e.g. the
+  // buy-to-close deep-link from the BTC detail screen seeds the inverse-close
+  // trade type, strike, expiration, and quantity. Defaults below win for any
+  // field `initialValues` does not provide.
   const [form, setForm] = useState({
     trade_type: 'sell_put',
     strike: '',
@@ -28,6 +37,7 @@ export default function TradeEntryForm({ positionId, onSubmit, onCancel }) {
     fees: '0',
     quantity: '1',
     close_reason: '',
+    ...initialValues,
   });
 
   const handleChange = (e) => {
@@ -58,17 +68,17 @@ export default function TradeEntryForm({ positionId, onSubmit, onCancel }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div>
           <label className={labelClass}>Type</label>
-          <select name="trade_type" value={form.trade_type} onChange={handleChange} className={inputClass}>
+          <select data-testid="trade-entry-type" name="trade_type" value={form.trade_type} onChange={handleChange} className={inputClass}>
             {TRADE_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </div>
         <div>
           <label className={labelClass}>Strike</label>
-          <input name="strike" type="number" step="0.01" value={form.strike} onChange={handleChange} required placeholder="145.00" className={inputClass} />
+          <input data-testid="trade-entry-strike" name="strike" type="number" step="0.01" value={form.strike} onChange={handleChange} required placeholder="145.00" className={inputClass} />
         </div>
         <div>
           <label className={labelClass}>Expiration</label>
-          <input name="expiration" type="date" value={form.expiration} onChange={handleChange} required className={inputClass} />
+          <input data-testid="trade-entry-expiration" name="expiration" type="date" value={form.expiration} onChange={handleChange} required className={inputClass} />
         </div>
         <div>
           <label className={labelClass}>Premium</label>

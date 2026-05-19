@@ -412,6 +412,12 @@ def derive_open_legs(
                     "dte": dte,
                     "moneyness": moneyness,
                     "position_id": position_id,
+                    "premium": trade.get("premium"),
+                    "quantity": int(trade.get("quantity") or 1),
+                    # Raw matched option mid (None when no live mark) — consumed
+                    # by the BTC detail endpoint (issue #244). The dashboard
+                    # ignores this key, so it cannot regress #240.
+                    "current_mid": current_mid,
                     "profit_target_status": profit_target_status,
                     "assignment_risk": assignment_risk,
                     "suggested_action": compute_suggested_action(decision_tag),

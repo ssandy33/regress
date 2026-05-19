@@ -976,3 +976,60 @@ class RecoveryPlanResponse(BaseModel):
     recommendation: Optional[RecoveryRecommendation] = None
     assumptions: list[RecoveryAssumptionRow] = Field(default_factory=list)
     disclaimer: Optional[str] = None
+
+
+# --- Buy-to-close leg detail (V1.0.6, issue #244) ---
+
+# The two delivered states the BTC endpoint returns a 200 body for. The
+# 'not-found' state is delivered as an HTTP 404 with no body.
+BTC_DETAIL_STATE = Literal["populated", "no-rule-triggered"]
+
+
+class BtcLeg(BaseModel):
+    """The open option leg the buy-to-close review is scoped to."""
+
+    id: str
+    position_id: str
+    ticker: str
+    strike: float
+    option_type: Literal["C", "P"]
+    contracts: int
+    expiration: str
+    dte: int
+    moneyness: str  # 'OTM' | 'ITM' | 'ATM' | 'Unknown'
+    position_label: str
+
+
+class BtcEconomics(BaseModel):
+    """Buy-to-close economics for the leg.
+
+    ``credit_received`` is always real (static, from the opening trade row).
+    The pricing-dependent fields are ``None`` when no live option mark is
+    available — the frontend renders the em-dash + "Pricing unavailable"
+    treatment in that case (spec §5.3 Q4).
+    """
+
+    credit_received: float
+    current_option_mid: Optional[float] = None
+    cost_to_close: Optional[float] = None
+    captured_pct: Optional[float] = None
+    est_pl_if_closed: Optional[float] = None
+    pricing_as_of: Optional[str] = None
+    pricing_source: Literal["live", "stub", "unavailable"]
+
+
+class BtcDetailResponse(BaseModel):
+    """Top-level response for ``GET /api/positions/{id}/legs/{legId}/btc``.
+
+    Composes the leg identity, the §R6 rule-monitor verdict + audit (reused
+    verbatim from :func:`app.services.rule_monitor.evaluate_leg_rules` via
+    ``derive_open_legs``), and the buy-to-close economics block. A 404 with
+    ``{"detail": "Leg not found"}`` is returned for an unknown / closed leg.
+    """
+
+    state: BTC_DETAIL_STATE
+    leg: BtcLeg
+    verdict: DASHBOARD_VERDICT
+    economics: BtcEconomics
+    triggered_rules: list[DashboardRuleEvaluation] = Field(default_factory=list)
+    disclaimer: Optional[str] = None

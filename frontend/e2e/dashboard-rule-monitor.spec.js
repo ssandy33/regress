@@ -12,7 +12,8 @@ import { test, expect } from '@playwright/test';
  *   - Quiet leg (verdict=hold) is still inspectable; no Buy-to-close CTA.
  *   - leg.profit_take_review card renders emerald + ✓ + [P1];
  *     leg.dte_review card renders slate + [P2].
- *   - `#leg-{id}` deep link auto-expands the targeted row on mount.
+ *   - Dead `#leg-{id}` deep link removed (issue #244) — a `#leg-` hash no
+ *     longer auto-expands any row.
  *   - Degraded path — no live mid → % Capt `—`, DTE-based fallback verdict.
  *
  * Mirrors `dashboard-open-legs-card.spec.js` — same `mockDashboard()` +
@@ -204,7 +205,9 @@ function makeCard(overrides = {}) {
     reason: overrides.reason || 'Your 50% profit-take rule triggered — 60% of max premium captured.',
     cta: {
       label: 'Inspect rule',
-      href: overrides.href || '/dashboard#leg-leg-ford-15c',
+      href:
+        overrides.href ||
+        '/positions/pos-ford/legs/leg-ford-15c/btc',
       kind: 'link',
     },
     triggered_rules: overrides.triggered_rules || [],
@@ -463,7 +466,7 @@ test.describe('NextActionCard — rule-monitor cards', () => {
       tone: undefined,
       subject: { ticker: 'AAPL', amount: '190P' },
       reason: '20 days to expiration — your review window. Decide: hold, roll, or close.',
-      href: '/dashboard#leg-leg-aapl',
+      href: '/positions/pos-aapl/legs/leg-aapl/btc',
     });
     await mockDashboard(page, {
       ...BASE_PAYLOAD,
@@ -481,8 +484,13 @@ test.describe('NextActionCard — rule-monitor cards', () => {
   });
 });
 
-test.describe('OpenLegsCard rule monitor — hash deep link', () => {
-  test('#leg-{id} auto-expands the targeted row on mount', async ({ page }) => {
+test.describe('OpenLegsCard — dead #leg hash deep link removed (issue #244)', () => {
+  test('navigating to /dashboard#leg-{id} does NOT auto-expand any row', async ({
+    page,
+  }) => {
+    // Issue #244 removed the dead `#leg-{id}` deep-link. The card CTA now
+    // navigates to the dedicated BTC detail screen instead. Landing on the
+    // dashboard with a `#leg-` hash must leave every inspect panel collapsed.
     const legA = makeLeg({ id: 'leg-a', ticker: 'F', verdict: 'hold', dte: 73 });
     const legB = makeLeg({
       id: 'leg-b',
@@ -497,15 +505,15 @@ test.describe('OpenLegsCard rule monitor — hash deep link', () => {
     await page.goto('/dashboard#leg-leg-b');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByTestId('dashboard-leg-inspect-leg-b')).toBeVisible();
-    // The non-targeted row stays collapsed.
+    // Both rows render — and NEITHER inspect panel is auto-expanded.
+    await expect(page.getByTestId('dashboard-leg-row').first()).toBeVisible();
     await expect(page.getByTestId('dashboard-leg-inspect-leg-a')).toHaveCount(0);
+    await expect(page.getByTestId('dashboard-leg-inspect-leg-b')).toHaveCount(0);
   });
 
-  test('malformed #leg-%FF hash does not crash the dashboard', async ({ page }) => {
-    // `decodeURIComponent('%FF')` throws — parseLegHash runs in a lazy
-    // useState initializer, so an unguarded throw would crash the dashboard
-    // at render. The guard returns null instead; the page must still mount.
+  test('a #leg hash never crashes the dashboard', async ({ page }) => {
+    // The hash-reading code (and its decodeURIComponent throw path) is gone.
+    // Any `#leg-` hash — even a malformed one — is now inert.
     const leg = makeLeg({ id: 'leg-a', ticker: 'F', verdict: 'hold', dte: 73 });
     await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
 
@@ -516,13 +524,9 @@ test.describe('OpenLegsCard rule monitor — hash deep link', () => {
     await page.goto('/dashboard#leg-%FF');
     await page.waitForLoadState('networkidle');
 
-    // The dashboard shell rendered — no render crash.
     await expect(page.getByTestId('dashboard-page')).toBeVisible();
-    // The leg row still rendered; the bad hash matched no leg, so nothing
-    // is auto-expanded.
     await expect(page.getByTestId('dashboard-leg-row').first()).toBeVisible();
     await expect(page.getByTestId('dashboard-leg-inspect-leg-a')).toHaveCount(0);
-    // No uncaught URIError reached the page.
     expect(pageErrors).toHaveLength(0);
   });
 });
