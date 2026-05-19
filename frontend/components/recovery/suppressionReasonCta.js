@@ -14,11 +14,11 @@ export function suppressionReasonToCta(reason) {
     return { label: 'Adjust cap →', href: '/settings?tab=rules' };
   }
   if (low.includes('target yield')) {
-    // Target yield is a genuine OKR. Intentionally left pointing at
-    // `/settings#okrs`: there is no Settings → OKRs UI until V1.1, so this
-    // CTA still dead-ends — that half of #207 stays open and out of scope
-    // for #235 (which only fixes the sizing-cap CTA).
-    return { label: 'Set target yield →', href: '/settings#okrs' };
+    // Target yield is a genuine OKR — route to the Settings → Trading
+    // Objectives tab via the `?tab=` deep link (issue #207, the same pattern
+    // #235 introduced for the sizing cap). The old `/settings#okrs` anchor
+    // dead-ended; #207 added the Trading Objectives tab as its destination.
+    return { label: 'Set target yield →', href: '/settings?tab=objectives' };
   }
   return null;
 }

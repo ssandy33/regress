@@ -198,6 +198,11 @@ class SettingsResponse(BaseModel):
     theme: str
     schwab_configured: bool = False
     schwab_token_expires: Optional[str] = None
+    # Target yield drives the Recovery Plan's Sell & redeploy path (#207).
+    # Stored as a fraction (e.g. 0.12 == 12%); the frontend converts to/from
+    # whole-percent. Flat key for the V1.0.3 stopgap — migrates into the typed
+    # okr_config namespace in V1.1 (ADR-001 / Discussion #210).
+    okr_target_yield: Optional[float] = None
 
 
 class CacheStatsResponse(BaseModel):

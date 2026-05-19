@@ -1,10 +1,11 @@
 import logging
+import math
 import os
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session as DBSession
@@ -44,6 +45,17 @@ def get_settings(db: DBSession = Depends(get_db)):
         entry = db.query(AppSetting).filter(AppSetting.key == key).first()
         return entry.value if entry else default
 
+    # Target yield (#207). Stored as a fraction string in the flat
+    # `okr_target_yield` app_settings row; parse defensively to float|None so a
+    # malformed row never breaks the settings read (same pattern as
+    # positions.py's OKR read). This flat key migrates into the typed
+    # `okr_config` namespace in V1.1 (ADR-001 / Discussion #210).
+    target_raw = _get("okr_target_yield", "")
+    try:
+        target_yield = float(target_raw) if target_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        target_yield = None
+
     schwab_mgr = SchwabTokenManager()
     return SettingsResponse(
         fred_api_key_set=bool(fred_key),
@@ -53,12 +65,35 @@ def get_settings(db: DBSession = Depends(get_db)):
         theme=_get("theme", "system"),
         schwab_configured=schwab_mgr.is_configured(),
         schwab_token_expires=schwab_mgr.get_refresh_token_expiry(),
+        okr_target_yield=target_yield,
     )
+
+
+# Generic error copy for the okr_target_yield boundary check — never leak the
+# raw parse exception (CLAUDE.md).
+_TARGET_YIELD_ERROR = "Target yield must be between 0% and 100%."
 
 
 @router.put("")
 def update_setting(req: SettingUpdate, db: DBSession = Depends(get_db)):
-    """Update a single application setting."""
+    """Update a single application setting.
+
+    The store is a generic `{key, value}` upsert. `okr_target_yield` (#207) is
+    the one key with a value contract — it is a fraction in `0.0 < x <= 1.0`
+    consumed by the Recovery Plan engine — so it gets a boundary check here.
+    This flat key migrates into the typed `okr_config` namespace in V1.1
+    (ADR-001 / Discussion #210).
+    """
+    if req.key == "okr_target_yield":
+        try:
+            value = float(req.value)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail=_TARGET_YIELD_ERROR)
+        if math.isnan(value) or math.isinf(value):
+            raise HTTPException(status_code=422, detail=_TARGET_YIELD_ERROR)
+        if not (0.0 < value <= 1.0):
+            raise HTTPException(status_code=422, detail=_TARGET_YIELD_ERROR)
+
     entry = db.query(AppSetting).filter(AppSetting.key == req.key).first()
     if entry:
         entry.value = req.value
