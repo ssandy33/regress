@@ -596,3 +596,90 @@ test.describe('Recovery Plan panel', () => {
     // design intent before merge. Not automatable in Playwright assertions.
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #207 — Target Yield CTA + Sell & redeploy populated metrics.
+//
+// Append-only block (self-contained fixture builders included) so the sibling
+// #237 PR, which also appends to this file, resolves only a trivial conflict.
+// ---------------------------------------------------------------------------
+
+test.describe('Recovery Plan — target yield (issue #207)', () => {
+  /** A payload where Sell & redeploy is suppressed for an unset target yield —
+   * the exact state the recovery "Set target yield →" CTA exists to fix. */
+  function targetYieldSuppressedPayload() {
+    const base = populatedPayload();
+    base.inputs.okr.target_yield = null;
+    base.paths = base.paths.map((p) =>
+      p.path_id === 'sell-redeploy'
+        ? {
+            ...p,
+            eligibility: 'suppressed',
+            suppression_reason: 'Target yield not configured',
+            capital_tied_up: null,
+            months_to_breakeven: { best: null, expected: null, worst: null },
+            opportunity_cost_vs_baseline: null,
+          }
+        : p,
+    );
+    base.recommendation.recommended_path_id = 'wheel-cc';
+    base.recommendation.ranked_paths = base.recommendation.ranked_paths.map(
+      (r) =>
+        r.path_id === 'sell-redeploy'
+          ? { ...r, score: null, rank: null, suppression_reason: 'Target yield not configured' }
+          : r,
+    );
+    return base;
+  }
+
+  test('the "Set target yield →" CTA routes to Settings → Trading Objectives', async ({
+    page,
+  }) => {
+    // Issue #207: the suppressed Sell & redeploy card's CTA must route to
+    // /settings?tab=objectives — never the dead /settings#okrs anchor.
+    await mockRecoveryPlan(page, targetYieldSuppressedPayload());
+    await openRecoveryPlan(page);
+
+    const cta = page.getByTestId(
+      'recovery-path-card-sell-redeploy-suppression-cta',
+    );
+    await expect(cta).toBeVisible();
+    await expect(cta).toContainText('Set target yield');
+    await expect(cta).toHaveAttribute('href', '/settings?tab=objectives');
+
+    // The old dead anchor must be gone.
+    const href = await cta.getAttribute('href');
+    expect(href).not.toContain('#okrs');
+  });
+
+  test('the populated Sell & redeploy card renders computed capital / breakeven / opportunity cost (AC3)', async ({
+    page,
+  }) => {
+    // Issue #207 AC3: once a target yield is set, the Sell & redeploy path is
+    // eligible and its three metrics compute — none of them the suppressed
+    // "—" placeholder. populatedPayload()'s sell-redeploy is eligible.
+    await mockRecoveryPlan(page, populatedPayload());
+    await openRecoveryPlan(page);
+
+    const capital = page.getByTestId('recovery-path-card-sell-redeploy-capital');
+    const breakeven = page.getByTestId(
+      'recovery-path-card-sell-redeploy-breakeven-expected',
+    );
+    const oppCost = page.getByTestId(
+      'recovery-path-card-sell-redeploy-opp-cost',
+    );
+
+    await expect(capital).toBeVisible();
+    await expect(breakeven).toBeVisible();
+    await expect(oppCost).toBeVisible();
+
+    // None of the three renders the suppressed-state em-dash placeholder.
+    await expect(capital).not.toHaveText('—');
+    await expect(breakeven).not.toHaveText('—');
+    await expect(oppCost).not.toHaveText('—');
+
+    // The computed values from the eligible fixture are surfaced.
+    await expect(capital).toContainText('$0');
+    await expect(breakeven).toContainText('6 mo');
+  });
+});

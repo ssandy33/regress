@@ -10,6 +10,7 @@ import {
 import DangerZone from './DangerZone';
 import ReconcileJournal from './ReconcileJournal';
 import TradingRulesSection from './TradingRulesSection';
+import TradingObjectivesSection from './TradingObjectivesSection';
 import { useJournal } from '../../hooks/useJournal';
 
 function freshnessColor(freshness) {
@@ -33,18 +34,23 @@ export default function SettingsPage() {
   const { clearAllData, reconcilePreview, reconcileApply, positions } = useJournal();
   // Page-scoped tab state (issue #158, Option B). "General" holds the existing
   // infrastructure/data settings; "Trading Rules" holds the rules_config edit
-  // surface. A V1.1 "Trading OKRs" tab slots in here with zero rework.
+  // surface; "Trading Objectives" holds the target-yield objective (issue #207,
+  // shipped V1.0.3). Target yield is an OKR/objective, not a Trading Rule
+  // (ADR-001 / Discussion #210) — hence a separate tab.
   //
   // Lazy-initialized from the `?tab=` query param (issue #235) so a deep link
-  // such as /settings?tab=rules — e.g. a recovery-page "Adjust cap →" CTA —
-  // lands directly on the Trading Rules tab. Query params are the established
-  // codebase pattern (useOptionScanner, JournalPage); URL hashes are used
-  // nowhere. Lazy init runs once on mount; later in-page tab clicks are not
-  // re-overridden by the param.
+  // such as /settings?tab=rules or /settings?tab=objectives — e.g. a
+  // recovery-page "Adjust cap →" / "Set target yield →" CTA — lands directly
+  // on the matching tab. Query params are the established codebase pattern
+  // (useOptionScanner, JournalPage); URL hashes are used nowhere. Lazy init
+  // runs once on mount; later in-page tab clicks are not re-overridden.
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState(() =>
-    searchParams?.get('tab') === 'rules' ? 'rules' : 'general'
-  );
+  const [activeTab, setActiveTab] = useState(() => {
+    const t = searchParams?.get('tab');
+    if (t === 'rules') return 'rules';
+    if (t === 'objectives') return 'objectives';
+    return 'general';
+  });
   const [settings, setSettings] = useState(null);
   const [cacheStats, setCacheStats] = useState(null);
   const [fredKey, setFredKey] = useState('');
@@ -194,7 +200,8 @@ export default function SettingsPage() {
           </Link>
         </div>
 
-        {/* Page-scoped tab bar (issue #158). "Trading OKRs" joins here in V1.1. */}
+        {/* Page-scoped tab bar (issue #158). "Trading Objectives" joined in
+            V1.0.3 (issue #207). */}
         <div
           role="tablist"
           aria-label="Settings sections"
@@ -220,9 +227,23 @@ export default function SettingsPage() {
           >
             Trading Rules
           </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="settings-objectives-tab"
+            aria-selected={activeTab === 'objectives'}
+            onClick={() => setActiveTab('objectives')}
+            className={tabClass('objectives')}
+          >
+            Trading Objectives
+          </button>
         </div>
 
-        {activeTab === 'rules' ? (
+        {activeTab === 'objectives' ? (
+          <div role="tabpanel" aria-label="Trading Objectives">
+            <TradingObjectivesSection />
+          </div>
+        ) : activeTab === 'rules' ? (
           <div role="tabpanel" aria-label="Trading Rules">
             <TradingRulesSection />
           </div>

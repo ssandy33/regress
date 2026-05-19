@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Objectives — Target Yield — mock for Issue #207</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    /* Match the app's body styles from frontend/app/globals.css */
+    body { margin: 0; min-height: 100vh; }
+    html.dark body { background-color: rgb(15 23 42); color: rgb(241 245 249); }
+  </style>
+</head>
+<body class="antialiased font-sans">
+
+<!-- =========================================================================
+     SELF-DOCUMENTATION
+     ========================================================================= -->
+<section class="border-b-4 border-blue-600 bg-slate-800/60">
+  <div class="max-w-3xl mx-auto px-6 py-5">
+    <div class="flex items-start justify-between flex-wrap gap-3">
+      <div>
+        <div class="text-[11px] font-semibold uppercase tracking-wider text-blue-400 mb-1">Static design mock — not production code</div>
+        <h1 class="text-xl font-semibold text-white">Settings — Trading Objectives tab (Target Yield) — Issue #207</h1>
+        <p class="text-sm text-slate-400 mt-1 max-w-3xl">
+          Read-only HTML/Tailwind mock of the V1.0.3 stopgap that fixes the dead-ending "Set target yield →"
+          Recovery Plan CTA. A new third Settings tab — <strong>Trading Objectives</strong> — holds a single
+          field, <strong>Target Yield</strong>. Each state below is rendered as its own stacked section.
+          Click-throughs are visual cues only — nothing is interactive. This is the minimal stopgap, NOT the
+          full V1.1 OKR Scorecard.
+        </p>
+        <p class="text-xs text-slate-500 mt-2">
+          States covered:
+          <span class="text-slate-300">1. Unset / empty (first run)</span> ·
+          <span class="text-slate-300">2. Populated (value set)</span> ·
+          <span class="text-slate-300">3. Inline validation error</span> ·
+          <span class="text-slate-300">4. Saving (form disabled)</span> ·
+          <span class="text-slate-300">5. Save success</span> ·
+          <span class="text-slate-300">6. Save failure banner</span> ·
+          <span class="text-slate-300">7. Loading skeleton</span> ·
+          <span class="text-slate-300">8. Load error</span> ·
+          <span class="text-slate-300">9. Recovery CTA — before / after</span>.
+        </p>
+      </div>
+      <div class="text-xs text-slate-400 text-right space-y-0.5">
+        <div>Last updated <span class="text-slate-200 font-medium">2026-05-18</span></div>
+        <div>Issue: <span class="text-blue-400">#207 — "Set target yield →" CTA dead-ends</span></div>
+        <div>Milestone: <span class="text-slate-300">V1.0.3 — Recovery Plan bug fixes</span></div>
+        <div>Spec: <span class="font-mono text-slate-300">frontend/design-specs/issue-207-target-yield-objective.md</span></div>
+        <div>Mock: <span class="font-mono text-slate-300">frontend/design-specs/issue-207-target-yield-objective-mock.html</span></div>
+        <div>Authority: <span class="font-mono text-slate-300">ADR-001 #210 — target yield is an OKR, not a rule</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- =========================================================================
+     PRODUCTION-LIKE APP HEADER (rendered once; identical chrome wraps every state)
+     Mirrors frontend/components/layout/Header.jsx so the page chrome reads as real.
+     ========================================================================= -->
+<header class="h-14 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between px-4 shrink-0">
+  <a href="#" class="text-lg font-semibold text-slate-900 dark:text-white hover:text-blue-400">Regression Analysis Tool</a>
+  <div class="flex items-center gap-3">
+    <span class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium">Account ▾</span>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Dashboard</a>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Analysis</a>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Options</a>
+    <a href="#" class="px-3 py-1.5 rounded-lg hover:bg-slate-700 text-slate-300 text-sm font-medium">Journal</a>
+    <a href="#" class="p-2 rounded-lg bg-slate-700 text-slate-200" aria-label="Settings">
+      <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+    </a>
+  </div>
+</header>
+
+
+<!-- ============================================
+     SECTION 1 — UNSET / EMPTY (first-run state)
+     The state every trader sees until they set a value; the state the recovery
+     CTA delivers them into. Blank input, unset note, Save disabled.
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-blue-900/40 text-blue-300 border border-blue-700">State 1</span>
+      <span class="text-sm text-slate-300">Unset / empty — no target yield stored yet. Sell &amp; redeploy stays suppressed. Save disabled.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <!-- page header -->
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-white">Settings</h1>
+      <a href="#" class="text-sm text-blue-400 hover:text-blue-300">Back to Analysis</a>
+    </div>
+
+    <!-- THREE-TAB BAR — General · Trading Rules · Trading Objectives.
+         "Trading Objectives" is the new third tab, last, after "Trading Rules". -->
+    <div role="tablist" aria-label="Settings sections" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button role="tab" data-testid="settings-tab-general" aria-selected="false"
+        class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button role="tab" data-testid="settings-rules-tab" aria-selected="false"
+        class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <!-- NEW tab — active here. data-testid is exactly settings-objectives-tab (issue req 1) -->
+      <button role="tab" data-testid="settings-objectives-tab" aria-selected="true"
+        class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <!-- ===== Trading Objectives section — UNSET ===== -->
+    <div role="tabpanel" aria-label="Trading Objectives" data-testid="settings-objectives-section">
+      <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+        <h2 class="text-lg font-semibold text-white">Trading Objectives</h2>
+        <p class="text-sm text-slate-400 pb-4 mb-4 border-b border-slate-700">
+          The targets your strategy aims for. Used by the Recovery Plan.
+        </p>
+
+        <!-- field: Target yield — UNSET. Input blank, non-numeric placeholder. -->
+        <label for="ty-1" class="block text-sm text-slate-300 mb-1">Target yield</label>
+        <div class="flex items-stretch w-48">
+          <input id="ty-1" data-testid="settings-objectives-target-yield" type="number"
+            placeholder="e.g. 12"
+            class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg rounded-r-none bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-500" />
+          <span aria-hidden="true"
+            class="inline-flex items-center px-2.5 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-800">%</span>
+        </div>
+        <p class="text-xs text-slate-500 mt-1 max-w-xl">
+          The annual return you expect redeployed capital to earn. The Recovery Plan uses this to score the
+          Sell &amp; redeploy path — how a position's trapped capital would perform if freed and put to work elsewhere.
+        </p>
+
+        <!-- unset note — analogue of TradingRulesSection's settings-rules-defaults-note -->
+        <p data-testid="settings-objectives-unset-note" class="text-sm text-slate-400 mt-4">
+          No target yield set yet. Until you set one, the Recovery Plan's Sell &amp; redeploy path stays unavailable.
+        </p>
+
+        <!-- action footer — Save DISABLED while field blank -->
+        <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-700">
+          <button data-testid="settings-objectives-save" disabled
+            class="px-4 py-2 text-sm bg-blue-400 text-white rounded-lg cursor-not-allowed opacity-90">
+            Save objective
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 2 — POPULATED (a value is set)
+     Input shows 12 (whole percent). Stored as fraction 0.12. "Last saved" line.
+     Save disabled until edited (not dirty).
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-900/40 text-green-300 border border-green-700">State 2</span>
+      <span class="text-sm text-slate-300">Populated — value set (input 12% &nbsp;&rarr;&nbsp; stored fraction 0.12). Save idle until edited.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <div role="tablist" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h2 class="text-lg font-semibold text-white">Trading Objectives</h2>
+      <p class="text-sm text-slate-400 pb-4 mb-4 border-b border-slate-700">
+        The targets your strategy aims for. Used by the Recovery Plan.
+      </p>
+
+      <!-- field: Target yield — POPULATED. Input value 12 (whole-percent). -->
+      <label for="ty-2" class="block text-sm text-slate-300 mb-1">Target yield</label>
+      <div class="flex items-stretch w-48">
+        <input id="ty-2" type="number" value="12"
+          class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg rounded-r-none bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+        <span aria-hidden="true"
+          class="inline-flex items-center px-2.5 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-800">%</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1 max-w-xl">
+        The annual return you expect redeployed capital to earn. The Recovery Plan uses this to score the
+        Sell &amp; redeploy path — how a position's trapped capital would perform if freed and put to work elsewhere.
+      </p>
+
+      <!-- action footer — Save disabled (not dirty), passive "Last saved" line -->
+      <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-700">
+        <button class="px-4 py-2 text-sm bg-blue-400 text-white rounded-lg cursor-not-allowed opacity-90">
+          Save objective
+        </button>
+        <span class="text-xs text-slate-400">Last saved 2:14 PM</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 3 — INLINE VALIDATION ERROR
+     Out-of-range value (0) — red ring + inline message. pctOpen100 kind reused
+     from rulesValidation.js. Message before save; Save blocked.
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-900/40 text-rose-300 border border-rose-700">State 3</span>
+      <span class="text-sm text-slate-300">Inline validation error — value out of range (0 &lt; x &le; 100). Save blocked.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <div role="tablist" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h2 class="text-lg font-semibold text-white">Trading Objectives</h2>
+      <p class="text-sm text-slate-400 pb-4 mb-4 border-b border-slate-700">
+        The targets your strategy aims for. Used by the Recovery Plan.
+      </p>
+
+      <!-- field: Target yield — INVALID. value 0 -> out of bounds (0 < x).
+           Red-ring treatment from RuleField: border-red-400 + focus:ring-red-500. -->
+      <label for="ty-3" class="block text-sm text-slate-300 mb-1">Target yield</label>
+      <div class="flex items-stretch w-48">
+        <input id="ty-3" type="number" value="0" aria-invalid="true" aria-describedby="ty-3-err"
+          class="w-full px-3 py-2 text-sm border border-red-400 rounded-l-lg rounded-r-none bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-red-500" />
+        <span aria-hidden="true"
+          class="inline-flex items-center px-2.5 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-800">%</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1 max-w-xl">
+        The annual return you expect redeployed capital to earn. The Recovery Plan uses this to score the
+        Sell &amp; redeploy path — how a position's trapped capital would perform if freed and put to work elsewhere.
+      </p>
+      <!-- inline error — generic pctOpen100 message, role=alert -->
+      <p id="ty-3-err" data-testid="settings-objectives-target-yield-error" role="alert"
+        class="text-xs text-red-400 mt-1">
+        Enter a percentage greater than 0 and up to 100.
+      </p>
+
+      <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-700">
+        <button class="px-4 py-2 text-sm bg-blue-400 text-white rounded-lg cursor-not-allowed opacity-90">
+          Save objective
+        </button>
+        <span class="text-xs text-red-400">Fix 1 field before saving</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 4 — SAVING (PUT /api/settings in flight)
+     Input disabled (opacity-50), button reads "Saving…", disabled.
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-amber-900/40 text-amber-300 border border-amber-700">State 4</span>
+      <span class="text-sm text-slate-300">Saving — request in flight. Input + button disabled.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <div role="tablist" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h2 class="text-lg font-semibold text-white">Trading Objectives</h2>
+      <p class="text-sm text-slate-400 pb-4 mb-4 border-b border-slate-700">
+        The targets your strategy aims for. Used by the Recovery Plan.
+      </p>
+
+      <!-- field disabled during save — opacity-50, matches RuleField disabled treatment -->
+      <label for="ty-4" class="block text-sm text-slate-300 mb-1">Target yield</label>
+      <div class="flex items-stretch w-48 opacity-50">
+        <input id="ty-4" type="number" value="15" disabled
+          class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg rounded-r-none bg-slate-700 text-slate-100 cursor-not-allowed" />
+        <span aria-hidden="true"
+          class="inline-flex items-center px-2.5 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-800">%</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1 max-w-xl">
+        The annual return you expect redeployed capital to earn. The Recovery Plan uses this to score the
+        Sell &amp; redeploy path — how a position's trapped capital would perform if freed and put to work elsewhere.
+      </p>
+
+      <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-700">
+        <button data-state="saving" disabled
+          class="px-4 py-2 text-sm bg-blue-400 text-white rounded-lg cursor-not-allowed opacity-90">
+          Saving…
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 5 — SAVE SUCCESS
+     Transient green check beside the button (~2.5s) + toast. "Last saved" updates.
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-green-900/40 text-green-300 border border-green-700">State 5</span>
+      <span class="text-sm text-slate-300">Save success — transient green check + toast. Cross-surface: Recovery Plan Sell &amp; redeploy un-suppresses on next load.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8 relative">
+    <!-- toast — react-hot-toast, top-right -->
+    <div class="absolute right-6 top-2 bg-slate-800 border border-slate-600 rounded-lg px-4 py-2.5 shadow-lg flex items-center gap-2">
+      <svg class="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+      <span class="text-sm text-slate-200">Target yield saved</span>
+    </div>
+
+    <div role="tablist" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h2 class="text-lg font-semibold text-white">Trading Objectives</h2>
+      <p class="text-sm text-slate-400 pb-4 mb-4 border-b border-slate-700">
+        The targets your strategy aims for. Used by the Recovery Plan.
+      </p>
+
+      <label for="ty-5" class="block text-sm text-slate-300 mb-1">Target yield</label>
+      <div class="flex items-stretch w-48">
+        <input id="ty-5" type="number" value="15"
+          class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg rounded-r-none bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+        <span aria-hidden="true"
+          class="inline-flex items-center px-2.5 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-800">%</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1 max-w-xl">
+        The annual return you expect redeployed capital to earn. The Recovery Plan uses this to score the
+        Sell &amp; redeploy path — how a position's trapped capital would perform if freed and put to work elsewhere.
+      </p>
+
+      <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-700">
+        <button class="px-4 py-2 text-sm bg-blue-400 text-white rounded-lg cursor-not-allowed opacity-90">
+          Save objective
+        </button>
+        <!-- transient inline check — settings-objectives-save-success -->
+        <span data-testid="settings-objectives-save-success" class="text-green-400" aria-label="Saved">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+        </span>
+        <span class="text-xs text-slate-400">Last saved 2:31 PM</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 6 — SAVE FAILURE
+     Dismissible red banner above the field; entered value retained for retry.
+     Generic copy only (CLAUDE.md) — no raw exception.
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-900/40 text-rose-300 border border-rose-700">State 6</span>
+      <span class="text-sm text-slate-300">Save failure — dismissible red banner. Entered value kept for retry. Generic copy.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <div role="tablist" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h2 class="text-lg font-semibold text-white">Trading Objectives</h2>
+      <p class="text-sm text-slate-400 pb-4 mb-4 border-b border-slate-700">
+        The targets your strategy aims for. Used by the Recovery Plan.
+      </p>
+
+      <!-- save-error banner — exact settings-rules-save-error treatment from TradingRulesSection -->
+      <div data-testid="settings-objectives-save-error" role="alert"
+        class="bg-red-900/30 border border-red-800 text-red-300 rounded-lg px-4 py-3 flex items-center justify-between gap-4 mb-5">
+        <span class="text-sm">Couldn't save your target yield. Please try again.</span>
+        <button class="text-xs text-red-400 hover:text-red-300" aria-label="Dismiss error">Dismiss</button>
+      </div>
+
+      <!-- field — entered value 15 RETAINED so the trader can retry without re-typing -->
+      <label for="ty-6" class="block text-sm text-slate-300 mb-1">Target yield</label>
+      <div class="flex items-stretch w-48">
+        <input id="ty-6" type="number" value="15"
+          class="w-full px-3 py-2 text-sm border border-slate-600 rounded-l-lg rounded-r-none bg-slate-700 text-slate-100 outline-none focus:ring-2 focus:ring-blue-500" />
+        <span aria-hidden="true"
+          class="inline-flex items-center px-2.5 text-xs text-slate-400 border border-l-0 border-slate-600 rounded-r-lg bg-slate-800">%</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1 max-w-xl">
+        The annual return you expect redeployed capital to earn. The Recovery Plan uses this to score the
+        Sell &amp; redeploy path — how a position's trapped capital would perform if freed and put to work elsewhere.
+      </p>
+
+      <div class="flex items-center gap-3 mt-6 pt-5 border-t border-slate-700">
+        <button class="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          Save objective
+        </button>
+        <span class="text-xs text-slate-400">You have unsaved changes</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 7 — LOADING SKELETON
+     Section's own fetch (read okr_target_yield) in flight. Skeleton bars.
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-slate-700 text-slate-300 border border-slate-600">State 7</span>
+      <span class="text-sm text-slate-300">Loading — reading the stored target yield. Skeleton placeholder.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <div role="tablist" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <!-- skeleton — SkeletonRow pattern from TradingRulesSection, scoped to one field -->
+    <div data-testid="settings-objectives-loading" class="bg-slate-800 rounded-xl p-6 border border-slate-700 animate-pulse">
+      <div class="h-5 w-44 bg-slate-700 rounded mb-4"></div>
+      <div class="space-y-2 mb-4">
+        <div class="h-3 w-24 bg-slate-700 rounded"></div>
+        <div class="h-9 w-48 bg-slate-700 rounded-lg"></div>
+        <div class="h-3 w-80 bg-slate-700 rounded"></div>
+      </div>
+      <div class="h-9 w-32 bg-slate-700 rounded-lg mt-6"></div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 8 — LOAD ERROR
+     The section's read of okr_target_yield rejected. Red block + Retry.
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-rose-900/40 text-rose-300 border border-rose-700">State 8</span>
+      <span class="text-sm text-slate-300">Load error — reading the stored value failed. Retry available.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8">
+    <div role="tablist" class="flex gap-2 mb-8 border-b border-slate-700 pb-4">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">General</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-slate-400 hover:bg-slate-800">Trading Rules</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white">Trading Objectives</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl p-6 border border-slate-700">
+      <h2 class="text-lg font-semibold text-white mb-4">Trading Objectives</h2>
+      <!-- load-error block — exact settings-rules-load-error treatment -->
+      <div data-testid="settings-objectives-load-error" role="alert"
+        class="bg-red-900/30 border border-red-800 text-red-300 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
+        <span class="text-sm">Couldn't load your target yield.</span>
+        <button class="px-3 py-1.5 text-xs border border-red-700 rounded-lg hover:bg-red-900/50">Retry</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ============================================
+     SECTION 9 — RECOVERY CTA: before / after
+     The bug, and the fix. The "Set target yield →" CTA on a suppressed
+     Sell & redeploy path. Before: dead /settings#okrs. After: /settings?tab=objectives.
+     Canonical example: SOFI, -$3,048 / -39% (issue #182 fixture).
+     ============================================ -->
+<section>
+  <div class="bg-slate-900 border-y border-slate-700">
+    <div class="max-w-3xl mx-auto px-6 py-3 flex items-center gap-3 flex-wrap">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-indigo-900/40 text-indigo-300 border border-indigo-700">State 9</span>
+      <span class="text-sm text-slate-300">Recovery CTA — the suppressed Sell &amp; redeploy path on /positions/SOFI/recovery. Before vs after the fix.</span>
+    </div>
+  </div>
+
+  <div class="max-w-3xl mx-auto px-6 py-8 space-y-6">
+    <p class="text-sm text-slate-400">
+      Context — the CTA this issue fixes. On the Recovery Plan page, the <strong>Sell &amp; redeploy</strong> path is
+      suppressed because no target yield is set. The card carries a self-remediation CTA. Below: the broken state
+      and the fixed state of that one CTA. Only the <span class="font-mono text-slate-300">href</span> changes.
+    </p>
+
+    <!-- BEFORE — dead link -->
+    <div>
+      <div class="text-[11px] font-semibold uppercase tracking-wider text-rose-400 mb-2">Before — CTA dead-ends</div>
+      <!-- suppressed RecoveryPathCard — Sell & redeploy -->
+      <div class="bg-slate-800/60 rounded-xl p-5 border border-slate-700 opacity-90">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-slate-300">Sell &amp; redeploy</h3>
+          <span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-400 border border-slate-600">Suppressed</span>
+        </div>
+        <div data-testid="recovery-path-card-sell-redeploy-suppression"
+          class="text-xs text-amber-300 bg-amber-900/20 border border-amber-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+          <span>⚠ Target yield not configured</span>
+          <!-- the dead CTA — href="/settings#okrs" routes nowhere -->
+          <a href="#" data-testid="recovery-path-card-sell-redeploy-suppression-cta"
+            class="text-blue-400 hover:text-blue-300 font-medium whitespace-nowrap line-through decoration-rose-500/70">
+            Set target yield →
+          </a>
+        </div>
+        <!-- annotation: href is the bug -->
+        <p class="text-[11px] text-rose-400 mt-2 font-mono">href="/settings#okrs" &mdash; no such anchor; dead-ends</p>
+        <div class="grid grid-cols-3 gap-3 mt-3 text-center">
+          <div><div class="text-sm font-semibold text-slate-600">—</div><div class="text-[10px] text-slate-500">Capital tied up</div></div>
+          <div><div class="text-sm font-semibold text-slate-600">—</div><div class="text-[10px] text-slate-500">Months to breakeven</div></div>
+          <div><div class="text-sm font-semibold text-slate-600">—</div><div class="text-[10px] text-slate-500">Opportunity cost</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AFTER — fixed link -->
+    <div>
+      <div class="text-[11px] font-semibold uppercase tracking-wider text-green-400 mb-2">After — CTA routes to the new tab</div>
+      <div class="bg-slate-800/60 rounded-xl p-5 border border-slate-700">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-slate-300">Sell &amp; redeploy</h3>
+          <span class="text-[11px] px-2 py-0.5 rounded-full bg-slate-700 text-slate-400 border border-slate-600">Suppressed</span>
+        </div>
+        <div class="text-xs text-amber-300 bg-amber-900/20 border border-amber-800 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+          <span>⚠ Target yield not configured</span>
+          <!-- fixed CTA — href="/settings?tab=objectives", the #235 deep-link pattern -->
+          <a href="#" class="text-blue-400 hover:text-blue-300 font-medium whitespace-nowrap">Set target yield →</a>
+        </div>
+        <p class="text-[11px] text-green-400 mt-2 font-mono">href="/settings?tab=objectives" &mdash; lands on the Trading Objectives tab</p>
+        <p class="text-[11px] text-slate-500 mt-1">
+          Once a target yield is saved and the page reloads, the backend stops emitting this suppression reason —
+          the CTA disappears and the three metrics below populate.
+        </p>
+        <div class="grid grid-cols-3 gap-3 mt-3 text-center">
+          <div><div class="text-sm font-semibold text-slate-300">$8,140</div><div class="text-[10px] text-slate-500">Capital tied up</div></div>
+          <div><div class="text-sm font-semibold text-slate-300">11 mo</div><div class="text-[10px] text-slate-500">Months to breakeven</div></div>
+          <div><div class="text-sm font-semibold text-slate-300">$977/yr</div><div class="text-[10px] text-slate-500">Opportunity cost</div></div>
+        </div>
+        <p class="text-[11px] text-slate-500 mt-2 italic">
+          (Metrics shown for illustration — they compute on the backend once okr_target_yield is set; SOFI position, −$3,048 / −39%.)
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<footer class="max-w-3xl mx-auto px-6 py-8 text-xs text-slate-500 border-t border-slate-800">
+  <p>Static design mock for Issue #207 — Settings Trading Objectives tab (Target Yield). Generated by the Designer agent, 2026-05-18.</p>
+  <p class="mt-1">Spec: <span class="font-mono">frontend/design-specs/issue-207-target-yield-objective.md</span> · Milestone V1.0.3 · Click-throughs are visual cues only.</p>
+</footer>
+
+</body>
+</html>

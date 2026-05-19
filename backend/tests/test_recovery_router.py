@@ -328,6 +328,30 @@ def test_recovery_plan_uses_default_sizing_cap_when_unset(client):
     assert payload["inputs"]["okr"]["sizing_cap_dollars"] == pytest.approx(5000.0)
 
 
+def test_recovery_plan_sell_redeploy_populated_after_target_yield_set(client):
+    """Issue #207 AC3 — once a target yield is set, the Sell & redeploy path
+    is eligible and its metrics compute (capital tied up + months to
+    breakeven), un-suppressing the path the stopgap exists to unblock."""
+    # broker_cost_basis 3800 vs a $8.00 quote on 100 shares → a realized loss,
+    # so the breakeven horizon is a positive finite number.
+    _seed_position(client, broker_cost_basis=3800.0)
+    _seed_setting(client, "okr_target_yield", "0.12")
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    payload = resp.json()
+
+    sell = next(p for p in payload["paths"] if p["path_id"] == "sell-redeploy")
+    assert sell["eligibility"] == "eligible"
+    assert sell["suppression_reason"] is None
+    # Capital tied up is computed (non-null) — not the suppressed-state blank.
+    assert sell["capital_tied_up"] is not None
+    assert sell["capital_tied_up"] >= 0
+    # A positive realized loss + a positive yield → a finite, positive
+    # expected months-to-breakeven (no longer the empty {best,expected,worst}).
+    assert sell["months_to_breakeven"]["expected"] is not None
+    assert sell["months_to_breakeven"]["expected"] > 0
+
+
 # ---------------------------------------------------------------------------
 # Quote failure → generic 500 + no str(e) leak
 # ---------------------------------------------------------------------------
