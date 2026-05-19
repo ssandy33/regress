@@ -112,6 +112,46 @@ function capturedText(status) {
   );
 }
 
+/**
+ * pnlDollarsText — the signed dollar-P&L line (issue #246, spec §3.2 / §3.5).
+ *
+ * Uses a LOCAL signed-currency formatter — `Intl`-based `formatCurrency()`
+ * cannot emit the explicit `+` prefix the spec requires on gains, and the
+ * explicit sign is an accessibility requirement (sign is not conveyed by
+ * color alone). Gain → emerald `+$22.84`; loss → red `-$12.10`; zero or
+ * unavailable (`null`/undefined — degraded path) → slate `—`.
+ */
+function pnlDollarsText(pnl) {
+  if (pnl == null || pnl === 0) {
+    return (
+      <span
+        data-testid="dashboard-leg-row-pnl"
+        data-pnl-sign="none"
+        className="text-xs tabular-nums text-slate-400"
+      >
+        —
+      </span>
+    );
+  }
+  const isGain = pnl > 0;
+  const text = isGain
+    ? `+$${pnl.toFixed(2)}`
+    : `-$${Math.abs(pnl).toFixed(2)}`;
+  return (
+    <span
+      data-testid="dashboard-leg-row-pnl"
+      data-pnl-sign={isGain ? 'gain' : 'loss'}
+      className={`text-xs tabular-nums ${
+        isGain
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : 'text-red-600 dark:text-red-400'
+      }`}
+    >
+      {text}
+    </span>
+  );
+}
+
 const RISK_VISUALS = {
   high: {
     label: 'High',
@@ -376,11 +416,18 @@ function LegRow({ leg, isExpanded, onToggle, rowRef }) {
       <span className="col-span-3 lg:col-span-2 truncate">
         {moneynessText(leg.moneyness)}
       </span>
+      {/*
+        % Capt cell — a two-line stack (#246): the % CAPT percentage on top
+        (unchanged), the signed dollar P&L below it. Stays `hidden lg:block`
+        so on mobile both lines collapse together (the dollar P&L is a scan
+        number, safe to collapse — unlike the coverage badge).
+      */}
       <span
         data-testid="dashboard-leg-row-captured"
-        className="hidden lg:block lg:col-span-1 tabular-nums"
+        className="hidden lg:block lg:col-span-1 tabular-nums leading-tight"
       >
-        {capturedText(leg.profit_target_status)}
+        <span className="block">{capturedText(leg.profit_target_status)}</span>
+        {pnlDollarsText(leg.pnl_dollars)}
       </span>
       <span
         data-testid="dashboard-leg-row-risk"
