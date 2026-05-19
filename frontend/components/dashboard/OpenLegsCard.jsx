@@ -47,14 +47,19 @@ const PILL_SHAPE = 'inline-block px-2 py-0.5 text-xs rounded-full';
  * pill (the exact recipe `dteBadgeClass` uses at `dte <= 14`). Any other
  * value (`null`/undefined — a short put or a pre-#246 payload) renders
  * nothing. The badge is severity, not scan: it carries no `hidden lg:*` and
- * survives every breakpoint. Stays pure — the InspectPanel echo wraps the
- * call in its own testid span (it does not pass an id in).
+ * survives every breakpoint.
+ *
+ * `testIdPrefix` makes the badge's `data-testid` unambiguous when the same
+ * helper is rendered at two callsites (row vs. InspectPanel echo). The
+ * default keeps the existing row testid (`dashboard-leg-row-coverage`); the
+ * InspectPanel passes a per-leg prefix so the echo is uniquely addressable
+ * (`dashboard-leg-inspect-{leg.id}-coverage`).
  */
-function coverageBadge(coverage) {
+function coverageBadge(coverage, { testIdPrefix = 'dashboard-leg-row' } = {}) {
   if (coverage === 'covered') {
     return (
       <span
-        data-testid="dashboard-leg-row-coverage"
+        data-testid={`${testIdPrefix}-coverage`}
         data-coverage="covered"
         className={`${PILL_SHAPE} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300`}
       >
@@ -65,7 +70,7 @@ function coverageBadge(coverage) {
   if (coverage === 'naked') {
     return (
       <span
-        data-testid="dashboard-leg-row-coverage"
+        data-testid={`${testIdPrefix}-coverage`}
         data-coverage="naked"
         className={`${PILL_SHAPE} bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300`}
       >
@@ -297,26 +302,28 @@ function InspectPanel({ leg }) {
       {/*
         Identity header (#246): the coverage badge is echoed top-right so a
         user inspecting a leg sees its coverage restated in context. The
-        `coverageBadge` helper stays pure — the echo wraps it in its own
-        inspect-specific testid span.
+        `coverageBadge` helper accepts a `testIdPrefix` so the echo emits
+        its own per-leg testid inside the badge — no outer wrapper span
+        (which previously collided with the row's `dashboard-leg-row-coverage`
+        testid when both rendered together).
       */}
       <div className="flex items-start justify-between gap-2">
         <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
           {leg.ticker} ${leg.strike} {optionLetter} · exp {leg.expiration} ·{' '}
           {leg.dte} DTE
         </div>
-        {leg.coverage && (
-          <span data-testid={`dashboard-leg-inspect-coverage-${leg.id}`}>
-            {coverageBadge(leg.coverage)}
-          </span>
-        )}
+        {coverageBadge(leg.coverage, {
+          testIdPrefix: `dashboard-leg-inspect-${leg.id}`,
+        })}
       </div>
       {/*
         Economics summary line (#246, spec §3.4) — four dot-separated labeled
-        figures between the identity header and the Rule-evaluation table.
-        Credit received is always real; Cost to close / P&L degrade to `—`
-        with no live mid. `formatCurrency` is used for the unsigned figures;
-        `pnlDollarsText` (a local signed helper) for the signed P&L.
+        figures between the identity header and the Rule-evaluation table:
+        Credit received · Cost to close · P&L · (% CAPT). Credit received is
+        always real; Cost to close / P&L degrade to `—` with no live mid.
+        `formatCurrency` is used for the unsigned figures; `pnlDollarsText`
+        (a local signed helper) for the signed P&L. The trailing `(N%)`
+        cross-checks the row's `% CAPT` — same rounding as `capturedText()`.
       */}
       <div
         data-testid={`dashboard-leg-inspect-economics-${leg.id}`}
@@ -354,6 +361,12 @@ function InspectPanel({ leg }) {
           <span className="text-slate-500 dark:text-slate-400">P&amp;L </span>
           {pnlDollarsText(leg.pnl_dollars)}
         </span>
+        {leg.profit_target_status &&
+          leg.profit_target_status.captured_pct != null && (
+            <span className="tabular-nums text-slate-500 dark:text-slate-400">
+              ({Math.round(leg.profit_target_status.captured_pct * 100)}%)
+            </span>
+          )}
       </div>
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
         Rule evaluation — checked against your Management Triggers

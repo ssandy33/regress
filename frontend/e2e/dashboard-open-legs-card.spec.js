@@ -446,7 +446,7 @@ test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
     await expect(pnl).toHaveClass(/text-red-600/);
   });
 
-  test('InspectPanel economics line shows credit / cost-to-close / P&L', async ({ page }) => {
+  test('InspectPanel economics line shows credit / cost-to-close / P&L / % CAPT', async ({ page }) => {
     await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [coveredLeg()] });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/dashboard');
@@ -455,10 +455,14 @@ test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
     await page.getByTestId('dashboard-leg-row').first().click();
     const economics = page.getByTestId('dashboard-leg-inspect-economics-leg-f15c');
     await expect(economics).toBeVisible();
+    // Spec §3.4 — four labeled figures dot-separated:
+    //   Credit received  $38.34  ·  Cost to close  $15.50  ·  P&L  +$22.84  (60%)
     // Credit received = pnl_dollars + cost_to_close = 22.84 + 15.50 = $38.34.
+    // % CAPT mirrors the row's value: Math.round(0.5957 * 100) = 60.
     await expect(economics).toContainText('$38.34');
     await expect(economics).toContainText('$15.50');
     await expect(economics).toContainText('+$22.84');
+    await expect(economics).toContainText('(60%)');
   });
 
   test('InspectPanel echoes the coverage badge for a naked leg', async ({ page }) => {
@@ -468,7 +472,11 @@ test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
     await page.waitForLoadState('networkidle');
 
     await page.getByTestId('dashboard-leg-row').first().click();
-    const echo = page.getByTestId('dashboard-leg-inspect-coverage-leg-sofi8c');
+    // Testid format: `dashboard-leg-inspect-{leg.id}-coverage` — emitted by
+    // `coverageBadge()` itself via `testIdPrefix` (the old outer wrapper span
+    // is gone, so the row's `dashboard-leg-row-coverage` testid is no longer
+    // duplicated when the panel expands).
+    const echo = page.getByTestId('dashboard-leg-inspect-leg-sofi8c-coverage');
     await expect(echo).toBeVisible();
     await expect(echo).toContainText('Naked');
   });

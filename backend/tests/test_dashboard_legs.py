@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from app.models.schemas import DashboardOpenLeg
 from app.services.dashboard_legs import (
     build_option_mark_index,
     build_profit_target_status,
@@ -1132,3 +1133,37 @@ class TestDeriveOpenLegsEconomics:
         assert leg["pnl_dollars"] is None
         assert leg["cost_to_close"] is None
         assert leg["premium"] == 0.521
+
+
+class TestDashboardOpenLegSchemaBackwardCompat:
+    """Schema-level guard: the V1.0.6 (#246) economics fields are optional.
+
+    A pre-#246 payload (one that predates the four new economics fields)
+    must still validate as a `DashboardOpenLeg`, with each new field
+    resolving to `None`. This protects against a future required-field
+    change that would silently break callers carrying older payload shapes
+    (legacy tests, cached fixtures, downstream consumers).
+    """
+
+    def test_dashboard_open_leg_schema_accepts_new_fields(self):
+        # A minimal payload that mirrors the pre-#246 shape — none of the
+        # four V1.0.6 economics fields are supplied.
+        old_payload = {
+            "id": "leg-1",
+            "ticker": "AAPL",
+            "type": "put",
+            "strike": 175.0,
+            "expiration": "2026-05-08",
+            "dte": 7,
+            "moneyness": None,
+            "position_id": "pos-aapl",
+            "profit_target_status": {"captured_pct": None, "state": "unknown"},
+            "assignment_risk": "low",
+            "suggested_action": "hold",
+            "earnings_in_window": False,
+        }
+        leg = DashboardOpenLeg(**old_payload)
+        assert leg.coverage is None
+        assert leg.premium is None
+        assert leg.pnl_dollars is None
+        assert leg.cost_to_close is None
