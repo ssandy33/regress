@@ -131,6 +131,34 @@ def test_dashboard_populated(client, monkeypatch):
         "app.services.dashboard.SchwabClient.get_quote", fake_get_quote
     )
 
+    # Mock Schwab option chains so the % CAPT (profit-target) signal resolves.
+    # The AAPL short put 175 was opened for a 2.25 credit (the _seed_trade
+    # default); a current mid of 0.90 → 60% of the credit captured.
+    chain_responses = {
+        "AAPL": {
+            "putExpDateMap": {
+                "2026-05-08:3": {
+                    "175.0": [{"strikePrice": 175.0, "mark": 0.90}],
+                }
+            },
+        },
+        "TSLA": {
+            "callExpDateMap": {
+                "2026-05-15:10": {
+                    "240.0": [{"strikePrice": 240.0, "mark": 1.10}],
+                }
+            },
+        },
+    }
+
+    def fake_get_option_chain(self, ticker, *args, **kwargs):
+        return chain_responses[ticker]
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        fake_get_option_chain,
+    )
+
     # Pin "today" so DTE math is deterministic.
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
@@ -206,6 +234,12 @@ def test_dashboard_populated(client, monkeypatch):
     )
     assert aapl_upcoming["decision_tag"] == "roll-or-assign"
     assert aapl_upcoming["dte"] == 3
+
+    # % CAPT is now a real value — AAPL short put 175 opened for 2.25, current
+    # mid 0.90 → (2.25 - 0.90) / 2.25 = 0.60 captured, past the 50% target.
+    aapl_leg = next(leg for leg in data["open_legs"] if leg["ticker"] == "AAPL")
+    assert aapl_leg["profit_target_status"]["state"] == "captured_50"
+    assert aapl_leg["profit_target_status"]["captured_pct"] == pytest.approx(0.60)
 
     # Recent activity contains both the trade and the session.
     kinds = {event["kind"] for event in data["recent_activity"]}
@@ -330,6 +364,94 @@ def test_dashboard_unexpected_quote_exception_does_not_500(client, monkeypatch):
     # And the failure is surfaced on data_meta so the UI can flag it.
     assert "schwab" in data["data_meta"]["sources_unavailable"]
     assert data["data_meta"]["is_stale"] is True
+
+
+def test_dashboard_option_chain_failure_degrades_gracefully(client, monkeypatch):
+    """A failed option-chain fetch flags `schwab` and degrades % CAPT to unknown.
+
+    Quotes still succeed, so moneyness resolves; only the profit-target signal
+    degrades. The dashboard must still return 200.
+    """
+    from app.services.schwab_client import SchwabClientError
+
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 174.0},
+    )
+
+    def fake_get_option_chain(self, ticker, *args, **kwargs):
+        raise SchwabClientError("simulated chain outage")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        fake_get_option_chain,
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # The chain failure is folded into the partial-outage flags.
+    assert "schwab" in data["data_meta"]["sources_unavailable"]
+    assert data["data_meta"]["is_stale"] is True
+
+    # The leg renders, but % CAPT degrades to unknown (no live mark).
+    assert len(data["open_legs"]) == 1
+    assert data["open_legs"][0]["profit_target_status"] == {
+        "captured_pct": None,
+        "state": "unknown",
+    }
+
+
+def test_dashboard_unexpected_chain_exception_does_not_500(client, monkeypatch):
+    """A non-Schwab exception escaping a per-ticker chain call must not 500.
+
+    Defense-in-depth: the chain-fetch worker catches broad Exception so a
+    malformed payload or escaped timeout cannot propagate out of
+    ThreadPoolExecutor.map and surface as a 500.
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 174.0},
+    )
+
+    def fake_get_option_chain(self, ticker, *args, **kwargs):
+        raise RuntimeError("synthetic unexpected chain failure")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        fake_get_option_chain,
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    # Surfaced as a partial outage; the dashboard still rendered.
+    assert "schwab" in data["data_meta"]["sources_unavailable"]
+    assert data["open_legs"][0]["profit_target_status"]["state"] == "unknown"
 
 
 def test_dashboard_stale_cache(client, monkeypatch):
@@ -494,6 +616,18 @@ def test_dashboard_per_leg_signals_present(client, monkeypatch):
     monkeypatch.setattr(
         "app.services.dashboard.SchwabClient.get_quote",
         lambda self, ticker: {"lastPrice": 174.0},
+    )
+    # Chain has no matching strike for the seeded leg → % CAPT stays unknown,
+    # deterministically (independent of any locally configured Schwab token).
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {
+            "putExpDateMap": {
+                "2099-12-31:99999": {
+                    "999.0": [{"strikePrice": 999.0, "mark": 1.00}],
+                }
+            }
+        },
     )
 
     pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
