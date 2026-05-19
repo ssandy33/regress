@@ -255,6 +255,90 @@ class TestAverageDownPath:
         avg = next(p for p in paths if p["path_id"] == "average-down")
         assert avg["eligibility"] == "eligible"
 
+    def test_eligible_breakeven_range_is_positive(self):
+        # Average-down now projects a deterministic breakeven by grinding
+        # wheel-CC premium on the doubled position (issue #237).
+        # SOFI: shares=100, basis=$3800, current=$8.
+        #   additional_capital = $8 * 100               = $800
+        #   new_basis_total    = $3800 + $800            = $4600
+        #   total_shares       = 100 * 2                 = 200
+        #   remaining_loss     = $4600 - $8 * 200        = $3000
+        #   monthly_premium    = 0.015 * $8 * 200        = $24
+        #   base_months        = $3000 / $24             = 125.0
+        #   best  = ceil(125.0 * 0.8) = ceil(100.0)      = 100
+        #   expected = ceil(125.0 * 1.0) = ceil(125.0)   = 125
+        #   worst = ceil(125.0 * 1.3) = ceil(162.5)      = 163
+        paths = compute_recovery_paths(
+            position=_sofi_position(),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_dollars=5000.0,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        be = avg["months_to_breakeven"]
+        assert be["expected"] is not None
+        assert be["expected"] > 0
+        assert be["best"] == 100
+        assert be["expected"] == 125
+        assert be["worst"] == 163
+
+    def test_breakeven_methodology_in_assumptions(self):
+        # The assumption blob must document the new premium-grind
+        # methodology and must NOT carry the stale "not modeled" copy.
+        paths = compute_recovery_paths(
+            position=_sofi_position(),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_dollars=5000.0,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        assumption_blob = " ".join(avg["assumptions"])
+        pct_str = f"{WHEEL_MONTHLY_PREMIUM_PCT * 100:.1f}%/month"
+        assert pct_str in assumption_blob
+        assert "premium" in assumption_blob.lower()
+        assert "doubled position" in assumption_blob.lower()
+        assert "not modeled" not in assumption_blob.lower()
+
+    def test_breakeven_collapses_only_on_zero_price_or_zero_shares(self):
+        null_range = {"best": None, "expected": None, "worst": None}
+
+        # Case A — current_price == 0 → no premium can be earned, no
+        # breakeven horizon.
+        paths_zero_price = compute_recovery_paths(
+            position=_sofi_position(),
+            current_price=0.0,
+            target_yield=0.18,
+            sizing_cap_dollars=5000.0,
+        )
+        avg_zero_price = next(
+            p for p in paths_zero_price if p["path_id"] == "average-down"
+        )
+        assert avg_zero_price["months_to_breakeven"] == null_range
+
+        # Case B — shares == 0 → doubled position is still zero shares, no
+        # premium base.
+        paths_zero_shares = compute_recovery_paths(
+            position=_sofi_position(shares=0),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_dollars=5000.0,
+        )
+        avg_zero_shares = next(
+            p for p in paths_zero_shares if p["path_id"] == "average-down"
+        )
+        assert avg_zero_shares["months_to_breakeven"] == null_range
+
+        # Case C — positive control: an eligible fixture still projects a
+        # real, non-null breakeven.
+        paths_eligible = compute_recovery_paths(
+            position=_sofi_position(),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_dollars=5000.0,
+        )
+        avg_eligible = next(p for p in paths_eligible if p["path_id"] == "average-down")
+        assert avg_eligible["months_to_breakeven"]["expected"] is not None
+
 
 # ---------------------------------------------------------------------------
 # hold-monitor

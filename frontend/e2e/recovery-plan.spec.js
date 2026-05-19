@@ -118,6 +118,28 @@ function suppressedAverageDown() {
   };
 }
 
+// Issue #237: an *eligible* average-down path that carries a real
+// `months_to_breakeven` projection (premium-grind methodology) instead of
+// the suppressed null range. The frontend must render the computed value,
+// not the `—` placeholder.
+function eligibleAverageDown() {
+  return {
+    path_id: 'average-down',
+    label: 'Average down',
+    eligibility: 'eligible',
+    suppression_reason: null,
+    capital_tied_up: 4600.0,
+    months_to_breakeven: { best: 100, expected: 125, worst: 163 },
+    opportunity_cost_vs_baseline: 144.0,
+    assumptions: [
+      'Adds $800 at $8.00/share — new basis $23 per share.',
+      'Within $5,000 sizing cap.',
+      'Breakeven projects 1.5%/month wheel-CC premium on the doubled position against the remaining loss.',
+    ],
+    narration: null,
+  };
+}
+
 function pathScores() {
   return [
     {
@@ -244,6 +266,25 @@ function noEligiblePathPayload() {
     path_scores: pathScores(),
     tie_epsilon: 1.0,
     disclaimer: DISCLAIMER,
+  };
+  return base;
+}
+
+// Issue #237: payload whose average-down path clears the sizing-cap gate and
+// therefore carries a computed `months_to_breakeven`. Swaps the suppressed
+// average-down fixture for the eligible one; the recommendation block keeps a
+// ranked entry for average-down so the card renders fully.
+function eligibleAverageDownPayload() {
+  const base = populatedPayload();
+  base.paths = [...eligiblePaths(), eligibleAverageDown()];
+  base.recommendation = {
+    ...base.recommendation,
+    ranked_paths: [
+      { path_id: 'sell-redeploy', score: 8, rank: 1, suppression_reason: null },
+      { path_id: 'wheel-cc', score: 3, rank: 2, suppression_reason: null },
+      { path_id: 'hold-monitor', score: 3, rank: 3, suppression_reason: null },
+      { path_id: 'average-down', score: 3, rank: 4, suppression_reason: null },
+    ],
   };
   return base;
 }
@@ -508,6 +549,27 @@ test.describe('Recovery Plan panel', () => {
     await expect(cta).toHaveAttribute('href', '/settings?tab=rules');
     const href = await cta.getAttribute('href');
     expect(href).not.toContain('#okrs');
+  });
+
+  test('average-down card shows a computed breakeven, not —', async ({ page }) => {
+    // Issue #237: when the average-down path clears the sizing-cap gate it now
+    // carries a real `months_to_breakeven` projection. The card's
+    // breakeven-expected row must render the computed "<n> mo" value, never
+    // the `formatMonths(null)` → `—` placeholder.
+    await mockRecoveryPlan(page, eligibleAverageDownPayload());
+    await openRecoveryPlan(page);
+
+    const card = page.getByTestId('recovery-path-card-average-down');
+    await expect(card).toBeVisible();
+    await expect(card).toHaveAttribute('data-eligibility', 'eligible');
+
+    const breakevenExpected = page.getByTestId(
+      'recovery-path-card-average-down-breakeven-expected',
+    );
+    await expect(breakevenExpected).toBeVisible();
+    // The eligible fixture projects expected = 125 months.
+    await expect(breakevenExpected).toContainText('125 mo');
+    await expect(breakevenExpected).not.toContainText('—');
   });
 
   test('assumptions panel attributes the sizing cap to Trading Rules', async ({
