@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import Card from '../common/Card';
 import EmptyState from '../common/EmptyState';
-import { formatPercent } from '../../utils/formatters';
+import { formatCurrency, formatPercent } from '../../utils/formatters';
 
 /**
  * OpenLegsCard — triage-grade table of every open short option leg, and the
@@ -41,6 +41,52 @@ function dteBadgeClass(dte) {
   return 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200';
 }
 
+const PILL_SHAPE = 'inline-block px-2 py-0.5 text-xs rounded-full';
+
+/**
+ * coverageBadge — the per-leg covered/naked pill (issue #246, spec §2).
+ *
+ * Pure render helper. `covered` → quiet emerald pill; `naked` → amber `⚠`
+ * pill (the exact recipe `dteBadgeClass` uses at `dte <= 14`). Any other
+ * value (`null`/undefined — a short put or a pre-#246 payload) renders
+ * nothing. The badge is severity, not scan: it carries no `hidden lg:*` and
+ * survives every breakpoint.
+ *
+ * `testIdPrefix` makes the badge's `data-testid` unambiguous when the same
+ * helper is rendered at two callsites (row vs. InspectPanel echo). The
+ * default keeps the existing row testid (`dashboard-leg-row-coverage`); the
+ * InspectPanel passes a per-leg prefix so the echo is uniquely addressable
+ * (`dashboard-leg-inspect-{leg.id}-coverage`).
+ */
+function coverageBadge(coverage, { testIdPrefix = 'dashboard-leg-row' } = {}) {
+  if (coverage === 'covered') {
+    return (
+      <span
+        data-testid={`${testIdPrefix}-coverage`}
+        data-coverage="covered"
+        className={`${PILL_SHAPE} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300`}
+      >
+        Covered
+      </span>
+    );
+  }
+  if (coverage === 'naked') {
+    return (
+      <span
+        data-testid={`${testIdPrefix}-coverage`}
+        data-coverage="naked"
+        className={`${PILL_SHAPE} bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300`}
+      >
+        <span aria-hidden="true" className="mr-0.5">
+          ⚠
+        </span>
+        Naked
+      </span>
+    );
+  }
+  return null;
+}
+
 function moneynessText(moneyness) {
   if (!moneyness) return <span className="text-slate-400">—</span>;
   if (moneyness.state === 'ITM') {
@@ -70,6 +116,46 @@ function capturedText(status) {
   return (
     <span className="tabular-nums text-slate-700 dark:text-slate-200">
       {Math.round(status.captured_pct * 100)}%
+    </span>
+  );
+}
+
+/**
+ * pnlDollarsText — the signed dollar-P&L line (issue #246, spec §3.2 / §3.5).
+ *
+ * Uses a LOCAL signed-currency formatter — `Intl`-based `formatCurrency()`
+ * cannot emit the explicit `+` prefix the spec requires on gains, and the
+ * explicit sign is an accessibility requirement (sign is not conveyed by
+ * color alone). Gain → emerald `+$22.84`; loss → red `-$12.10`; zero or
+ * unavailable (`null`/undefined — degraded path) → slate `—`.
+ */
+function pnlDollarsText(pnl) {
+  if (pnl == null || pnl === 0) {
+    return (
+      <span
+        data-testid="dashboard-leg-row-pnl"
+        data-pnl-sign="none"
+        className="text-xs tabular-nums text-slate-400"
+      >
+        —
+      </span>
+    );
+  }
+  const isGain = pnl > 0;
+  const text = isGain
+    ? `+$${pnl.toFixed(2)}`
+    : `-$${Math.abs(pnl).toFixed(2)}`;
+  return (
+    <span
+      data-testid="dashboard-leg-row-pnl"
+      data-pnl-sign={isGain ? 'gain' : 'loss'}
+      className={`text-xs tabular-nums ${
+        isGain
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : 'text-red-600 dark:text-red-400'
+      }`}
+    >
+      {text}
     </span>
   );
 }
@@ -193,6 +279,16 @@ function RuleStatusCell({ leg, rule }) {
  */
 function InspectPanel({ leg }) {
   const optionLetter = leg.type === 'put' ? 'P' : 'C';
+  // Credit received as whole-position dollars, so `Credit − Cost = P&L`
+  // reconciles on screen (#246, spec §3.4). When both dollar figures are
+  // present they reconcile by construction (pnl + cost = premium×100×qty);
+  // a degraded leg with no mid falls back to the per-contract scale.
+  let creditReceived = null;
+  if (leg.pnl_dollars != null && leg.cost_to_close != null) {
+    creditReceived = leg.pnl_dollars + leg.cost_to_close;
+  } else if (leg.premium != null) {
+    creditReceived = leg.premium * 100;
+  }
   const verdict = leg.verdict || 'hold';
   // A "closing" verdict gets a "Buy to close" CTA; a quiet/review leg does not.
   const showCloseCta =
@@ -206,9 +302,74 @@ function InspectPanel({ leg }) {
       data-testid={`dashboard-leg-inspect-${leg.id}`}
       className="col-span-12 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg mt-1 mb-2 p-4"
     >
-      <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
-        {leg.ticker} ${leg.strike} {optionLetter} · exp {leg.expiration} ·{' '}
-        {leg.dte} DTE
+      {/*
+        Identity header (#246): the coverage badge is echoed top-right so a
+        user inspecting a leg sees its coverage restated in context. The
+        `coverageBadge` helper accepts a `testIdPrefix` so the echo emits
+        its own per-leg testid inside the badge — no outer wrapper span
+        (which previously collided with the row's `dashboard-leg-row-coverage`
+        testid when both rendered together).
+      */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+          {leg.ticker} ${leg.strike} {optionLetter} · exp {leg.expiration} ·{' '}
+          {leg.dte} DTE
+        </div>
+        {coverageBadge(leg.coverage, {
+          testIdPrefix: `dashboard-leg-inspect-${leg.id}`,
+        })}
+      </div>
+      {/*
+        Economics summary line (#246, spec §3.4) — four dot-separated labeled
+        figures between the identity header and the Rule-evaluation table:
+        Credit received · Cost to close · P&L · (% CAPT). Credit received is
+        always real; Cost to close / P&L degrade to `—` with no live mid.
+        `formatCurrency` is used for the unsigned figures; `pnlDollarsText`
+        (a local signed helper) for the signed P&L. The trailing `(N%)`
+        cross-checks the row's `% CAPT` — same rounding as `capturedText()`.
+      */}
+      <div
+        data-testid={`dashboard-leg-inspect-economics-${leg.id}`}
+        className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-3 mt-1"
+      >
+        <span>
+          <span className="text-slate-500 dark:text-slate-400">
+            Credit received{' '}
+          </span>
+          <span className="tabular-nums text-slate-700 dark:text-slate-200">
+            {creditReceived == null ? '—' : formatCurrency(creditReceived)}
+          </span>
+        </span>
+        <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
+          ·
+        </span>
+        <span>
+          <span className="text-slate-500 dark:text-slate-400">
+            Cost to close{' '}
+          </span>
+          <span
+            className={`tabular-nums ${
+              leg.cost_to_close == null
+                ? 'text-slate-400'
+                : 'text-slate-700 dark:text-slate-200'
+            }`}
+          >
+            {leg.cost_to_close == null ? '—' : formatCurrency(leg.cost_to_close)}
+          </span>
+        </span>
+        <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">
+          ·
+        </span>
+        <span>
+          <span className="text-slate-500 dark:text-slate-400">P&amp;L </span>
+          {pnlDollarsText(leg.pnl_dollars)}
+        </span>
+        {leg.profit_target_status &&
+          leg.profit_target_status.captured_pct != null && (
+            <span className="tabular-nums text-slate-500 dark:text-slate-400">
+              ({Math.round(leg.profit_target_status.captured_pct * 100)}%)
+            </span>
+          )}
       </div>
       <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
         Rule evaluation — checked against your Management Triggers
@@ -302,8 +463,18 @@ function LegRow({ leg, isExpanded, onToggle }) {
       <span className="col-span-1 lg:col-span-1 font-semibold text-slate-900 dark:text-white">
         {leg.ticker}
       </span>
-      <span className="col-span-2 lg:col-span-1 tabular-nums text-slate-700 dark:text-slate-200">
-        {leg.strike} {leg.type === 'put' ? 'P' : 'C'}
+      {/*
+        Strike cell — a flex row so the coverage badge (#246) sits inline,
+        right of the strike. `tabular-nums` is moved to an inner span so it
+        applies to the number only, not the badge. Grid-neutral: no
+        `col-span` change. The badge carries no `hidden lg:*` — it survives
+        mobile (severity, not scan); `flex-wrap` handles a narrow cell.
+      */}
+      <span className="col-span-2 lg:col-span-1 flex items-center gap-1.5 flex-wrap text-slate-700 dark:text-slate-200">
+        <span className="tabular-nums">
+          {leg.strike} {leg.type === 'put' ? 'P' : 'C'}
+        </span>
+        {coverageBadge(leg.coverage)}
       </span>
       <span className="col-span-3 lg:col-span-2 tabular-nums text-slate-600 dark:text-slate-300 flex items-center gap-1">
         {leg.expiration}
@@ -327,11 +498,18 @@ function LegRow({ leg, isExpanded, onToggle }) {
       <span className="col-span-3 lg:col-span-2 truncate">
         {moneynessText(leg.moneyness)}
       </span>
+      {/*
+        % Capt cell — a two-line stack (#246): the % CAPT percentage on top
+        (unchanged), the signed dollar P&L below it. Stays `hidden lg:block`
+        so on mobile both lines collapse together (the dollar P&L is a scan
+        number, safe to collapse — unlike the coverage badge).
+      */}
       <span
         data-testid="dashboard-leg-row-captured"
-        className="hidden lg:block lg:col-span-1 tabular-nums"
+        className="hidden lg:block lg:col-span-1 tabular-nums leading-tight"
       >
-        {capturedText(leg.profit_target_status)}
+        <span className="block">{capturedText(leg.profit_target_status)}</span>
+        {pnlDollarsText(leg.pnl_dollars)}
       </span>
       <span
         data-testid="dashboard-leg-row-risk"
@@ -358,7 +536,7 @@ function HeaderRow() {
       <span className="col-span-3 lg:col-span-2">Exp</span>
       <span className="col-span-2 lg:col-span-1">DTE</span>
       <span className="col-span-3 lg:col-span-2">Moneyness</span>
-      <span className="hidden lg:block lg:col-span-1">% Capt</span>
+      <span className="hidden lg:block lg:col-span-1">% Capt / P&amp;L</span>
       <span className="hidden lg:block lg:col-span-1">Risk</span>
       <span className="hidden lg:block lg:col-span-2">Action</span>
     </div>

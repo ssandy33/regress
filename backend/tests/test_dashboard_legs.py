@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from app.models.schemas import DashboardOpenLeg
 from app.services.dashboard_legs import (
     build_option_mark_index,
     build_profit_target_status,
@@ -13,6 +14,7 @@ from app.services.dashboard_legs import (
     compute_earnings_in_window,
     compute_moneyness,
     compute_suggested_action,
+    derive_leg_economics,
     derive_open_legs,
     filter_upcoming,
     format_decision_reason,
@@ -451,6 +453,175 @@ class TestProfitTargetStatusBuilder:
         assert result["state"] == "in_progress"
 
 
+class TestDeriveLegEconomics:
+    """Pure coverage + dollar-economics derivation for an open leg (#246)."""
+
+    def test_covered_call_when_shares_held(self):
+        # A short call against shares the user holds → covered.
+        result = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=0.3834,
+            current_mid=0.155,
+            quantity=1,
+        )
+        assert result["coverage"] == "covered"
+
+    def test_naked_call_when_zero_shares(self):
+        # A short call with no shares to deliver → naked (the warning state).
+        result = derive_leg_economics(
+            option_type="call",
+            position_shares=0,
+            premium=0.3834,
+            current_mid=0.155,
+            quantity=1,
+        )
+        assert result["coverage"] == "naked"
+
+    def test_short_put_never_naked(self):
+        # A cash-secured put is not "naked" — coverage is a short-call axis.
+        result = derive_leg_economics(
+            option_type="put",
+            position_shares=0,
+            premium=2.25,
+            current_mid=1.00,
+            quantity=1,
+        )
+        assert result["coverage"] is None
+
+    def test_worked_example_pnl_and_cost(self):
+        # The F 15C worked example from the issue / spec §1.2.
+        # premium 0.3834, mid 0.155, quantity 1 → P&L +$22.84, cost $15.50.
+        result = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=0.3834,
+            current_mid=0.155,
+            quantity=1,
+        )
+        assert result["pnl_dollars"] == 22.84
+        assert result["cost_to_close"] == 15.50
+        assert result["premium"] == 0.3834
+
+    def test_pnl_reconciles_with_captured_pct(self):
+        # The whole-position $ P&L must agree with the per-share % CAPT — they
+        # are computed by two different functions but share the same inputs,
+        # so they must reconcile. (The F 15C example rounds to 60%, not the
+        # spec's loosely-stated 59% — 22.84 / 38.34 = 59.57%; both the
+        # dollars-derived and the captured_pct-derived value round to 60.)
+        premium, current_mid, quantity = 0.3834, 0.155, 1
+        econ = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=premium,
+            current_mid=current_mid,
+            quantity=quantity,
+        )
+        status = build_profit_target_status(premium=premium, current_mid=current_mid)
+        captured_from_dollars = round(
+            econ["pnl_dollars"] / (premium * 100 * quantity) * 100
+        )
+        assert captured_from_dollars == round(status["captured_pct"] * 100) == 60
+
+    def test_quantity_scales_dollars(self):
+        # Whole-position dollars scale linearly with the contract count.
+        one = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=0.3834,
+            current_mid=0.155,
+            quantity=1,
+        )
+        three = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=0.3834,
+            current_mid=0.155,
+            quantity=3,
+        )
+        assert three["pnl_dollars"] == pytest.approx(one["pnl_dollars"] * 3)
+        assert three["cost_to_close"] == pytest.approx(one["cost_to_close"] * 3)
+
+    def test_no_mid_degrades_pnl_and_cost(self):
+        # No live mid → dollars are None, but coverage + premium survive.
+        result = derive_leg_economics(
+            option_type="call",
+            position_shares=0,
+            premium=0.3834,
+            current_mid=None,
+            quantity=1,
+        )
+        assert result["pnl_dollars"] is None
+        assert result["cost_to_close"] is None
+        assert result["coverage"] == "naked"
+        assert result["premium"] == 0.3834
+
+    def test_underwater_leg_negative_pnl(self):
+        # current_mid > premium → a paper loss: P&L must be negative, not
+        # abs()'d or floored at 0. Reconciles with the negative % CAPT.
+        premium, current_mid, quantity = 1.00, 1.30, 1
+        result = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=premium,
+            current_mid=current_mid,
+            quantity=quantity,
+        )
+        assert result["pnl_dollars"] == -30.0
+        assert result["cost_to_close"] == 130.0
+        status = build_profit_target_status(premium=premium, current_mid=current_mid)
+        captured_from_dollars = round(
+            result["pnl_dollars"] / (premium * 100 * quantity) * 100
+        )
+        assert captured_from_dollars == round(status["captured_pct"] * 100) == -30
+
+    @pytest.mark.parametrize("dte", [-1, -10])
+    def test_expired_leg_degrades_economics(self, dte):
+        # An expired leg (dte < 0) mirrors build_profit_target_status's guard —
+        # the dollars degrade to None so the panel never shows P&L +$X (—%).
+        result = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=0.3834,
+            current_mid=0.155,
+            dte=dte,
+            quantity=1,
+        )
+        assert result["pnl_dollars"] is None
+        assert result["cost_to_close"] is None
+        # Coverage still derives — it depends only on shares.
+        assert result["coverage"] == "covered"
+
+    @pytest.mark.parametrize("quantity", [0, None])
+    def test_bad_quantity_degrades_economics(self, quantity):
+        # A malformed quantity degrades the dollar figures to None rather than
+        # fabricating a quantity-1 value — and never raises.
+        result = derive_leg_economics(
+            option_type="call",
+            position_shares=100,
+            premium=0.3834,
+            current_mid=0.155,
+            quantity=quantity,
+        )
+        assert result["pnl_dollars"] is None
+        assert result["cost_to_close"] is None
+        # Coverage is unaffected by a bad quantity.
+        assert result["coverage"] == "covered"
+
+    def test_non_credit_premium_degrades_economics(self):
+        # premium <= 0 mirrors build_profit_target_status's guard.
+        for premium in (0.0, -1.0, None):
+            result = derive_leg_economics(
+                option_type="call",
+                position_shares=100,
+                premium=premium,
+                current_mid=0.155,
+                quantity=1,
+            )
+            assert result["pnl_dollars"] is None
+            assert result["cost_to_close"] is None
+
+
 class TestBuildOptionMarkIndex:
     """Flatten raw Schwab option chains into the flat mid-price index (#240)."""
 
@@ -820,3 +991,215 @@ class TestDeriveOpenLegsRuleMonitor:
             expiration_warning_days=10,
         )
         assert legs[0]["verdict"] == "expiration"
+
+
+class TestDeriveOpenLegsEconomics:
+    """Coverage + dollar-economics keys attached to each leg (#246)."""
+
+    def _position(
+        self,
+        ticker: str,
+        position_id: str,
+        trades: list[dict],
+        shares: int = 0,
+    ) -> dict:
+        return {
+            "id": position_id,
+            "ticker": ticker,
+            "shares": shares,
+            "trades": trades,
+        }
+
+    def test_covered_call_leg_carries_economics(self):
+        # A short call against 100 held shares, with a live mark — the F 15C
+        # worked example surfaced through derive_open_legs.
+        positions = [
+            self._position(
+                "F",
+                "p-f",
+                [
+                    {
+                        "id": "t-f15c",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2026-06-26",
+                        "premium": 0.3834,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+                shares=100,
+            )
+        ]
+        option_marks = {("F", "call", 15.0, "2026-06-26"): 0.155}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"F": 13.50},
+            today=date(2026, 5, 19),
+            option_marks=option_marks,
+        )
+        leg = legs[0]
+        assert leg["coverage"] == "covered"
+        assert leg["premium"] == 0.3834
+        assert leg["pnl_dollars"] == 22.84
+        assert leg["cost_to_close"] == 15.50
+
+    def test_naked_call_leg_when_no_shares(self):
+        # A short call on a position holding 0 shares → naked.
+        positions = [
+            self._position(
+                "SOFI",
+                "p-sofi",
+                [
+                    {
+                        "id": "t-sofi8c",
+                        "trade_type": "sell_call",
+                        "strike": 8.0,
+                        "expiration": "2026-06-12",
+                        "premium": 0.41,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+                shares=0,
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"SOFI": 7.50},
+            today=date(2026, 5, 19),
+        )
+        assert legs[0]["coverage"] == "naked"
+
+    def test_short_put_leg_has_no_coverage(self):
+        # A cash-secured put always has coverage None, even with 0 shares.
+        positions = [
+            self._position(
+                "AAPL",
+                "p-aapl",
+                [
+                    {
+                        "id": "t-aapl185p",
+                        "trade_type": "sell_put",
+                        "strike": 185.0,
+                        "expiration": "2026-07-10",
+                        "premium": 2.10,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+                shares=0,
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 200.0},
+            today=date(2026, 5, 19),
+        )
+        assert legs[0]["coverage"] is None
+
+    def test_wheel_position_per_leg_coverage(self):
+        # One wheel position holding 100 shares carries both a sell_put and a
+        # sell_call leg — coverage is derived per-leg, not per-position: the
+        # call leg reads covered, the put leg reads None, from the same shares.
+        positions = [
+            self._position(
+                "TSLA",
+                "p-tsla",
+                [
+                    {
+                        "id": "t-call",
+                        "trade_type": "sell_call",
+                        "strike": 260.0,
+                        "expiration": "2026-06-19",
+                        "premium": 3.00,
+                        "quantity": 1,
+                        "closed_at": None,
+                    },
+                    {
+                        "id": "t-put",
+                        "trade_type": "sell_put",
+                        "strike": 220.0,
+                        "expiration": "2026-06-19",
+                        "premium": 2.50,
+                        "quantity": 1,
+                        "closed_at": None,
+                    },
+                ],
+                shares=100,
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"TSLA": 240.0},
+            today=date(2026, 5, 19),
+        )
+        by_id = {leg["id"]: leg for leg in legs}
+        assert by_id["t-call"]["coverage"] == "covered"
+        assert by_id["t-put"]["coverage"] is None
+
+    def test_degraded_leg_keeps_coverage_drops_dollars(self):
+        # No option mark for the leg → pnl_dollars / cost_to_close degrade to
+        # None, but the naked coverage badge (from shares) still derives.
+        positions = [
+            self._position(
+                "RIVN",
+                "p-rivn",
+                [
+                    {
+                        "id": "t-rivn13c",
+                        "trade_type": "sell_call",
+                        "strike": 13.0,
+                        "expiration": "2026-06-19",
+                        "premium": 0.521,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+                shares=0,
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"RIVN": 12.0},
+            today=date(2026, 5, 19),
+        )
+        leg = legs[0]
+        assert leg["coverage"] == "naked"
+        assert leg["pnl_dollars"] is None
+        assert leg["cost_to_close"] is None
+        assert leg["premium"] == 0.521
+
+
+class TestDashboardOpenLegSchemaBackwardCompat:
+    """Schema-level guard: the V1.0.6 (#246) economics fields are optional.
+
+    A pre-#246 payload (one that predates the four new economics fields)
+    must still validate as a `DashboardOpenLeg`, with each new field
+    resolving to `None`. This protects against a future required-field
+    change that would silently break callers carrying older payload shapes
+    (legacy tests, cached fixtures, downstream consumers).
+    """
+
+    def test_dashboard_open_leg_schema_accepts_new_fields(self):
+        # A minimal payload that mirrors the pre-#246 shape — none of the
+        # four V1.0.6 economics fields are supplied.
+        old_payload = {
+            "id": "leg-1",
+            "ticker": "AAPL",
+            "type": "put",
+            "strike": 175.0,
+            "expiration": "2026-05-08",
+            "dte": 7,
+            "moneyness": None,
+            "position_id": "pos-aapl",
+            "profit_target_status": {"captured_pct": None, "state": "unknown"},
+            "assignment_risk": "low",
+            "suggested_action": "hold",
+            "earnings_in_window": False,
+        }
+        leg = DashboardOpenLeg(**old_payload)
+        assert leg.coverage is None
+        assert leg.premium is None
+        assert leg.pnl_dollars is None
+        assert leg.cost_to_close is None

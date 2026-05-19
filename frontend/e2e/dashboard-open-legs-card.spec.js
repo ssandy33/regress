@@ -121,6 +121,13 @@ function makeLeg(overrides = {}) {
         ? 'No management rule has triggered for this leg yet.'
         : 'Your rule triggered.',
     triggered_rules: makeTriggeredRules(verdict),
+    // V1.0.6 (#246) — coverage severity + dollar economics. Default to the
+    // pre-#246 degraded shape so existing tests keep a defined leg; the
+    // OpenLegsCard helpers no-op gracefully on these nulls.
+    coverage: null,
+    premium: null,
+    pnl_dollars: null,
+    cost_to_close: null,
     ...overrides,
   };
 }
@@ -301,5 +308,214 @@ test.describe('OpenLegsCard (V0.5 — triage columns)', () => {
     await expect(row).toHaveAttribute('aria-expanded', 'true');
     // Clicking expands in place — the page stays on /dashboard.
     await expect(page).toHaveURL(/\/dashboard$/);
+  });
+});
+
+/**
+ * E2E for issue #246 — covered/naked coverage badge + dollar P&L.
+ *
+ * Covers AC:
+ *   - Each row shows a covered/naked indicator (Strike-cell badge).
+ *   - The naked short call is visually distinct (amber `⚠ Naked`).
+ *   - A covered call renders a distinct emerald badge — not an implied blank.
+ *   - Short puts render no coverage badge.
+ *   - Dollar P&L is surfaced in the row (signed, valence-colored).
+ *   - The InspectPanel surfaces credit / cost-to-close / P&L + a coverage echo.
+ *   - The coverage badge survives the mobile breakpoint; the dollar P&L
+ *     collapses with the `% Capt` cell.
+ *   - Degraded path (no live mid) keeps the badge, shows `—` for the dollars.
+ */
+test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
+  // The F 15C covered worked example from the issue / spec §1.2.
+  function coveredLeg(overrides = {}) {
+    return makeLeg({
+      id: 'leg-f15c',
+      ticker: 'F',
+      type: 'call',
+      strike: 15.0,
+      expiration: '2026-06-26',
+      dte: 38,
+      moneyness: { state: 'OTM', distance_pct: 0.124, distance_dollars: 1.86 },
+      profit_target_status: { captured_pct: 0.5957, state: 'captured_50' },
+      assignment_risk: 'low',
+      verdict: 'profit_take_review',
+      coverage: 'covered',
+      premium: 0.3834,
+      pnl_dollars: 22.84,
+      cost_to_close: 15.5,
+      ...overrides,
+    });
+  }
+
+  function nakedLeg(overrides = {}) {
+    return makeLeg({
+      id: 'leg-sofi8c',
+      ticker: 'SOFI',
+      type: 'call',
+      strike: 8.0,
+      expiration: '2026-06-12',
+      dte: 24,
+      moneyness: { state: 'OTM', distance_pct: 0.041, distance_dollars: 0.33 },
+      profit_target_status: { captured_pct: 0.44, state: 'in_progress' },
+      assignment_risk: 'low',
+      verdict: 'hold',
+      coverage: 'naked',
+      premium: 0.41,
+      pnl_dollars: 18.06,
+      cost_to_close: 22.94,
+      ...overrides,
+    });
+  }
+
+  test('coverage badge renders "Covered" for a covered short call', async ({ page }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [coveredLeg()] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const badge = page.getByTestId('dashboard-leg-row-coverage').first();
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('data-coverage', 'covered');
+    await expect(badge).toContainText('Covered');
+  });
+
+  test('coverage badge renders "⚠ Naked" for a naked short call', async ({ page }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [nakedLeg()] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const badge = page.getByTestId('dashboard-leg-row-coverage').first();
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('data-coverage', 'naked');
+    await expect(badge).toContainText('Naked');
+    // Amber warning register — not red.
+    await expect(badge).toHaveClass(/bg-yellow-100/);
+  });
+
+  test('covered and naked legs with identical DTE/moneyness render distinct badges', async ({
+    page,
+  }) => {
+    // Same DTE + moneyness — only coverage differs. The badge is the signal.
+    const moneyness = { state: 'OTM', distance_pct: 0.05, distance_dollars: 1 };
+    const covered = coveredLeg({ id: 'leg-cov', dte: 30, moneyness });
+    const naked = nakedLeg({ id: 'leg-nak', dte: 30, moneyness });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [covered, naked] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const badges = page.getByTestId('dashboard-leg-row-coverage');
+    await expect(badges).toHaveCount(2);
+    await expect(badges.nth(0)).toHaveAttribute('data-coverage', 'covered');
+    await expect(badges.nth(1)).toHaveAttribute('data-coverage', 'naked');
+  });
+
+  test('no coverage badge renders on a short put', async ({ page }) => {
+    const put = makeLeg({ id: 'leg-put', type: 'put', coverage: null });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [put] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByTestId('dashboard-leg-row-coverage')).toHaveCount(0);
+  });
+
+  test('dollar P&L line renders the worked-example gain in emerald', async ({ page }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [coveredLeg()] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const pnl = page.getByTestId('dashboard-leg-row-pnl').first();
+    await expect(pnl).toBeVisible();
+    await expect(pnl).toHaveText('+$22.84');
+    await expect(pnl).toHaveAttribute('data-pnl-sign', 'gain');
+  });
+
+  test('dollar P&L renders a loss in red with an explicit minus sign', async ({ page }) => {
+    const loss = coveredLeg({ id: 'leg-loss', pnl_dollars: -118.5 });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [loss] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const pnl = page.getByTestId('dashboard-leg-row-pnl').first();
+    await expect(pnl).toHaveText('-$118.50');
+    await expect(pnl).toHaveAttribute('data-pnl-sign', 'loss');
+    await expect(pnl).toHaveClass(/text-red-600/);
+  });
+
+  test('InspectPanel economics line shows credit / cost-to-close / P&L / % CAPT', async ({ page }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [coveredLeg()] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByTestId('dashboard-leg-row').first().click();
+    const economics = page.getByTestId('dashboard-leg-inspect-economics-leg-f15c');
+    await expect(economics).toBeVisible();
+    // Spec §3.4 — four labeled figures dot-separated:
+    //   Credit received  $38.34  ·  Cost to close  $15.50  ·  P&L  +$22.84  (60%)
+    // Credit received = pnl_dollars + cost_to_close = 22.84 + 15.50 = $38.34.
+    // % CAPT mirrors the row's value: Math.round(0.5957 * 100) = 60.
+    await expect(economics).toContainText('$38.34');
+    await expect(economics).toContainText('$15.50');
+    await expect(economics).toContainText('+$22.84');
+    await expect(economics).toContainText('(60%)');
+  });
+
+  test('InspectPanel echoes the coverage badge for a naked leg', async ({ page }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [nakedLeg()] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByTestId('dashboard-leg-row').first().click();
+    // Testid format: `dashboard-leg-inspect-{leg.id}-coverage` — emitted by
+    // `coverageBadge()` itself via `testIdPrefix` (the old outer wrapper span
+    // is gone, so the row's `dashboard-leg-row-coverage` testid is no longer
+    // duplicated when the panel expands).
+    const echo = page.getByTestId('dashboard-leg-inspect-leg-sofi8c-coverage');
+    await expect(echo).toBeVisible();
+    await expect(echo).toContainText('Naked');
+  });
+
+  test('coverage badge survives the mobile breakpoint; dollar P&L collapses', async ({
+    page,
+  }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [nakedLeg()] });
+    await page.setViewportSize({ width: 600, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    // The naked warning is a safety signal — it must reach mobile users.
+    await expect(page.getByTestId('dashboard-leg-row-coverage').first()).toBeVisible();
+    // The dollar P&L lives in the `hidden lg:block` % Capt cell — it collapses.
+    await expect(page.getByTestId('dashboard-leg-row-pnl').first()).not.toBeVisible();
+  });
+
+  test('degraded leg — no live mid — keeps the badge, shows — for P&L', async ({ page }) => {
+    // Coverage derives from shares (still naked); the dollars degrade to null.
+    const degraded = nakedLeg({
+      id: 'leg-rivn',
+      ticker: 'RIVN',
+      profit_target_status: { captured_pct: null, state: 'unknown' },
+      pnl_dollars: null,
+      cost_to_close: null,
+    });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [degraded] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    // The naked badge must not be hidden by a missing mid.
+    const badge = page.getByTestId('dashboard-leg-row-coverage').first();
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('data-coverage', 'naked');
+    // P&L degrades to the em-dash.
+    const pnl = page.getByTestId('dashboard-leg-row-pnl').first();
+    await expect(pnl).toHaveText('—');
+    await expect(pnl).toHaveAttribute('data-pnl-sign', 'none');
   });
 });

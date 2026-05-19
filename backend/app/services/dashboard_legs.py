@@ -227,6 +227,87 @@ def build_profit_target_status(
     return {"captured_pct": captured_pct, "state": state}
 
 
+# Standard equity-option contract multiplier — one contract is 100 shares.
+OPTION_MULTIPLIER = 100
+
+
+def derive_leg_economics(
+    option_type: Literal["put", "call"],
+    position_shares: int,
+    premium: float | None,
+    current_mid: float | None,
+    dte: int = 9999,
+    quantity: int | None = 1,
+) -> dict:
+    """Return the coverage + dollar-economics payload for one open leg (#246).
+
+    ``coverage`` is derived from the ``shares`` key on the position dict, not
+    from any live option quote, so it survives the degraded path:
+    - short call & ``position_shares > 0``  → ``"covered"``
+    - short call & ``position_shares == 0`` → ``"naked"``
+    - a short put                           → ``None``
+
+    Coverage is binary — there is no "partially covered" state (a short 2-call
+    leg against 100 shares still reads ``"covered"``).
+
+    ``pnl_dollars`` and ``cost_to_close`` are whole-position dollars
+    (per-share value × :data:`OPTION_MULTIPLIER` × quantity) — the figures that
+    reconcile with broker account numbers. They are **newly derived** here:
+    :func:`build_profit_target_status` works entirely in per-share ratios and
+    never holds a dollar value. Both degrade to ``None`` whenever ``% CAPT``
+    would be unavailable — mirroring :func:`build_profit_target_status`'s full
+    guard set (``current_mid``/``premium`` missing, ``premium <= 0``,
+    ``dte < 0``) — so the InspectPanel can never show a contradictory
+    ``P&L +$X (—%)``. A malformed ``quantity`` of ``0``/``None`` also degrades
+    the dollar figures to ``None`` rather than fabricating a quantity-1 value.
+
+    ``premium`` is echoed through for the InspectPanel "Credit received" line;
+    it is independent of the economics guard — it is the booked credit, always
+    known when the trade carries one.
+
+    Args:
+        option_type: ``"put"`` or ``"call"`` for this leg.
+        position_shares: Share count on the linked position (the ``shares``
+            key on the position dict).
+        premium: Per-share credit received at open (``Trade.premium``).
+        current_mid: Current per-share option mid; ``None`` with no live mark.
+        dte: Days to expiration. ``dte < 0`` (expired) degrades the economics.
+        quantity: Contract count (``Trade.quantity``). ``0``/``None`` degrades
+            the economics.
+
+    Returns:
+        ``{"coverage", "premium", "pnl_dollars", "cost_to_close"}``.
+    """
+    if option_type == "call":
+        coverage: Literal["covered", "naked"] | None = (
+            "covered" if position_shares > 0 else "naked"
+        )
+    else:
+        coverage = None
+
+    qty = quantity if (quantity and quantity > 0) else None
+    economics_unavailable = (
+        current_mid is None
+        or premium is None
+        or premium <= 0
+        or dte < 0
+        or qty is None
+    )
+    if economics_unavailable:
+        cost_to_close: float | None = None
+        pnl_dollars: float | None = None
+    else:
+        cost_to_close = round(current_mid * OPTION_MULTIPLIER * qty, 2)
+        pnl_dollars = round((premium - current_mid) * OPTION_MULTIPLIER * qty, 2)
+
+    return {
+        "coverage": coverage,
+        "premium": premium,
+        "pnl_dollars": pnl_dollars,
+        "cost_to_close": cost_to_close,
+    }
+
+
 def build_option_mark_index(
     chains_by_ticker: dict[str, dict],
 ) -> dict[tuple, float]:
@@ -428,6 +509,17 @@ def derive_open_legs(
                     "verdict_label": verdict_label,
                     "reasoning": reasoning,
                     "triggered_rules": triggered_rules,
+                    # Coverage severity + dollar economics (#246). Pure —
+                    # `shares` is the key on the position dict (a plain dict
+                    # here, so `.get`), `quantity` is on the trade dict.
+                    **derive_leg_economics(
+                        option_type=option_type,
+                        position_shares=position.get("shares") or 0,
+                        premium=trade.get("premium"),
+                        current_mid=current_mid,
+                        dte=dte,
+                        quantity=trade.get("quantity"),
+                    ),
                 }
             )
     legs.sort(key=lambda x: (x["dte"], x["ticker"]))

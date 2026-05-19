@@ -751,6 +751,16 @@ class DashboardOpenLeg(BaseModel):
     verdict_label: str = "Hold"
     reasoning: str = "No management rule has triggered for this leg yet."
     triggered_rules: list[DashboardRuleEvaluation] = []
+    # New in V1.0.6 (#246) — coverage severity + dollar economics. All four
+    # default so older payloads / tests that omit them still validate.
+    # coverage: "covered" / "naked" for a short call by Position.shares; None
+    # for a short put. premium is the per-share credit booked at open.
+    # pnl_dollars / cost_to_close are whole-position dollars (per-share value
+    # × 100 × quantity); both None whenever % CAPT is unavailable.
+    coverage: Optional[Literal["covered", "naked"]] = None
+    premium: Optional[float] = None
+    pnl_dollars: Optional[float] = None
+    cost_to_close: Optional[float] = None
 
 
 class DashboardUpcomingExpiration(DashboardOpenLeg):
