@@ -40,18 +40,37 @@ export default function TradeHistory({
   // buy-to-close deep-link, it passes a pre-fill object. Auto-open the trade
   // form seeded with it, once, when it first becomes available.
   const appliedPrefillRef = useRef(false);
+  // Tracks whether the currently-visible form is the auto-opened, prefilled
+  // instance. The prefill seeds *only* that first form — a later manual
+  // "Add Trade" must open a blank form, not reuse the stale buy-to-close leg.
+  const [formIsPrefilled, setFormIsPrefilled] = useState(false);
 
   useEffect(() => {
     if (closeLegPrefill && !appliedPrefillRef.current) {
       appliedPrefillRef.current = true;
+      setFormIsPrefilled(true);
       setShowForm(true);
     }
   }, [closeLegPrefill]);
 
+  const toggleForm = () => {
+    setShowForm((prev) => {
+      const next = !prev;
+      // Any manual open/close drops the prefill — it belongs to the auto-open.
+      if (formIsPrefilled) setFormIsPrefilled(false);
+      return next;
+    });
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    if (formIsPrefilled) setFormIsPrefilled(false);
+  };
+
   const handleAddTrade = async (data) => {
     try {
       await onAddTrade(data);
-      setShowForm(false);
+      closeForm();
     } catch {
       // Form stays open for retry; error toast handled by parent
     }
@@ -86,7 +105,7 @@ export default function TradeHistory({
         </div>
         <button
           data-testid="add-trade-btn"
-          onClick={() => setShowForm(!showForm)}
+          onClick={toggleForm}
           className="px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
         >
           {showForm ? 'Cancel' : 'Add Trade'}
@@ -97,9 +116,9 @@ export default function TradeHistory({
         <div className="p-4 border-b border-slate-200 dark:border-slate-700">
           <TradeEntryForm
             positionId={position.id}
-            initialValues={closeLegPrefill || undefined}
+            initialValues={formIsPrefilled ? closeLegPrefill : undefined}
             onSubmit={handleAddTrade}
-            onCancel={() => setShowForm(false)}
+            onCancel={closeForm}
           />
         </div>
       )}

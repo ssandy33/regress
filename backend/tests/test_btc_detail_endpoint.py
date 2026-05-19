@@ -19,9 +19,26 @@ Covers:
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from unittest.mock import patch
 
 from app.models.database import Position, Trade
+
+# ---------------------------------------------------------------------------
+# Time-relative expirations — keep DTE constant whatever day the suite runs.
+#
+# Hardcoded calendar dates rot: once "today" passes the expiration the DTE
+# flips negative, rule evaluation changes, and the assertions break. These
+# offsets are anchored to ``date.today()`` so the rule outcomes stay fixed.
+# ---------------------------------------------------------------------------
+
+# 38 days out — comfortably past the 21-day DTE-review threshold, so the
+# governing verdict in the "populated" tests stays the profit-take rule.
+_NEAR_DTE = 38
+_NEAR_EXPIRY = (date.today() + timedelta(days=_NEAR_DTE)).isoformat()
+# ~13 months out — a far-DTE leg used for the quiet-leg case (no rule fires).
+_FAR_DTE = 400
+_FAR_EXPIRY = (date.today() + timedelta(days=_FAR_DTE)).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -72,11 +89,13 @@ def _seed_trade(
     trade_id: str = "leg-ford-15c",
     trade_type: str = "sell_call",
     strike: float = 15.0,
-    expiration: str = "2026-06-26",
+    expiration: str | None = None,
     premium: float = 0.3834,
     quantity: int = 1,
     closed_at: str | None = None,
 ) -> str:
+    if expiration is None:
+        expiration = _NEAR_EXPIRY
     db = _db(client)
     try:
         db.add(
@@ -99,12 +118,27 @@ def _seed_trade(
     return trade_id
 
 
-def _chain(strike: float, mid: float, *, option_type: str = "call") -> dict:
-    """Return a Schwab option-chain-shaped response with one contract."""
+def _chain(
+    strike: float,
+    mid: float,
+    *,
+    option_type: str = "call",
+    expiration: str | None = None,
+) -> dict:
+    """Return a Schwab option-chain-shaped response with one contract.
+
+    The exp-date-map key is ``"<expiration>:<dte>"``; ``build_option_mark_index``
+    keys the flat index on the date prefix only, so the chain's expiration must
+    match the seeded trade's expiration for the mark to be found. Defaults to
+    the same time-relative near expiry the trade helpers use.
+    """
+    if expiration is None:
+        expiration = _NEAR_EXPIRY
     map_key = "callExpDateMap" if option_type == "call" else "putExpDateMap"
+    dte = (date.fromisoformat(expiration) - date.today()).days
     return {
         map_key: {
-            "2026-06-26:38": {
+            f"{expiration}:{dte}": {
                 f"{strike}": [{"strikePrice": strike, "mark": mid}],
             }
         }
@@ -201,15 +235,11 @@ def test_btc_detail_no_rule_triggered_for_quiet_leg(client):
     # Far expiration, low capture → no rule fires.
     _seed_trade(
         client,
-        expiration="2027-06-26",
+        expiration=_FAR_EXPIRY,
         premium=1.00,
     )
     # Current mid still high → captured_pct low → profit rule does not fire.
-    chain = {
-        "callExpDateMap": {
-            "2027-06-26:400": {"15.0": [{"strikePrice": 15.0, "mark": 0.95}]}
-        }
-    }
+    chain = _chain(15.0, 0.95, expiration=_FAR_EXPIRY)
     with _patch_schwab(chain=chain):
         resp = client.get("/api/positions/pos-ford/legs/leg-ford-15c/btc")
     assert resp.status_code == 200

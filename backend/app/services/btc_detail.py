@@ -180,7 +180,7 @@ def build_btc_detail(
     )
 
     leg = next(
-        (l for l in open_legs if str(l["id"]) == str(leg_id)), None
+        (lg for lg in open_legs if str(lg["id"]) == str(leg_id)), None
     )
     if leg is None:
         # Unknown leg, closed leg, or a leg that belongs to a different

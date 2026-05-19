@@ -494,6 +494,33 @@ test.describe('BTC detail — journal close-leg pre-fill (issue #244)', () => {
     );
   });
 
+  test('close-leg pre-fill applies only to the auto-opened form, not a later manual one', async ({
+    page,
+  }) => {
+    await mockJournalPositions(page, [JOURNAL_POSITION]);
+    await page.goto(
+      `/journal?position=${POSITION_ID}&leg=${LEG_ID}&action=close-leg`,
+    );
+    await page.waitForLoadState('networkidle');
+
+    // The auto-opened form is pre-filled with the inverse-close leg.
+    await expect(page.getByTestId('trade-entry-form')).toBeVisible();
+    await expect(page.getByTestId('trade-entry-type')).toHaveValue(
+      'buy_call_close',
+    );
+
+    // Dismiss it, then manually re-open via the "Add Trade" button.
+    await page.getByTestId('add-trade-btn').click();
+    await expect(page.getByTestId('trade-entry-form')).toHaveCount(0);
+    await page.getByTestId('add-trade-btn').click();
+
+    // The manually-opened form must be blank — no stale buy-to-close values.
+    await expect(page.getByTestId('trade-entry-form')).toBeVisible();
+    await expect(page.getByTestId('trade-entry-type')).toHaveValue('sell_put');
+    await expect(page.getByTestId('trade-entry-strike')).toHaveValue('');
+    await expect(page.getByTestId('trade-entry-expiration')).toHaveValue('');
+  });
+
   test('degrades gracefully when the leg param does not resolve', async ({
     page,
   }) => {
