@@ -501,4 +501,28 @@ test.describe('OpenLegsCard rule monitor — hash deep link', () => {
     // The non-targeted row stays collapsed.
     await expect(page.getByTestId('dashboard-leg-inspect-leg-a')).toHaveCount(0);
   });
+
+  test('malformed #leg-%FF hash does not crash the dashboard', async ({ page }) => {
+    // `decodeURIComponent('%FF')` throws — parseLegHash runs in a lazy
+    // useState initializer, so an unguarded throw would crash the dashboard
+    // at render. The guard returns null instead; the page must still mount.
+    const leg = makeLeg({ id: 'leg-a', ticker: 'F', verdict: 'hold', dte: 73 });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
+
+    const pageErrors = [];
+    page.on('pageerror', (err) => pageErrors.push(err));
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard#leg-%FF');
+    await page.waitForLoadState('networkidle');
+
+    // The dashboard shell rendered — no render crash.
+    await expect(page.getByTestId('dashboard-page')).toBeVisible();
+    // The leg row still rendered; the bad hash matched no leg, so nothing
+    // is auto-expanded.
+    await expect(page.getByTestId('dashboard-leg-row').first()).toBeVisible();
+    await expect(page.getByTestId('dashboard-leg-inspect-leg-a')).toHaveCount(0);
+    // No uncaught URIError reached the page.
+    expect(pageErrors).toHaveLength(0);
+  });
 });

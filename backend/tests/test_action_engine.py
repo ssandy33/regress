@@ -20,7 +20,11 @@ from app.services.action_engine import (
     MAX_ACTIONS,
     compute_next_actions,
 )
-from app.services.rules_config import RiskRules, RulesConfig
+from app.services.rules_config import (
+    ManagementTriggers,
+    RiskRules,
+    RulesConfig,
+)
 
 
 def _rules(loss_review_threshold_pct: float) -> RulesConfig:
@@ -1004,4 +1008,46 @@ class TestRuleMonitorCardSort:
         )
         dte_card = next(a for a in actions if a["action_id"] == "leg.dte_review")
         assert dte_card["priority"] == "P2"
+
+
+class TestProfitTakeCardThreadsManagementThresholds:
+    """The profit-take card reason must be built from the user's *actual*
+    configured ``rules.management`` thresholds — never a hardcoded literal
+    (CodeRabbit fix: ``dte_review_days``/``expiration_warning_days``).
+    """
+
+    def test_custom_dte_review_days_flows_into_profit_take_card_reason(
+        self, monkeypatch
+    ):
+        # Spy on card_reason_for to capture the kwargs the profit-take builder
+        # threads through — proves the configured value reaches the reason
+        # builder rather than a stale literal 21.
+        captured: dict = {}
+        from app.services import action_engine as _ae
+
+        real_card_reason_for = _ae.card_reason_for
+
+        def _spy(triggered_rules, **kwargs):
+            captured.update(kwargs)
+            return real_card_reason_for(triggered_rules, **kwargs)
+
+        monkeypatch.setattr(_ae, "card_reason_for", _spy)
+
+        rules = RulesConfig(
+            management=ManagementTriggers(
+                dte_review_days=30, expiration_warning_days=10
+            )
+        )
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="profit_take_review")],
+            rules=rules,
+        )
+        card = next(a for a in actions if a["action_id"] == "leg.profit_take_review")
+        assert card["reason"]  # a reason was built
+        # The builder passed the configured thresholds, not hardcoded 21 / 7.
+        assert captured["dte_review_days"] == 30
+        assert captured["expiration_warning_days"] == 10
 

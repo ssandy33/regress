@@ -300,6 +300,49 @@ class TestTriState:
 
 
 # ---------------------------------------------------------------------------
+# Assignment-risk inspect row — shows the risk level, not moneyness
+# ---------------------------------------------------------------------------
+
+
+class TestAssignmentRiskRowValue:
+    """The "Assignment risk" row value must read as a risk level
+    (High / Watch / Low) so it agrees with its "Review at ≥ High" rule —
+    not the ITM/ATM/OTM moneyness label (CodeRabbit fix).
+    """
+
+    def test_high_risk_row_shows_high_not_moneyness(self):
+        _, _, _, rules = _evaluate(
+            dte=5,
+            moneyness_state="ITM",
+            assignment_risk="high",
+            profit_target_status=_profit_status(0.20),
+        )
+        assignment_row = next(r for r in rules if r["rule_id"] == "assignment_risk")
+        assert assignment_row["value_display"] == "High"
+        assert assignment_row["value_display"] not in {"ITM", "ATM", "OTM"}
+
+    def test_watch_risk_row_shows_watch(self):
+        _, _, _, rules = _evaluate(
+            dte=12,
+            moneyness_state="ITM",
+            assignment_risk="watch",
+            profit_target_status=_profit_status(0.20),
+        )
+        assignment_row = next(r for r in rules if r["rule_id"] == "assignment_risk")
+        assert assignment_row["value_display"] == "Watch"
+
+    def test_low_risk_row_shows_low(self):
+        _, _, _, rules = _evaluate(
+            dte=38,
+            moneyness_state="OTM",
+            assignment_risk="low",
+            profit_target_status=_profit_status(0.20),
+        )
+        assignment_row = next(r for r in rules if r["rule_id"] == "assignment_risk")
+        assert assignment_row["value_display"] == "Low"
+
+
+# ---------------------------------------------------------------------------
 # Degraded path — no live mid
 # ---------------------------------------------------------------------------
 
@@ -413,3 +456,34 @@ class TestCardReason:
             dte=40, profit_target_status=_profit_status(0.18)
         )
         assert card_reason_for(rules, profit_review_pct=50.0, dte_review_days=21) == ""
+
+    def test_custom_dte_review_days_in_short_reason(self):
+        # A custom 30-day review window must surface in the dte_review card
+        # reason — the caller threads rules.management.dte_review_days, never
+        # a hardcoded literal.
+        _, _, _, rules = _evaluate(
+            dte=25,
+            dte_review_days=30,
+            profit_target_status=_profit_status(0.20),
+        )
+        reason = card_reason_for(
+            rules, profit_review_pct=50.0, dte_review_days=30
+        )
+        assert "25 days to expiration" in reason
+
+    def test_expiration_warning_days_is_a_threadable_parameter(self):
+        # card_reason_for accepts expiration_warning_days so the caller can
+        # pass the user's configured window instead of a hardcoded 7.
+        _, _, _, rules = _evaluate(
+            dte=6,
+            moneyness_state="OTM",
+            expiration_warning_days=10,
+            profit_target_status=_profit_status(0.20),
+        )
+        reason = card_reason_for(
+            rules,
+            profit_review_pct=50.0,
+            dte_review_days=21,
+            expiration_warning_days=10,
+        )
+        assert reason  # builds without error using the configured window

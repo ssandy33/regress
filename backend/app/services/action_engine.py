@@ -423,7 +423,10 @@ def _short_dte_aggregate_actions(
 
 
 def _leg_profit_take_review_actions(
-    open_legs: Iterable[dict], profit_review_pct: float
+    open_legs: Iterable[dict],
+    profit_review_pct: float,
+    dte_review_days: int,
+    expiration_warning_days: int,
 ) -> list[dict]:
     """Build ``leg.profit_take_review`` cards — one per leg whose *governing*
     verdict is ``profit_take_review`` (issue #240, spec §4).
@@ -460,7 +463,8 @@ def _leg_profit_take_review_actions(
                 "reason": card_reason_for(
                     triggered_rules,
                     profit_review_pct=profit_review_pct,
-                    dte_review_days=21,
+                    dte_review_days=dte_review_days,
+                    expiration_warning_days=expiration_warning_days,
                 ),
                 "cta": {
                     "label": "Inspect rule",
@@ -672,7 +676,12 @@ def compute_next_actions(
     # already covered by an expiration.* card is skipped, so one leg yields
     # exactly one card across all four families.
     candidates.extend(
-        _leg_profit_take_review_actions(open_legs, rules.management.profit_review_pct)
+        _leg_profit_take_review_actions(
+            open_legs,
+            rules.management.profit_review_pct,
+            rules.management.dte_review_days,
+            rules.management.expiration_warning_days,
+        )
     )
     candidates.extend(
         _leg_dte_review_actions(open_legs, rules.management.dte_review_days)

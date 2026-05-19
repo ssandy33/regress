@@ -62,17 +62,6 @@ def _captured_dollars(captured_pct: float | None, premium: float | None) -> floa
     return round(captured_pct * premium, 2)
 
 
-def _moneyness_label(moneyness_state: str | None) -> str:
-    """Human label for the assignment-risk metric Value column."""
-    if moneyness_state == "ITM":
-        return "ITM"
-    if moneyness_state == "ATM":
-        return "ATM"
-    if moneyness_state == "OTM":
-        return "OTM"
-    return "—"
-
-
 def _reasoning_for(
     governing: str | None,
     *,
@@ -221,10 +210,7 @@ def evaluate_leg_rules(
     expired = dte < 0
 
     # --- assignment (7d ITM) — never a countdown: triggered or no. ----------
-    if in_warning_window and is_itm:
-        assignment_status = "triggered"
-    else:
-        assignment_status = "no"
+    assignment_status = "triggered" if in_warning_window and is_itm else "no"
 
     # --- expiration (7d OTM) — carries the not-yet countdown for non-ITM. ---
     if in_warning_window and not is_itm:
@@ -293,7 +279,6 @@ def evaluate_leg_rules(
     captured_value = (
         f"{round(captured_pct * 100)}%" if captured_pct is not None else "—"
     )
-    moneyness_value = _moneyness_label(moneyness_state)
 
     rows: list[dict] = []
     for key in RULE_PRECEDENCE:
@@ -301,7 +286,10 @@ def evaluate_leg_rules(
         is_governing = key == governing
         if key == "assignment":
             metric_label = "Assignment risk"
-            value_display = moneyness_value
+            # Show the risk level (High / Watch / Low) — not moneyness — so the
+            # row value agrees with its "Review at ≥ High" rule. `moneyness` is
+            # already surfaced by the dedicated moneyness column.
+            value_display = assignment_risk.capitalize()
             rule_display = "Review at ≥ High"
         elif key == "expiration":
             metric_label = "Days to expiration"
@@ -330,13 +318,24 @@ def evaluate_leg_rules(
     return verdict, verdict_label, reasoning, rows
 
 
-def card_reason_for(triggered_rules: list[dict], *, profit_review_pct: float, dte_review_days: int) -> str:
+def card_reason_for(
+    triggered_rules: list[dict],
+    *,
+    profit_review_pct: float,
+    dte_review_days: int,
+    expiration_warning_days: int = 7,
+) -> str:
     """Build the short-form card ``reason`` from a leg's ``triggered_rules``.
 
     Reads the governing rule off the already-evaluated ``triggered_rules``
     array so the card and the inspect table share one reasoning source and
     never drift. Returns an empty string when no rule governs (the engine
     only emits a card when a rule fired, so this is defensive).
+
+    The threshold parameters (``profit_review_pct`` / ``dte_review_days`` /
+    ``expiration_warning_days``) must be the user's *actual* configured
+    ``rules.management`` values so the reason text agrees with the rule
+    evaluation — never hardcode them at the call site.
     """
     governing_row = next(
         (r for r in triggered_rules if r.get("is_governing")), None
@@ -368,7 +367,7 @@ def card_reason_for(triggered_rules: list[dict], *, profit_review_pct: float, dt
         premium=None,
         profit_review_pct=profit_review_pct,
         dte_review_days=dte_review_days,
-        expiration_warning_days=7,
+        expiration_warning_days=expiration_warning_days,
         also_fired=[],
         short=True,
     )

@@ -36,7 +36,15 @@ function parseLegHash() {
   if (typeof window === 'undefined') return null;
   const hash = window.location.hash || '';
   const match = hash.match(/^#leg-(.+)$/);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) return null;
+  // A malformed escape sequence (e.g. `#leg-%FF`) makes decodeURIComponent
+  // throw. This runs in a lazy useState initializer, so an unguarded throw
+  // would crash the dashboard at render — fall back to null instead.
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 export default function DashboardPage() {
