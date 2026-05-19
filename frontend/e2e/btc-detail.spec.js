@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test';
  *     and shows the rule audit + BTC economics + recommended action.
  *   - A 404 renders the leg-not-found EmptyState (distinct from a network
  *     error state).
- *   - The screen is reachable via the "Inspect rule →" card CTA from both the
+ *   - The screen is reachable via the "Review buy-to-close →" card CTA from both the
  *     profit-take and the DTE-review action cards on the dashboard.
  *   - States: loading skeleton, error + retry, no-rule-triggered, and the
  *     pricing-unavailable degraded variant.
@@ -194,10 +194,10 @@ function dashboardCard(actionId) {
     action_id: actionId,
     priority: isDte ? 'P2' : 'P1',
     tone: isDte ? undefined : 'opportunity',
-    title: isDte ? '21-day review' : 'Profit-take review',
+    title: isDte ? '21-day review' : 'Buy-to-close review',
     subject: { ticker: 'F', amount: '15C' },
     reason: 'Your management rule triggered for this leg.',
-    cta: { label: 'Inspect rule', href: BTC_ROUTE, kind: 'link' },
+    cta: { label: 'Review buy-to-close', href: BTC_ROUTE, kind: 'link' },
     triggered_rules: [],
   };
 }
@@ -350,7 +350,7 @@ test.describe('BTC detail screen — route + states', () => {
 // --- Tests: CTA navigation from the dashboard action cards ------------------
 
 test.describe('BTC detail screen — reachable from dashboard card CTA', () => {
-  test('"Inspect rule →" on a profit-take card navigates to the BTC route', async ({
+  test('"Review buy-to-close →" on a profit-take card navigates to the BTC route', async ({
     page,
   }) => {
     await mockDashboard(page, dashboardCard('leg.profit_take_review'));
@@ -365,7 +365,7 @@ test.describe('BTC detail screen — reachable from dashboard card CTA', () => {
       `next-actions-card-leg.profit_take_review.${LEG_ID}`,
     );
     await expect(cardEl).toBeVisible();
-    await expect(cardEl).toContainText('Inspect rule');
+    await expect(cardEl).toContainText('Review buy-to-close');
     await expect(cardEl).toHaveAttribute('href', BTC_ROUTE);
     await cardEl.click();
     await page.waitForLoadState('networkidle');
@@ -375,7 +375,7 @@ test.describe('BTC detail screen — reachable from dashboard card CTA', () => {
     await expect(page.getByTestId('btc-detail-leg-header')).toContainText('F');
   });
 
-  test('"Inspect rule →" on a DTE-review card also navigates to the BTC route', async ({
+  test('"Review buy-to-close →" on a DTE-review card also navigates to the BTC route', async ({
     page,
   }) => {
     await mockDashboard(page, dashboardCard('leg.dte_review'));
