@@ -571,9 +571,22 @@ DASHBOARD_ACTION_ID = Literal[
     "expiration.short_dte",
     "position.cc_candidate",
     "journal.no_open_legs",
+    # New in V1.0.4 (#240) — the §R6 rule-monitor action cards.
+    "leg.profit_take_review",
+    "leg.dte_review",
 ]
 DASHBOARD_ACTION_PRIORITY = Literal["P0", "P1", "P2"]
 DASHBOARD_ACTION_CTA_KIND = Literal["link", "inline"]
+# New in V1.0.4 (#240) — the per-leg §R6 rule-monitor verdict layer.
+DASHBOARD_VERDICT = Literal[
+    "hold", "profit_take_review", "dte_review", "expiration", "assignment"
+]
+DASHBOARD_RULE_STATUS = Literal["triggered", "not_yet", "no"]
+DASHBOARD_RULE_ID = Literal[
+    "profit_review", "dte_review", "expiration_warning", "assignment_risk"
+]
+# Card valence — `priority` ranks urgency, `tone` carries valence (§4.3 Q6).
+DASHBOARD_ACTION_TONE = Literal["opportunity", "warning"]
 
 
 class DashboardSchwabStatus(BaseModel):
@@ -700,6 +713,24 @@ class DashboardProfitTargetStatus(BaseModel):
     state: DASHBOARD_PROFIT_TARGET_STATE
 
 
+class DashboardRuleEvaluation(BaseModel):
+    """One §R6 management rule evaluated against an open leg (issue #240).
+
+    Emitted fired and not-fired alike — the inspect panel renders every rule,
+    including the ones that did not fire, so the table reads as a monitor and
+    not just an alert list. ``reasoning`` is present only on the single
+    governing (highest-precedence triggered) rule.
+    """
+
+    rule_id: DASHBOARD_RULE_ID
+    metric_label: str
+    value_display: str
+    rule_display: str
+    status: DASHBOARD_RULE_STATUS
+    is_governing: bool = False
+    reasoning: Optional[str] = None
+
+
 class DashboardOpenLeg(BaseModel):
     id: str
     ticker: str
@@ -714,6 +745,12 @@ class DashboardOpenLeg(BaseModel):
     assignment_risk: DASHBOARD_ASSIGNMENT_RISK
     suggested_action: DASHBOARD_SUGGESTED_ACTION
     earnings_in_window: bool = False
+    # New in V1.0.4 (#240) — the §R6 rule-monitor verdict layer. All four
+    # fields default so older payloads / tests that omit them still validate.
+    verdict: DASHBOARD_VERDICT = "hold"
+    verdict_label: str = "Hold"
+    reasoning: str = "No management rule has triggered for this leg yet."
+    triggered_rules: list[DashboardRuleEvaluation] = []
 
 
 class DashboardUpcomingExpiration(DashboardOpenLeg):
@@ -755,6 +792,12 @@ class DashboardNextAction(BaseModel):
     subject: DashboardNextActionSubject = DashboardNextActionSubject()
     reason: str
     cta: DashboardNextActionCta
+    # New in V1.0.4 (#240). ``tone`` defaults to "warning" so every existing
+    # card (expiration.*, data.*, position.*, journal.*) is schema-valid and
+    # visually unchanged. ``triggered_rules`` is the §R6 evaluation payload
+    # carried by the two leg.* cards (empty for every other card type).
+    tone: DASHBOARD_ACTION_TONE = "warning"
+    triggered_rules: list[DashboardRuleEvaluation] = []
 
 
 class DashboardActivity(BaseModel):

@@ -12,6 +12,13 @@ import Link from 'next/link';
  * ``<button>`` when ``action.cta.kind === "inline"`` (e.g.
  * ``data.cache_very_stale`` calls ``refreshStaleCache()`` in place). The
  * trailing ``→`` is ``aria-hidden`` decoration.
+ *
+ * V1.0.4 (issue #240): an optional ``action.tone`` (``"opportunity" |
+ * "warning"``, default ``"warning"``) drives the *valence* of the card.
+ * ``priority`` keeps doing exactly one job — urgency/ranking + the ``[P1]``
+ * badge — while ``tone === "opportunity"`` overrides the border/bg/glyph to
+ * emerald + ``✓`` so a profit-take win does not render as a warning. Every
+ * existing card omits ``tone`` and is byte-identical.
  */
 
 const PRIORITY_VISUALS = {
@@ -35,6 +42,20 @@ const PRIORITY_VISUALS = {
     bgClass: 'bg-white dark:bg-slate-800',
     glyph: 'ℹ',
     glyphClass: 'text-slate-500 dark:text-slate-400',
+  },
+};
+
+// Tone overrides — `priority` ranks urgency; `tone` carries valence (§4.3
+// Q6). Only `opportunity` is a non-default tone: it repaints the border,
+// background, and glyph emerald so a profit-take win is not miscolored as a
+// warning. `badgeClass` is intentionally NOT overridden — the `[P1]` badge
+// stays priority-driven. No new token: emerald is already in the palette.
+const TONE_VISUALS = {
+  opportunity: {
+    borderClass: 'border-emerald-300 dark:border-emerald-700',
+    bgClass: 'bg-emerald-50 dark:bg-emerald-900/20',
+    glyph: '✓',
+    glyphClass: 'text-emerald-600 dark:text-emerald-300',
   },
 };
 
@@ -83,7 +104,12 @@ function CardBody({ action, visuals }) {
 }
 
 export default function NextActionCard({ action, onInlineCta }) {
-  const visuals = PRIORITY_VISUALS[action.priority] || PRIORITY_VISUALS.P2;
+  const priorityVisuals = PRIORITY_VISUALS[action.priority] || PRIORITY_VISUALS.P2;
+  // tone defaults to "warning" — every existing card is byte-identical.
+  const toneOverride = TONE_VISUALS[action.tone];
+  const visuals = toneOverride
+    ? { ...priorityVisuals, ...toneOverride }
+    : priorityVisuals;
   const baseClasses = `block text-left p-4 border rounded-xl transition-colors hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${visuals.bgClass} ${visuals.borderClass}`;
   // Use the unique ``action.id`` (e.g. ``position.cc_candidate.aapl``) so a
    // family that emits multiple cards (e.g. 3 ITM legs) does not collide on

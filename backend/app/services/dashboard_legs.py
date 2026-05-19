@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Iterable, Literal
 
+from app.services.rule_monitor import evaluate_leg_rules
 from app.utils.parsing import to_float
 
 # A "leg-opening" trade type implies the leg is currently open *unless* the
@@ -320,6 +321,8 @@ def derive_open_legs(
     earnings_lookup=None,
     option_marks: dict | None = None,
     profit_review_pct: float = 50.0,
+    dte_review_days: int = 21,
+    expiration_warning_days: int = 7,
 ) -> list[dict]:
     """Flatten open option legs across the given positions.
 
@@ -328,7 +331,9 @@ def derive_open_legs(
     DTE, moneyness, and the per-leg signal fields:
     ``profit_target_status`` (the ``% CAPT`` signal — a real ``captured_pct``
     when a live mark is available, else ``state="unknown"``),
-    ``assignment_risk``, ``suggested_action``, and ``earnings_in_window``.
+    ``assignment_risk``, ``suggested_action``, ``earnings_in_window``, and the
+    §R6 rule-monitor verdict layer (issue #240): ``verdict``,
+    ``verdict_label``, ``reasoning``, and ``triggered_rules``.
 
     ``earnings_lookup`` is an optional callable used to populate
     ``earnings_in_window``. It MUST be cache-hit-only — defaults to a
@@ -338,8 +343,9 @@ def derive_open_legs(
     ``option_marks`` is the flat ``{(ticker, type, strike, exp): mid}`` index
     produced by :func:`build_option_mark_index`. It is optional — a missing
     index (or a leg absent from it) degrades that leg's ``profit_target_status``
-    to ``state="unknown"``. ``profit_review_pct`` is the user's profit-target
-    threshold (``rules.management.profit_review_pct``).
+    to ``state="unknown"``. ``profit_review_pct``, ``dte_review_days``, and
+    ``expiration_warning_days`` are the user's ManagementTriggers §R6
+    thresholds (``rules.management.*``).
 
     Returns a list ordered by (dte ASC, ticker ASC) — callers that need
     other orderings should re-sort.
@@ -376,6 +382,26 @@ def derive_open_legs(
                 str(trade["expiration"])[:10],
             )
             current_mid = option_marks.get(mark_key)
+            profit_target_status = build_profit_target_status(
+                premium=trade.get("premium"),
+                current_mid=current_mid,
+                dte=dte,
+                profit_review_pct=profit_review_pct,
+            )
+            assignment_risk = compute_assignment_risk(dte, moneyness_state)
+            # §R6 rule-monitor verdict layer (issue #240). Pure — derives the
+            # verdict from values already on this leg; no I/O, no DB.
+            verdict, verdict_label, reasoning, triggered_rules = evaluate_leg_rules(
+                dte=dte,
+                moneyness_state=moneyness_state,
+                profit_target_status=profit_target_status,
+                premium=trade.get("premium"),
+                current_mid=current_mid,
+                profit_review_pct=profit_review_pct,
+                dte_review_days=dte_review_days,
+                expiration_warning_days=expiration_warning_days,
+                assignment_risk=assignment_risk,
+            )
             legs.append(
                 {
                     "id": trade["id"],
@@ -386,17 +412,16 @@ def derive_open_legs(
                     "dte": dte,
                     "moneyness": moneyness,
                     "position_id": position_id,
-                    "profit_target_status": build_profit_target_status(
-                        premium=trade.get("premium"),
-                        current_mid=current_mid,
-                        dte=dte,
-                        profit_review_pct=profit_review_pct,
-                    ),
-                    "assignment_risk": compute_assignment_risk(dte, moneyness_state),
+                    "profit_target_status": profit_target_status,
+                    "assignment_risk": assignment_risk,
                     "suggested_action": compute_suggested_action(decision_tag),
                     "earnings_in_window": compute_earnings_in_window(
                         ticker, dte, earnings_lookup, today=today
                     ),
+                    "verdict": verdict,
+                    "verdict_label": verdict_label,
+                    "reasoning": reasoning,
+                    "triggered_rules": triggered_rules,
                 }
             )
     legs.sort(key=lambda x: (x["dte"], x["ticker"]))
