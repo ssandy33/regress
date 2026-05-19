@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.services.dashboard_legs import (
+    build_option_mark_index,
     build_profit_target_status,
     compute_assignment_risk,
     compute_decision_tag,
@@ -349,9 +350,161 @@ class TestComputeSuggestedAction:
 
 
 class TestProfitTargetStatusBuilder:
-    def test_state_is_universally_unknown_in_v05(self):
-        result = build_profit_target_status()
+    """Pure math for the dashboard ``% CAPT`` profit-target signal (#240)."""
+
+    def test_locked_acceptance_screenshot_example(self):
+        # LOCKED acceptance test — the F 15C leg from the issue #240 screenshot.
+        # premium 0.3834 credit, current mid 0.155 → ~59.57% of credit captured,
+        # past the default 50% target.
+        result = build_profit_target_status(premium=0.3834, current_mid=0.155)
+        assert result["captured_pct"] == pytest.approx(0.5957, abs=1e-4)
+        assert result["state"] == "captured_50"
+
+    def test_in_progress_below_target(self):
+        # 1.00 credit decayed to 0.70 → 30% captured, under the 50% target.
+        result = build_profit_target_status(premium=1.00, current_mid=0.70)
+        assert result["captured_pct"] == pytest.approx(0.30)
+        assert result["state"] == "in_progress"
+
+    def test_captured_50_at_exact_boundary(self):
+        # Exactly the 50% threshold counts as captured (>= compare).
+        result = build_profit_target_status(premium=1.00, current_mid=0.50)
+        assert result["captured_pct"] == pytest.approx(0.50)
+        assert result["state"] == "captured_50"
+
+    def test_underwater_when_mid_above_premium(self):
+        # 1.00 credit, mid rose to 1.30 → -30% captured (a paper loss).
+        result = build_profit_target_status(premium=1.00, current_mid=1.30)
+        assert result["captured_pct"] == pytest.approx(-0.30)
+        assert result["state"] == "underwater"
+
+    def test_in_progress_when_mid_equals_premium(self):
+        # mid == premium → exactly 0% captured → in_progress, not underwater.
+        result = build_profit_target_status(premium=1.00, current_mid=1.00)
+        assert result["captured_pct"] == pytest.approx(0.0)
+        assert result["state"] == "in_progress"
+
+    @pytest.mark.parametrize(
+        "premium,current_mid",
+        [
+            (1.00, None),  # no live mark
+            (None, 0.50),  # no premium recorded
+            (0.0, 0.50),  # zero credit — no division
+            (-1.00, 0.50),  # debit / non-credit leg
+        ],
+    )
+    def test_degrades_to_unknown_on_bad_inputs(self, premium, current_mid):
+        result = build_profit_target_status(
+            premium=premium, current_mid=current_mid
+        )
         assert result == {"captured_pct": None, "state": "unknown"}
+
+    def test_expired_leg_is_unknown(self):
+        # Once expired (dte < 0) there is no live management decision.
+        result = build_profit_target_status(
+            premium=1.00, current_mid=0.10, dte=-3
+        )
+        assert result == {"captured_pct": None, "state": "unknown"}
+
+    def test_profit_review_pct_threshold_is_honored(self):
+        # ~60% captured, but the user's threshold is 75% → still in_progress.
+        result = build_profit_target_status(
+            premium=1.00, current_mid=0.40, profit_review_pct=75.0
+        )
+        assert result["captured_pct"] == pytest.approx(0.60)
+        assert result["state"] == "in_progress"
+
+
+class TestBuildOptionMarkIndex:
+    """Flatten raw Schwab option chains into the flat mid-price index (#240)."""
+
+    def _chain(self) -> dict:
+        return {
+            "callExpDateMap": {
+                "2026-06-26:38": {
+                    "240.0": [{"strikePrice": 240.0, "mark": 3.10}],
+                }
+            },
+            "putExpDateMap": {
+                "2026-05-08:3": {
+                    # strikePrice given as a bare integer-style string.
+                    "175": [{"strikePrice": "175", "bid": 1.40, "ask": 1.60}],
+                }
+            },
+        }
+
+    def test_builds_keys_and_mids(self):
+        index = build_option_mark_index({"AAPL": self._chain()})
+        # Call leg uses the explicit `mark`.
+        assert index[("AAPL", "call", 240.0, "2026-06-26")] == pytest.approx(3.10)
+        # Put leg with no `mark` falls back to (bid + ask) / 2.
+        assert index[("AAPL", "put", 175.0, "2026-05-08")] == pytest.approx(1.50)
+
+    def test_strike_normalization(self):
+        # "15" and "15.0" must both normalize to the float 15.0.
+        chain = {
+            "callExpDateMap": {
+                "2026-06-26:38": {
+                    "15": [{"strikePrice": "15", "mark": 0.50}],
+                }
+            }
+        }
+        index = build_option_mark_index({"F": chain})
+        assert ("F", "call", 15.0, "2026-06-26") in index
+
+    def test_exp_key_prefix_is_split(self):
+        # The exp_key carries a ":DTE" suffix that must be stripped.
+        index = build_option_mark_index({"AAPL": self._chain()})
+        keys = {key[3] for key in index}
+        assert keys == {"2026-06-26", "2026-05-08"}
+
+    def test_mark_preferred_over_bid_ask(self):
+        chain = {
+            "callExpDateMap": {
+                "2026-06-26:38": {
+                    "100.0": [
+                        {"strikePrice": 100.0, "mark": 2.00, "bid": 1.0, "ask": 1.2}
+                    ],
+                }
+            }
+        }
+        index = build_option_mark_index({"AAPL": chain})
+        # mark wins even when bid/ask are present.
+        assert index[("AAPL", "call", 100.0, "2026-06-26")] == pytest.approx(2.00)
+
+    def test_contract_with_no_usable_mid_is_skipped(self):
+        chain = {
+            "callExpDateMap": {
+                "2026-06-26:38": {
+                    "100.0": [{"strikePrice": 100.0, "bid": 0.0, "ask": 0.0}],
+                }
+            }
+        }
+        index = build_option_mark_index({"AAPL": chain})
+        assert index == {}
+
+    def test_malformed_chains_do_not_raise(self):
+        malformed = {
+            "AAPL": {
+                "callExpDateMap": {
+                    "2026-06-26:38": {
+                        "100.0": [],  # empty contract list
+                        "105.0": ["not-a-dict"],  # non-dict contract
+                        "110.0": [{"bid": 1.0, "ask": 1.2}],  # missing strikePrice
+                    },
+                    "bad-node": "not-a-strikes-map",
+                },
+                "putExpDateMap": "not-a-map",
+            },
+            "TSLA": "not-a-chain",
+            "MSFT": {},  # no maps at all
+        }
+        # Must not raise; everything malformed is simply skipped.
+        index = build_option_mark_index(malformed)
+        assert index == {}
+
+    def test_none_input_returns_empty(self):
+        assert build_option_mark_index(None) == {}
 
 
 class TestComputeEarningsInWindow:
@@ -414,6 +567,8 @@ class TestDeriveOpenLegsV05Signals:
                         "trade_type": "sell_put",
                         "strike": 175.0,
                         "expiration": "2026-05-08",
+                        "premium": 2.25,
+                        "quantity": 1,
                         "closed_at": None,
                     }
                 ],
@@ -425,6 +580,7 @@ class TestDeriveOpenLegsV05Signals:
             today=date(2026, 5, 5),
         )
         leg = legs[0]
+        # No option_marks supplied → % CAPT degrades to unknown.
         assert leg["profit_target_status"] == {
             "captured_pct": None,
             "state": "unknown",
@@ -435,6 +591,67 @@ class TestDeriveOpenLegsV05Signals:
         assert leg["suggested_action"] == "roll"
         # Earnings lookup defaults to cache-miss → False.
         assert leg["earnings_in_window"] is False
+
+    def test_profit_target_status_uses_matching_option_mark(self):
+        positions = [
+            self._position(
+                "AAPL",
+                "p-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_put",
+                        "strike": 175.0,
+                        "expiration": "2026-05-08",
+                        "premium": 1.00,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        # A live mark of 0.40 → 60% of the 1.00 credit captured.
+        option_marks = {("AAPL", "put", 175.0, "2026-05-08"): 0.40}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 174.50},
+            today=date(2026, 5, 5),
+            option_marks=option_marks,
+        )
+        status = legs[0]["profit_target_status"]
+        assert status["captured_pct"] == pytest.approx(0.60)
+        assert status["state"] == "captured_50"
+
+    def test_profit_target_status_unknown_when_mark_key_absent(self):
+        positions = [
+            self._position(
+                "AAPL",
+                "p-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_put",
+                        "strike": 175.0,
+                        "expiration": "2026-05-08",
+                        "premium": 1.00,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        # Index has a mark, but for a different strike — no match for this leg.
+        option_marks = {("AAPL", "put", 180.0, "2026-05-08"): 0.40}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 174.50},
+            today=date(2026, 5, 5),
+            option_marks=option_marks,
+        )
+        assert legs[0]["profit_target_status"] == {
+            "captured_pct": None,
+            "state": "unknown",
+        }
 
     def test_earnings_lookup_must_not_be_called_with_network(self):
         # Custom lookup proves derive_open_legs uses cache-only semantics
@@ -455,6 +672,8 @@ class TestDeriveOpenLegsV05Signals:
                         "trade_type": "sell_put",
                         "strike": 175.0,
                         "expiration": "2026-05-08",
+                        "premium": 2.25,
+                        "quantity": 1,
                         "closed_at": None,
                     }
                 ],

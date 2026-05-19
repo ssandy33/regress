@@ -23,6 +23,7 @@ from app.services import journal as journal_service
 from app.services.action_engine import compute_next_actions
 from app.services.alpha_vantage_client import get_cached_next_earnings_date
 from app.services.dashboard_legs import (
+    build_option_mark_index,
     derive_open_legs,
     filter_upcoming,
     parse_iso_to_utc,
@@ -161,6 +162,69 @@ def _fetch_quotes_parallel(
             if failed:
                 schwab_failed = True
     return prices, schwab_failed
+
+
+def _fetch_option_chains_parallel(
+    tickers: Iterable[str],
+    schwab_configured: bool,
+) -> tuple[dict[str, dict], bool]:
+    """Fetch raw Schwab option chains for `tickers` concurrently.
+
+    Returns ``(chains_by_ticker, schwab_failed_flag)``. ``chains_by_ticker``
+    maps each ticker that resolved to its raw Schwab chains response; tickers
+    whose fetch failed are simply omitted (their legs degrade to ``% CAPT —``).
+
+    Modeled directly on :func:`_fetch_quotes_parallel`: thread pool capped at
+    ``QUOTE_FANOUT_WORKERS``, one ``get_option_chain`` call per distinct
+    open-leg ticker. Any per-ticker failure — known Schwab errors *or*
+    unexpected ones — is caught inside the worker so a single bad ticker
+    cannot 500 the dashboard; ``schwab_failed`` is set so the caller surfaces
+    the partial outage via ``data_meta.sources_unavailable``.
+    KeyboardInterrupt / SystemExit still propagate.
+
+    NOTE: option-chain responses are NOT cached this slice — each dashboard
+    load issues N blocking fetches (N = distinct open-leg tickers), consistent
+    with the existing stock-quote fan-out. An in-process TTL cache is a
+    deferred V1.2 follow-up.
+    """
+    unique = sorted({t for t in tickers if t})
+    chains_by_ticker: dict[str, dict] = {}
+    if not unique or not schwab_configured:
+        # Schwab not configured is a known-unavailable source, not a failure —
+        # the status strip already reports it. Return an empty index.
+        return chains_by_ticker, False
+
+    schwab_failed = False
+    client = SchwabClient()
+
+    def _fetch(ticker: str) -> tuple[str, dict | None, bool]:
+        try:
+            chain = client.get_option_chain(ticker)
+        except (SchwabClientError, SchwabAuthError) as exc:
+            logger.warning(
+                "Dashboard option-chain fetch failed for %s: %s", ticker, exc
+            )
+            return ticker, None, True
+        except Exception:
+            # Defense-in-depth: any other exception (network timeouts that
+            # escape tenacity, malformed payloads, etc.) must not propagate
+            # out of the worker — that would raise from ThreadPoolExecutor.map
+            # and 500 the whole dashboard. Log with traceback; never surface
+            # the raw message in a response (CLAUDE.md).
+            logger.exception(
+                "Unexpected error fetching option chain for %s", ticker
+            )
+            return ticker, None, True
+        return ticker, (chain if isinstance(chain, dict) else None), False
+
+    workers = min(QUOTE_FANOUT_WORKERS, len(unique))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        for ticker, chain, failed in pool.map(_fetch, unique):
+            if chain is not None:
+                chains_by_ticker[ticker] = chain
+            if failed:
+                schwab_failed = True
+    return chains_by_ticker, schwab_failed
 
 
 # Maps the derived ``position.strategy`` lifecycle label to the V0.5 wheel
@@ -584,19 +648,41 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
     closed_positions = journal_service.get_positions(db, status="closed")
     journal_status = {"positions_count": len(open_positions)}
 
+    # Trading rules — resolved once here (the service layer) and reused by
+    # both derive_open_legs (profit-target threshold) and the action engine.
+    rules = load_rules_config(db)
+
     # Quotes (parallelized; deduped by ticker)
     tickers = [p["ticker"] for p in open_positions]
     quotes_by_ticker, schwab_failed = _fetch_quotes_parallel(
         tickers, schwab_configured=schwab_configured
     )
 
-    # Legs derive purely from in-memory data + the quote map. Earnings
+    # Option chains for the % CAPT signal — fetched only for positions that
+    # actually carry an open sell_put/sell_call leg (a strict subset of the
+    # stock-quote ticker set). Parallel fan-out mirrors the quote fetch.
+    open_leg_tickers = {
+        p["ticker"]
+        for p in open_positions
+        for trade in p.get("trades", [])
+        if trade.get("trade_type") in ("sell_put", "sell_call")
+        and not trade.get("closed_at")
+    }
+    option_chains, chains_failed = _fetch_option_chains_parallel(
+        open_leg_tickers, schwab_configured=schwab_configured
+    )
+    schwab_failed = schwab_failed or chains_failed
+    option_marks = build_option_mark_index(option_chains)
+
+    # Legs derive purely from in-memory data + the quote/mark maps. Earnings
     # lookup is cache-hit-only — the request path must not block on AV.
     open_legs = derive_open_legs(
         open_positions,
         quotes_by_ticker,
         today=today,
         earnings_lookup=get_cached_next_earnings_date,
+        option_marks=option_marks,
+        profit_review_pct=rules.management.profit_review_pct,
     )
     upcoming = filter_upcoming(open_legs, horizon_days=14)
 
@@ -623,7 +709,7 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         kpis=kpis,
         positions=position_rows,
         open_legs=open_legs,
-        rules=load_rules_config(db),
+        rules=rules,
     )
     _attach_next_suggested_actions(position_rows, next_actions, open_legs)
 
