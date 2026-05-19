@@ -6,7 +6,7 @@ import LoadingSkeleton from '@/components/layout/LoadingSkeleton';
 
 // Route shell for /positions/[id]/legs/[legId]/btc — the dedicated per-leg
 // buy-to-close detail screen (issue #244). Reached from the rule-monitor
-// "Inspect rule →" card CTA. Structural twin of recovery/page.jsx.
+// "Review buy-to-close →" card CTA. Structural twin of recovery/page.jsx.
 const BtcDetailPage = dynamic(
   () => import('@/components/btc/BtcDetailPage'),
   {
