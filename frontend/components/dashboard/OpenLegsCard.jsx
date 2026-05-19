@@ -1,29 +1,35 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Card from '../common/Card';
 import EmptyState from '../common/EmptyState';
 import { formatPercent } from '../../utils/formatters';
 
 /**
- * OpenLegsCard — triage-grade table of every open short option leg.
+ * OpenLegsCard — triage-grade table of every open short option leg, and the
+ * per-leg §R6 rule monitor (issue #240).
  *
- * V0.5 upgrade (issue #150 / spec §2.5 + §14.5):
- *   - %CAPTURED column — from `legs[].profit_target_status.captured_pct`.
- *     Renders `—` whenever `state === "unknown"` (universal V0.5 case
- *     because live option-chain data is deferred).
- *   - RISK column — from `legs[].assignment_risk` ("high" / "watch" / "low").
- *     "High" carries the ⛔ glyph for color-blind safety; all values are
- *     text-labeled so screen readers and grayscale users get the signal.
- *   - ACTION column — from `legs[].suggested_action` ("roll" / "hold" /
- *     "manage"). V0.5 never emits "close" because the underlying signal
- *     requires live option-chain data (see #146).
- *   - Earnings glyph (⚠) — rendered next to the expiration when
- *     `legs[].earnings_in_window === true`. Aria-labeled "Earnings before
- *     expiration" for screen readers.
+ * V1.0.4 upgrade (issue #240 / spec §2–§3):
+ *   - ACTION column reads `leg.verdict` (rule-driven) instead of the old
+ *     DTE/moneyness `suggested_action`. The label string is server-rendered
+ *     into `leg.verdict_label` ("Review · 50%" / "Hold" / …) so the frontend
+ *     does no threshold parsing. Emerald = opportunity (profit-take), amber =
+ *     scheduled review, red = deadline/assignment, slate = Hold.
+ *   - Each row is a `<button>` toggle (was a `<Link>` to /journal). Clicking
+ *     expands an inline InspectPanel — the rule-evaluation audit table. The
+ *     journal navigation relocated into the panel's "Open in Journal" CTA.
+ *   - A leading chevron cell shows the expand state; Ticker shrank 2→1 cols
+ *     to make room (spec §5.1 Q8).
+ *   - The card seeds its expanded set from `initialExpandedLegId` (the
+ *     `#leg-{id}` deep-link from a card CTA — spec §4.4 Q7).
  *
- * Responsive (spec §2.5):
- *   - Desktop (lg+): all columns visible.
- *   - Mobile (< lg): %CAPTURED and RISK hidden; ACTION rendered only when
- *     the value is "roll" or "manage" (the urgent cases).
+ * V0.5 columns (issue #150) — %CAPTURED, RISK, earnings ⚠ glyph — unchanged.
+ *
+ * Responsive (spec §2.5 / §5.1):
+ *   - Desktop (lg+): all columns visible — 1/1/1/2/1/2/1/1/2 = 12.
+ *   - Mobile (< lg): %CAPTURED and RISK hidden; ACTION rendered only when the
+ *     verdict is non-`hold`.
  */
 
 function dteBadgeClass(dte) {
@@ -97,37 +103,201 @@ function RiskCell({ risk }) {
   );
 }
 
-const ACTION_VISUALS = {
-  roll: { label: 'Roll', className: 'text-red-700 dark:text-red-300 font-medium' },
-  manage: { label: 'Manage', className: 'text-yellow-700 dark:text-yellow-300 font-medium' },
-  hold: { label: 'Hold', className: 'text-slate-600 dark:text-slate-300' },
-  // V0.5 never emits "close" per spec §14.5, but include for forward-compat.
-  close: { label: 'Close target ✓', className: 'text-green-700 dark:text-green-300 font-medium' },
+// Verdict map (spec §2.3) — keyed by `leg.verdict`. The label string itself
+// is server-rendered into `leg.verdict_label` (so a user-set 65% threshold
+// shows "Review · 65%"); this map only carries the per-verdict color + glyph.
+// Emerald = opportunity, amber = scheduled review, red = deadline/assignment.
+const VERDICT_VISUALS = {
+  hold: {
+    className: 'text-slate-600 dark:text-slate-300',
+    glyph: '',
+  },
+  profit_take_review: {
+    className: 'text-emerald-700 dark:text-emerald-300 font-medium',
+    glyph: '',
+  },
+  dte_review: {
+    className: 'text-amber-700 dark:text-amber-300 font-medium',
+    glyph: '',
+  },
+  expiration: {
+    className: 'text-red-700 dark:text-red-300 font-medium',
+    glyph: '',
+  },
+  assignment: {
+    className: 'text-red-700 dark:text-red-300 font-medium',
+    glyph: '⛔',
+  },
 };
 
-function ActionCell({ action, mobileOnlyUrgent }) {
-  const visuals = ACTION_VISUALS[action] || ACTION_VISUALS.hold;
-  const isUrgent = action === 'roll' || action === 'manage';
-  // On mobile we hide non-urgent actions per spec §2.5. `lg:inline` re-shows at desktop.
-  const visibilityClass =
-    mobileOnlyUrgent && !isUrgent ? 'hidden lg:inline' : 'inline';
-  return <span className={`${visibilityClass} ${visuals.className}`}>{visuals.label}</span>;
+function ActionCell({ leg }) {
+  const verdict = leg.verdict || 'hold';
+  const visuals = VERDICT_VISUALS[verdict] || VERDICT_VISUALS.hold;
+  const label = leg.verdict_label || 'Hold';
+  // Mobile: hide a `hold` verdict (parity with the old non-urgent rule);
+  // any non-hold verdict stays visible on mobile.
+  const visibilityClass = verdict === 'hold' ? 'hidden lg:inline' : 'inline';
+  return (
+    <span
+      data-verdict={verdict}
+      className={`${visibilityClass} ${visuals.className}`}
+    >
+      {visuals.glyph && (
+        <span aria-hidden="true" className="mr-0.5">
+          {visuals.glyph}
+        </span>
+      )}
+      {label}
+    </span>
+  );
 }
 
-function LegRow({ leg }) {
+// Tri-state status dot + label for the inspect table's "Triggered?" cell.
+const STATUS_DISPLAY = {
+  triggered: { dot: '●', label: 'Yes' },
+  not_yet: { dot: '○', label: 'Not yet' },
+  no: { dot: '○', label: 'No' },
+};
+
+function RuleStatusCell({ leg, rule }) {
+  const display = STATUS_DISPLAY[rule.status] || STATUS_DISPLAY.no;
+  const fired = rule.status === 'triggered';
+  // The governing fired row takes the verdict color; a lower-precedence fired
+  // row is neutral slate; non-firing rows inherit the greyed row class.
+  let cellClass = '';
+  if (fired && rule.is_governing) {
+    const visuals = VERDICT_VISUALS[leg.verdict] || VERDICT_VISUALS.hold;
+    cellClass = `font-medium ${visuals.className}`;
+  } else if (fired) {
+    cellClass = 'font-medium text-slate-600 dark:text-slate-300';
+  }
   return (
-    <Link
-      href={`/journal?position=${encodeURIComponent(leg.position_id)}`}
+    <td
+      data-testid={`dashboard-leg-inspect-status-${leg.id}-${rule.rule_id}`}
+      className={`py-1.5 ${cellClass}`}
+    >
+      <span aria-hidden="true">{display.dot}</span> {display.label}
+    </td>
+  );
+}
+
+/**
+ * InspectPanel — the expanded per-leg rule-evaluation audit (spec §3.3–§3.4).
+ *
+ * Renders as a full-width row inside the 12-col grid. Shows every §R6 rule —
+ * fired and not-fired alike — so the table reads as a monitor, not an alert
+ * list. The reasoning sentence and the CTAs sit below the table.
+ */
+function InspectPanel({ leg }) {
+  const optionLetter = leg.type === 'put' ? 'P' : 'C';
+  const verdict = leg.verdict || 'hold';
+  // A "closing" verdict gets a "Buy to close" CTA; a quiet/review leg does not.
+  const showCloseCta =
+    verdict === 'profit_take_review' ||
+    verdict === 'expiration' ||
+    verdict === 'assignment';
+  const positionHref = `/journal?position=${encodeURIComponent(leg.position_id)}`;
+  return (
+    <div
+      id={`dashboard-leg-inspect-${leg.id}`}
+      data-testid={`dashboard-leg-inspect-${leg.id}`}
+      className="col-span-12 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-lg mt-1 mb-2 p-4"
+    >
+      <div className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+        {leg.ticker} ${leg.strike} {optionLetter} · exp {leg.expiration} ·{' '}
+        {leg.dte} DTE
+      </div>
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+        Rule evaluation — checked against your Management Triggers
+      </div>
+      <table
+        data-testid={`dashboard-leg-inspect-table-${leg.id}`}
+        className="w-full text-sm border-collapse"
+      >
+        <thead>
+          <tr className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
+            <th className="text-left font-medium py-1.5">Metric</th>
+            <th className="text-left font-medium py-1.5">Value</th>
+            <th className="text-left font-medium py-1.5">Your rule</th>
+            <th className="text-left font-medium py-1.5">Triggered?</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(leg.triggered_rules || []).map((rule) => {
+            const fired = rule.status === 'triggered';
+            const rowClass = fired
+              ? 'border-b border-slate-100 dark:border-slate-800 last:border-b-0'
+              : 'border-b border-slate-100 dark:border-slate-800 last:border-b-0 text-slate-400 dark:text-slate-500';
+            return (
+              <tr
+                key={rule.rule_id}
+                data-testid={`dashboard-leg-inspect-rule-${leg.id}-${rule.rule_id}`}
+                className={rowClass}
+              >
+                <td className="py-1.5">{rule.metric_label}</td>
+                <td className="py-1.5 tabular-nums">{rule.value_display}</td>
+                <td className="py-1.5">{rule.rule_display}</td>
+                <RuleStatusCell leg={leg} rule={rule} />
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p
+        data-testid={`dashboard-leg-inspect-reasoning-${leg.id}`}
+        className="text-sm text-slate-600 dark:text-slate-300 mt-3"
+      >
+        {leg.reasoning || 'No management rule has triggered for this leg yet.'}
+      </p>
+      <div className="flex items-center gap-3 mt-3">
+        {showCloseCta && (
+          <Link
+            href={`${positionHref}&action=close-leg`}
+            data-testid={`dashboard-leg-inspect-cta-close-${leg.id}`}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+          >
+            Buy to close
+          </Link>
+        )}
+        <Link
+          href={positionHref}
+          data-testid={`dashboard-leg-inspect-cta-journal-${leg.id}`}
+          className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+        >
+          Open in Journal
+          <span aria-hidden="true"> →</span>
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function LegRow({ leg, isExpanded, onToggle, rowRef }) {
+  return (
+    <button
+      type="button"
+      ref={rowRef}
+      onClick={() => onToggle(leg.id)}
+      aria-expanded={isExpanded}
+      aria-controls={`dashboard-leg-inspect-${leg.id}`}
       data-testid="dashboard-leg-row"
-      className="grid grid-cols-12 gap-2 items-center py-2 border-b border-slate-100 dark:border-slate-700 last:border-b-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 px-2 -mx-2 rounded text-sm"
+      data-toggle-testid="dashboard-leg-row-toggle"
+      data-leg-id={leg.id}
+      className="w-full text-left grid grid-cols-12 gap-2 items-center py-2 border-b border-slate-100 dark:border-slate-700 last:border-b-0 hover:bg-slate-50 dark:hover:bg-slate-700/50 px-2 -mx-2 rounded text-sm cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
     >
       {/*
-        Mobile (< lg): 12-col grid uses 2/2/3/2/3 for the 5 visible cells
-        (ticker, strike, exp, dte, moneyness); %captured & risk are hidden;
-        action wraps to a full-width row below when urgent.
-        Desktop (lg+): 12-col grid uses 2/1/2/1/2/1/1/2 to fit 8 cells.
+        Mobile (< lg): chevron(1) + ticker(1) + strike(2) + exp(3) + dte(2) +
+        moneyness(3) = 12; %captured & risk hidden; action wraps full-width.
+        Desktop (lg+): 1/1/1/2/1/2/1/1/2 = 12.
       */}
-      <span className="col-span-2 lg:col-span-2 font-semibold text-slate-900 dark:text-white">
+      <span
+        data-testid="dashboard-leg-row-chevron"
+        aria-hidden="true"
+        className="col-span-1 text-slate-400"
+      >
+        {isExpanded ? '▾' : '▸'}
+      </span>
+      <span className="col-span-1 lg:col-span-1 font-semibold text-slate-900 dark:text-white">
         {leg.ticker}
       </span>
       <span className="col-span-2 lg:col-span-1 tabular-nums text-slate-700 dark:text-slate-200">
@@ -171,16 +341,17 @@ function LegRow({ leg }) {
         data-testid="dashboard-leg-row-action"
         className="col-span-12 lg:col-span-2 mt-1 lg:mt-0"
       >
-        <ActionCell action={leg.suggested_action} mobileOnlyUrgent />
+        <ActionCell leg={leg} />
       </span>
-    </Link>
+    </button>
   );
 }
 
 function HeaderRow() {
   return (
     <div className="grid grid-cols-12 gap-2 items-center px-2 -mx-2 pb-2 mb-1 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-      <span className="col-span-2 lg:col-span-2">Ticker</span>
+      <span className="col-span-1" aria-hidden="true" />
+      <span className="col-span-1 lg:col-span-1">Ticker</span>
       <span className="col-span-2 lg:col-span-1">Strike</span>
       <span className="col-span-3 lg:col-span-2">Exp</span>
       <span className="col-span-2 lg:col-span-1">DTE</span>
@@ -192,7 +363,42 @@ function HeaderRow() {
   );
 }
 
-export default function OpenLegsCard({ legs, loading }) {
+export default function OpenLegsCard({ legs, loading, initialExpandedLegId }) {
+  // A Set of expanded leg ids — multi-open (spec §3.2 Q2). Seeded with the
+  // `#leg-{id}` deep-link target, if any, on mount (spec §4.4 Q7).
+  const [expanded, setExpanded] = useState(() => {
+    const seed = new Set();
+    if (initialExpandedLegId) seed.add(initialExpandedLegId);
+    return seed;
+  });
+  const [deepLinkRow, setDeepLinkRow] = useState(null);
+
+  // Scroll the deep-linked row into view once it mounts, honoring
+  // prefers-reduced-motion (mirrors issue-182 §12.3).
+  useEffect(() => {
+    if (!initialExpandedLegId || !deepLinkRow) return;
+    const motionOK =
+      typeof window !== 'undefined' &&
+      window.matchMedia &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    deepLinkRow.scrollIntoView({
+      behavior: motionOK ? 'smooth' : 'auto',
+      block: 'center',
+    });
+  }, [initialExpandedLegId, deepLinkRow]);
+
+  function toggle(legId) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(legId)) {
+        next.delete(legId);
+      } else {
+        next.add(legId);
+      }
+      return next;
+    });
+  }
+
   if (loading) {
     return (
       <Card title="Open option legs" dataTestid="dashboard-legs-card">
@@ -224,9 +430,26 @@ export default function OpenLegsCard({ legs, loading }) {
       {legs?.length ? (
         <div>
           <HeaderRow />
-          {legs.map((leg) => (
-            <LegRow key={leg.id} leg={leg} />
-          ))}
+          <div className="grid grid-cols-12 gap-x-2">
+            {legs.map((leg) => {
+              const isExpanded = expanded.has(leg.id);
+              return (
+                <div key={leg.id} className="col-span-12 grid grid-cols-12 gap-2">
+                  <div className="col-span-12">
+                    <LegRow
+                      leg={leg}
+                      isExpanded={isExpanded}
+                      onToggle={toggle}
+                      rowRef={
+                        leg.id === initialExpandedLegId ? setDeepLinkRow : null
+                      }
+                    />
+                  </div>
+                  {isExpanded && <InspectPanel leg={leg} />}
+                </div>
+              );
+            })}
+          </div>
           <div className="text-xs text-slate-500 dark:text-slate-400 pt-3">
             Showing {legs.length} of {legs.length} open legs
           </div>

@@ -685,3 +685,81 @@ def test_dashboard_position_rows_have_v05_signals(client, monkeypatch):
     # #151 — broker_cost_basis is surfaced so the Positions card can render
     # the dual-line ("broker / adjusted") cost-basis cell.
     assert row["broker_cost_basis"] == 17000.0
+
+
+def test_dashboard_rule_monitor_verdict_layer_present(client, monkeypatch):
+    """Every open leg carries the §R6 verdict layer fields (issue #240)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 200.0},
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {
+            "putExpDateMap": {
+                "2099-12-31:99999": {
+                    "999.0": [{"strikePrice": 999.0, "mark": 1.00}],
+                }
+            }
+        },
+    )
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(client, pid, trade_type="sell_put", strike=175.0, expiration="2099-12-31")
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["open_legs"], "expected at least one open leg"
+    leg = data["open_legs"][0]
+    assert leg["verdict"] in {
+        "hold", "profit_take_review", "dte_review", "expiration", "assignment"
+    }
+    assert isinstance(leg["verdict_label"], str)
+    assert isinstance(leg["reasoning"], str)
+    assert isinstance(leg["triggered_rules"], list)
+    assert len(leg["triggered_rules"]) == 4
+
+
+def test_dashboard_profit_take_card_matches_leg_verdict(client, monkeypatch):
+    """A leg past the profit-take threshold yields the verdict AND the card."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 250.0},
+    )
+    # Live option mark of 0.40 against a premium of 1.00 → 60% captured.
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {
+            "putExpDateMap": {
+                "2099-12-31:99999": {
+                    "175.0": [{"strikePrice": 175.0, "mark": 0.40}],
+                }
+            }
+        },
+    )
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2099-12-31",
+        premium=1.00,
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    leg = data["open_legs"][0]
+    assert leg["verdict"] == "profit_take_review"
+    assert leg["verdict_label"] == "Review · 50%"
+
+    cards = [
+        a for a in data["next_actions"]
+        if a["action_id"] == "leg.profit_take_review"
+    ]
+    assert len(cards) == 1
+    assert cards[0]["tone"] == "opportunity"
+    assert cards[0]["priority"] == "P1"

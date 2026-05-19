@@ -742,3 +742,266 @@ class TestActionShape:
             assert action["priority"] in {"P0", "P1", "P2"}
 
 
+# ---------------------------------------------------------------------------
+# §R6 rule-monitor leg cards (issue #240)
+# ---------------------------------------------------------------------------
+
+
+def _verdict_leg(
+    leg_id: str,
+    *,
+    verdict: str,
+    ticker: str = "F",
+    type_: str = "call",
+    strike: float = 15.0,
+    dte: int = 38,
+    moneyness_state: str | None = "OTM",
+    position_id: str = "p-1",
+) -> dict:
+    """Build a leg dict carrying the §R6 verdict layer (issue #240).
+
+    ``triggered_rules`` is a minimal but realistic payload — one governing
+    rule plus the other three rows — so card builders that read it (for the
+    short reason) have a real source to parse.
+    """
+    leg = _leg(
+        leg_id,
+        ticker=ticker,
+        type_=type_,
+        strike=strike,
+        dte=dte,
+        moneyness_state=moneyness_state,
+        position_id=position_id,
+    )
+    governing_rule_id = {
+        "profit_take_review": "profit_review",
+        "dte_review": "dte_review",
+        "expiration": "expiration_warning",
+        "assignment": "assignment_risk",
+    }.get(verdict)
+    triggered_rules = [
+        {
+            "rule_id": "assignment_risk",
+            "metric_label": "Assignment risk",
+            "value_display": "OTM",
+            "rule_display": "Review at ≥ High",
+            "status": "no",
+            "is_governing": False,
+            "reasoning": None,
+        },
+        {
+            "rule_id": "expiration_warning",
+            "metric_label": "Days to expiration",
+            "value_display": f"{dte} d",
+            "rule_display": "Warn at ≤ 7 d",
+            "status": "not_yet",
+            "is_governing": False,
+            "reasoning": None,
+        },
+        {
+            "rule_id": "profit_review",
+            "metric_label": "Premium captured",
+            "value_display": "60%",
+            "rule_display": "Review at ≥ 50%",
+            "status": "triggered" if verdict == "profit_take_review" else "not_yet",
+            "is_governing": verdict == "profit_take_review",
+            "reasoning": None,
+        },
+        {
+            "rule_id": "dte_review",
+            "metric_label": "Days to expiration",
+            "value_display": f"{dte} d",
+            "rule_display": "Review at ≤ 21 d",
+            "status": "triggered" if verdict == "dte_review" else "not_yet",
+            "is_governing": verdict == "dte_review",
+            "reasoning": None,
+        },
+    ]
+    for row in triggered_rules:
+        if row["rule_id"] == governing_rule_id:
+            row["is_governing"] = True
+            row["status"] = "triggered"
+            row["reasoning"] = "Your rule triggered."
+    leg["verdict"] = verdict
+    leg["verdict_label"] = "Review · 50%"
+    leg["reasoning"] = "Your rule triggered."
+    leg["triggered_rules"] = triggered_rules
+    return leg
+
+
+class TestProfitTakeReviewCard:
+    def test_emits_when_verdict_is_profit_take_review(self):
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="profit_take_review")],
+        )
+        cards = [a for a in actions if a["action_id"] == "leg.profit_take_review"]
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["priority"] == "P1"
+        assert card["tone"] == "opportunity"
+        assert card["id"] == "leg.profit_take_review.l-1"
+        assert card["triggered_rules"]
+
+    def test_card_cta_deep_links_to_leg_hash(self):
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="profit_take_review")],
+        )
+        card = next(a for a in actions if a["action_id"] == "leg.profit_take_review")
+        assert card["cta"]["href"] == "/dashboard#leg-l-1"
+
+    def test_not_emitted_for_hold_verdict(self):
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="hold")],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "leg.profit_take_review" not in ids
+
+
+class TestDteReviewCard:
+    def test_emits_when_verdict_is_dte_review(self):
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="dte_review", dte=18)],
+        )
+        cards = [a for a in actions if a["action_id"] == "leg.dte_review"]
+        assert len(cards) == 1
+        card = cards[0]
+        assert card["priority"] == "P2"
+        # No tone key → schema default "warning" applies.
+        assert card.get("tone", "warning") == "warning"
+        assert card["id"] == "leg.dte_review.l-1"
+
+    def test_not_emitted_for_profit_take_verdict(self):
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="profit_take_review")],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "leg.dte_review" not in ids
+
+
+class TestRuleMonitorCardPrecedence:
+    def test_itm_short_dte_leg_emits_only_expiration_card(self):
+        # A 5-DTE ITM leg: verdict is "assignment" (the §R6 governing rule).
+        # The legacy expiration.itm_short_dte builder still fires on its own
+        # DTE/moneyness gating; the two new builders skip it.
+        leg = _verdict_leg(
+            "l-1", verdict="assignment", dte=5, moneyness_state="ITM"
+        )
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[leg],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "expiration.itm_short_dte" in ids
+        assert "leg.profit_take_review" not in ids
+        assert "leg.dte_review" not in ids
+
+    def test_profit_take_leg_inside_dte_window_emits_only_profit_card(self):
+        # 18-DTE leg, 60% captured: profit-take governs (verdict drives it),
+        # so no leg.dte_review card despite the 21d window also matching.
+        leg = _verdict_leg(
+            "l-1", verdict="profit_take_review", dte=18, moneyness_state="OTM"
+        )
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[leg],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "leg.profit_take_review" in ids
+        assert "leg.dte_review" not in ids
+
+
+class TestExpirationCardsUnaffected:
+    """Regression guard — the existing expiration.* cards are byte-identical
+    after the new §R6 builders land (spec §10 cross-cutting AC).
+    """
+
+    def test_mixed_leg_set_expiration_cards_unchanged(self):
+        legs = [
+            # ITM short-DTE → expiration.itm_short_dte
+            _verdict_leg(
+                "l-itm", verdict="assignment", dte=4, moneyness_state="ITM",
+                ticker="SOFI", position_id="p-sofi",
+            ),
+            # OTM short-DTE → expiration.short_dte (aggregate)
+            _verdict_leg(
+                "l-otm", verdict="expiration", dte=6, moneyness_state="OTM",
+                ticker="MSFT", position_id="p-msft",
+            ),
+            # Profit-take leg → leg.profit_take_review only
+            _verdict_leg(
+                "l-pt", verdict="profit_take_review", dte=38, moneyness_state="OTM",
+                ticker="F", position_id="p-f",
+            ),
+        ]
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=len(legs)),
+            positions=[],
+            open_legs=legs,
+        )
+        itm = [a for a in actions if a["action_id"] == "expiration.itm_short_dte"]
+        short = [a for a in actions if a["action_id"] == "expiration.short_dte"]
+        assert len(itm) == 1
+        assert itm[0]["id"] == "expiration.itm_short_dte.l-itm"
+        assert len(short) == 1
+        assert short[0]["id"] == "expiration.short_dte.msft"
+
+
+class TestRuleMonitorCardSort:
+    def test_expiration_card_sorts_before_profit_take_within_p1(self):
+        legs = [
+            _verdict_leg(
+                "l-pt", verdict="profit_take_review", dte=10, moneyness_state="OTM",
+                ticker="F", position_id="p-f",
+            ),
+            _verdict_leg(
+                "l-itm", verdict="assignment", dte=3, moneyness_state="ITM",
+                ticker="SOFI", position_id="p-sofi",
+            ),
+        ]
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=len(legs)),
+            positions=[],
+            open_legs=legs,
+        )
+        order = [a["action_id"] for a in actions]
+        assert order.index("expiration.itm_short_dte") < order.index(
+            "leg.profit_take_review"
+        )
+
+    def test_dte_review_card_sorts_in_p2(self):
+        legs = [
+            _verdict_leg(
+                "l-dte", verdict="dte_review", dte=18, moneyness_state="OTM",
+                ticker="AAPL", position_id="p-aapl",
+            ),
+        ]
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=len(legs)),
+            positions=[],
+            open_legs=legs,
+        )
+        dte_card = next(a for a in actions if a["action_id"] == "leg.dte_review")
+        assert dte_card["priority"] == "P2"
+

@@ -1,6 +1,6 @@
+import { useState } from 'react';
 import Header from '../layout/Header';
 import { useDashboard } from '../../hooks/useDashboard';
-import { formatDate } from '../../utils/formatters';
 import StatusStrip from './StatusStrip';
 import DataReadinessBanner from './DataReadinessBanner';
 import NextActionsSection from './NextActionsSection';
@@ -29,8 +29,22 @@ function isAllEmpty(data) {
   return !schwab && !fred && positions === 0;
 }
 
+// Parse the `#leg-{id}` deep-link hash (set by a rule-monitor card CTA — spec
+// §4.4 Q7) into the bare leg id, or null. The dashboard route is rendered
+// `ssr: false`, so reading `window` on mount is safe.
+function parseLegHash() {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash || '';
+  const match = hash.match(/^#leg-(.+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export default function DashboardPage() {
   const { data, loading, error, refetch } = useDashboard();
+  // Captured once at first render — the `#leg-{id}` target seeds the
+  // OpenLegsCard expanded set and scroll. The dashboard route is rendered
+  // `ssr: false`, so reading `window` in the lazy initializer is safe.
+  const [hashLegId] = useState(parseLegHash);
 
   return (
     <div data-testid="dashboard-page" className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900">
@@ -90,7 +104,11 @@ export default function DashboardPage() {
                     />
                   </div>
                   <div className="lg:col-span-5">
-                    <OpenLegsCard legs={data?.open_legs} loading={loading} />
+                    <OpenLegsCard
+                      legs={data?.open_legs}
+                      loading={loading}
+                      initialExpandedLegId={hashLegId}
+                    />
                   </div>
                 </div>
 

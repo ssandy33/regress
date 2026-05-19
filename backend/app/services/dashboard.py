@@ -336,6 +336,9 @@ _NEXT_ACTION_TABLE_LABEL: dict[str, str] = {
     "expiration.short_dte": "Manage",
     "position.cc_candidate": "Cover",
     "journal.no_open_legs": "Run scanner",
+    # New in V1.0.4 (#240) — the §R6 rule-monitor leg cards.
+    "leg.profit_take_review": "Review",
+    "leg.dte_review": "Review",
 }
 
 
@@ -368,7 +371,11 @@ def _attach_next_suggested_actions(
             # Subject id is the position uuid.
             if subject_id and subject_id not in label_by_position:
                 label_by_position[subject_id] = label
-        elif action_id == "expiration.itm_short_dte":
+        elif action_id in {
+            "expiration.itm_short_dte",
+            "leg.profit_take_review",
+            "leg.dte_review",
+        }:
             # Subject id is the leg/trade uuid — resolve via the legs map.
             position_id = position_id_by_leg.get(subject_id)
             if position_id and position_id not in label_by_position:
@@ -683,6 +690,8 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         earnings_lookup=get_cached_next_earnings_date,
         option_marks=option_marks,
         profit_review_pct=rules.management.profit_review_pct,
+        dte_review_days=rules.management.dte_review_days,
+        expiration_warning_days=rules.management.expiration_warning_days,
     )
     upcoming = filter_upcoming(open_legs, horizon_days=14)
 

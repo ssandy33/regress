@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 from urllib.parse import quote
 
+from app.services.rule_monitor import card_reason_for
 from app.services.rules_config import DEFAULT_RULES_CONFIG, RulesConfig
 
 # Cap from spec §2.2: anything beyond 8 cards is noise; the user should
@@ -110,6 +111,12 @@ def _sub_bucket_for(action: dict) -> int:
         return 0
     if action_id.startswith("expiration."):
         return 1
+    if action_id == "leg.profit_take_review":
+        # P1, after expiration.* — a deadline outranks an opportunity (§4.2).
+        return 2
+    if action_id == "leg.dte_review":
+        # P2: below cc_candidate(0), above the no-legs scanner(9).
+        return 1
     if action_id == "position.cc_candidate":
         # P2 tiebreaker: CC candidates outrank the scanner.
         return 0
@@ -130,6 +137,9 @@ def _tie_breaker_for(action: dict) -> tuple:
     if action_id == "expiration.itm_short_dte":
         return (action.get("_dte", 0), subject_ticker)
     if action_id == "expiration.short_dte":
+        return (action.get("_dte", 0), subject_ticker)
+    if action_id in ("leg.profit_take_review", "leg.dte_review"):
+        # The §R6 leg cards sort by DTE ascending, then ticker A→Z.
         return (action.get("_dte", 0), subject_ticker)
     if action_id == "position.cc_candidate":
         return (0, subject_ticker)
@@ -412,6 +422,109 @@ def _short_dte_aggregate_actions(
     return cards
 
 
+def _leg_profit_take_review_actions(
+    open_legs: Iterable[dict], profit_review_pct: float
+) -> list[dict]:
+    """Build ``leg.profit_take_review`` cards — one per leg whose *governing*
+    verdict is ``profit_take_review`` (issue #240, spec §4).
+
+    Reads ``leg["verdict"]`` / ``leg["triggered_rules"]`` already computed by
+    :mod:`app.services.rule_monitor` — the engine does NOT re-evaluate. Because
+    ``verdict`` is already the §R6 governing rule, filtering on it gives
+    one-leg-one-card by construction: a leg whose governing verdict is
+    ``expiration``/``assignment`` is skipped, so it cannot double-emit
+    alongside the existing ``expiration.*`` cards (spec §4.2).
+    """
+    cards: list[dict] = []
+    for leg in open_legs:
+        if leg.get("verdict") != "profit_take_review":
+            continue
+        dte = leg.get("dte")
+        ticker = leg["ticker"]
+        strike = leg["strike"]
+        option_letter = "P" if leg.get("type") == "put" else "C"
+        triggered_rules = leg.get("triggered_rules") or []
+        cards.append(
+            {
+                "id": f"leg.profit_take_review.{leg['id']}",
+                "action_id": "leg.profit_take_review",
+                "priority": "P1",
+                # `opportunity` tone — a profit-take is a win, not a warning;
+                # NextActionCard renders it emerald with a ✓ glyph (§4.3 Q6).
+                "tone": "opportunity",
+                "title": "Profit-take review",
+                "subject": {
+                    "ticker": ticker,
+                    "amount": f"{strike:g}{option_letter}",
+                },
+                "reason": card_reason_for(
+                    triggered_rules,
+                    profit_review_pct=profit_review_pct,
+                    dte_review_days=21,
+                ),
+                "cta": {
+                    "label": "Inspect rule",
+                    "href": f"/dashboard#leg-{quote(str(leg['id']), safe='')}",
+                    "kind": "link",
+                },
+                "triggered_rules": triggered_rules,
+                # Sort metadata consumed by `_tie_breaker_for`.
+                "_dte": int(dte) if dte is not None else 0,
+            }
+        )
+    cards.sort(key=lambda c: (c["_dte"], c["subject"]["ticker"], c["id"]))
+    return cards
+
+
+def _leg_dte_review_actions(
+    open_legs: Iterable[dict], dte_review_days: int
+) -> list[dict]:
+    """Build ``leg.dte_review`` cards — one per leg whose *governing* verdict
+    is ``dte_review`` (issue #240, spec §4).
+
+    Like :func:`_leg_profit_take_review_actions`, filters on the precomputed
+    ``verdict`` so a leg already governed by a higher-precedence rule
+    (``expiration``/``assignment``/``profit_take_review``) is skipped — one
+    leg, one card. ``priority`` is ``P2`` and the card carries no ``tone``
+    key, so it defaults to ``"warning"`` (slate treatment).
+    """
+    cards: list[dict] = []
+    for leg in open_legs:
+        if leg.get("verdict") != "dte_review":
+            continue
+        dte = leg.get("dte")
+        ticker = leg["ticker"]
+        strike = leg["strike"]
+        option_letter = "P" if leg.get("type") == "put" else "C"
+        triggered_rules = leg.get("triggered_rules") or []
+        cards.append(
+            {
+                "id": f"leg.dte_review.{leg['id']}",
+                "action_id": "leg.dte_review",
+                "priority": "P2",
+                "title": f"{dte_review_days}-day review",
+                "subject": {
+                    "ticker": ticker,
+                    "amount": f"{strike:g}{option_letter}",
+                },
+                "reason": card_reason_for(
+                    triggered_rules,
+                    profit_review_pct=50.0,
+                    dte_review_days=dte_review_days,
+                ),
+                "cta": {
+                    "label": "Inspect rule",
+                    "href": f"/dashboard#leg-{quote(str(leg['id']), safe='')}",
+                    "kind": "link",
+                },
+                "triggered_rules": triggered_rules,
+                "_dte": int(dte) if dte is not None else 0,
+            }
+        )
+    cards.sort(key=lambda c: (c["_dte"], c["subject"]["ticker"], c["id"]))
+    return cards
+
+
 def _cc_candidate_actions(
     positions: Iterable[dict],
     open_legs: Iterable[dict],
@@ -554,6 +667,16 @@ def compute_next_actions(
 
     candidates.extend(_itm_short_dte_actions(open_legs, short_dte_max))
     candidates.extend(_short_dte_aggregate_actions(open_legs, short_dte_max))
+    # §R6 rule-monitor leg cards (issue #240). These read each leg's
+    # precomputed `verdict` — filtering on the governing rule means a leg
+    # already covered by an expiration.* card is skipped, so one leg yields
+    # exactly one card across all four families.
+    candidates.extend(
+        _leg_profit_take_review_actions(open_legs, rules.management.profit_review_pct)
+    )
+    candidates.extend(
+        _leg_dte_review_actions(open_legs, rules.management.dte_review_days)
+    )
     candidates.extend(_cc_candidate_actions(positions, open_legs))
 
     no_legs_card = _no_open_legs_action(kpis)

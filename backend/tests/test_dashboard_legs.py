@@ -686,3 +686,101 @@ class TestDeriveOpenLegsV05Signals:
             earnings_lookup=lookup,
         )
         assert calls == ["AAPL"]
+
+
+class TestDeriveOpenLegsRuleMonitor:
+    """The §R6 rule-monitor verdict layer attached to each leg (issue #240)."""
+
+    def _position(self, ticker: str, position_id: str, trades: list[dict]) -> dict:
+        return {"id": position_id, "ticker": ticker, "trades": trades}
+
+    def _trade(self, **overrides) -> dict:
+        trade = {
+            "id": "t1",
+            "trade_type": "sell_put",
+            "strike": 175.0,
+            "expiration": "2026-06-12",
+            "premium": 1.00,
+            "quantity": 1,
+            "closed_at": None,
+        }
+        trade.update(overrides)
+        return trade
+
+    def test_every_leg_carries_verdict_layer_fields(self):
+        positions = [
+            self._position("AAPL", "p-1", [self._trade(expiration="2026-07-31")])
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 200.0},
+            today=date(2026, 5, 5),
+        )
+        leg = legs[0]
+        assert "verdict" in leg
+        assert "verdict_label" in leg
+        assert "reasoning" in leg
+        assert "triggered_rules" in leg
+        assert len(leg["triggered_rules"]) == 4
+
+    def test_quiet_leg_verdict_is_hold(self):
+        # 87 DTE, OTM, no mark → nothing fires.
+        positions = [
+            self._position("AAPL", "p-1", [self._trade(expiration="2026-07-31")])
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 200.0},
+            today=date(2026, 5, 5),
+        )
+        assert legs[0]["verdict"] == "hold"
+        assert legs[0]["verdict_label"] == "Hold"
+
+    def test_profit_take_verdict_with_live_mark(self):
+        # Premium 1.00, mark 0.40 → 60% captured → profit-take verdict.
+        positions = [
+            self._position("AAPL", "p-1", [self._trade(expiration="2026-07-31")])
+        ]
+        option_marks = {("AAPL", "put", 175.0, "2026-07-31"): 0.40}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 200.0},
+            today=date(2026, 5, 5),
+            option_marks=option_marks,
+        )
+        assert legs[0]["verdict"] == "profit_take_review"
+        assert legs[0]["verdict_label"] == "Review · 50%"
+
+    def test_dte_review_window_threshold_honored(self):
+        # 25-DTE leg with dte_review_days=30 → fires; with default 21 → quiet.
+        positions = [
+            self._position("AAPL", "p-1", [self._trade(expiration="2026-05-30")])
+        ]
+        fired = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 200.0},
+            today=date(2026, 5, 5),
+            dte_review_days=30,
+        )
+        assert fired[0]["verdict"] == "dte_review"
+        assert fired[0]["verdict_label"] == "Review · 30d"
+
+        quiet = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 200.0},
+            today=date(2026, 5, 5),
+        )
+        assert quiet[0]["verdict"] == "hold"
+
+    def test_expiration_warning_threshold_honored(self):
+        # 10-DTE OTM leg: fires only when expiration_warning_days >= 10.
+        positions = [
+            self._position("AAPL", "p-1", [self._trade(expiration="2026-05-15")])
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 200.0},
+            today=date(2026, 5, 5),
+            expiration_warning_days=10,
+        )
+        assert legs[0]["verdict"] == "expiration"
