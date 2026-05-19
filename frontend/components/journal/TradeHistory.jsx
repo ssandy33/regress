@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import TradeEntryForm from './TradeEntryForm';
 import ConfirmDialog from '../common/ConfirmDialog';
 
@@ -27,10 +27,26 @@ function formatCurrency(value) {
   return `$${Number(value).toFixed(2)}`;
 }
 
-export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
+export default function TradeHistory({
+  position,
+  onAddTrade,
+  onDeleteTrade,
+  closeLegPrefill,
+}) {
   const [showForm, setShowForm] = useState(false);
   const [pendingDeleteTradeId, setPendingDeleteTradeId] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  // `closeLegPrefill` (issue #244) — when the journal page resolves a
+  // buy-to-close deep-link, it passes a pre-fill object. Auto-open the trade
+  // form seeded with it, once, when it first becomes available.
+  const appliedPrefillRef = useRef(false);
+
+  useEffect(() => {
+    if (closeLegPrefill && !appliedPrefillRef.current) {
+      appliedPrefillRef.current = true;
+      setShowForm(true);
+    }
+  }, [closeLegPrefill]);
 
   const handleAddTrade = async (data) => {
     try {
@@ -79,7 +95,12 @@ export default function TradeHistory({ position, onAddTrade, onDeleteTrade }) {
 
       {showForm && (
         <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-          <TradeEntryForm positionId={position.id} onSubmit={handleAddTrade} onCancel={() => setShowForm(false)} />
+          <TradeEntryForm
+            positionId={position.id}
+            initialValues={closeLegPrefill || undefined}
+            onSubmit={handleAddTrade}
+            onCancel={() => setShowForm(false)}
+          />
         </div>
       )}
 
