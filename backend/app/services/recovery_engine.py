@@ -279,8 +279,12 @@ def _average_down_path(
                 "worst": math.ceil(base_months * WHEEL_BE_MULTIPLIERS[2]),
             }
         else:
+            # No breakeven gap to project: current_price == 0 (monthly_premium
+            # collapses to 0) or the position is already at/above the new
+            # blended basis (remaining_loss == 0).
             months_range = _empty_range()
     else:
+        # shares == 0 — no position to average down.
         new_basis_per_share = 0.0
         months_range = _empty_range()
 
