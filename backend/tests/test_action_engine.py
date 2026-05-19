@@ -871,6 +871,22 @@ class TestProfitTakeReviewCard:
         ids = {a["action_id"] for a in actions}
         assert "leg.profit_take_review" not in ids
 
+    def test_card_title_and_cta_use_buy_to_close_vocabulary(self):
+        """Issue #249 — the card title and CTA label name the destination
+        screen, not the rule audit sub-section. Locks the vocabulary contract:
+        card title, CTA, and the destination page <h1> all use the same
+        ``Buy-to-close review`` language.
+        """
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="profit_take_review")],
+        )
+        card = next(a for a in actions if a["action_id"] == "leg.profit_take_review")
+        assert card["title"] == "Buy-to-close review"
+        assert card["cta"]["label"] == "Review buy-to-close"
+
 
 class TestDteReviewCard:
     def test_emits_when_verdict_is_dte_review(self):
@@ -897,6 +913,23 @@ class TestDteReviewCard:
         )
         ids = {a["action_id"] for a in actions}
         assert "leg.dte_review" not in ids
+
+    def test_cta_label_uses_buy_to_close_vocabulary(self):
+        """Issue #249 — DTE-review CTA also names the destination. The card
+        title (``{N}-day review``) is intentionally retained — it describes
+        the trigger window, not the destination (design spec §2).
+        """
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_verdict_leg("l-1", verdict="dte_review", dte=18)],
+        )
+        card = next(a for a in actions if a["action_id"] == "leg.dte_review")
+        assert card["cta"]["label"] == "Review buy-to-close"
+        # Title intentionally NOT renamed — it names the trigger window
+        # (``dte_review_days`` default = 21), not the destination screen.
+        assert card["title"] == "21-day review"
 
 
 class TestRuleMonitorCardPrecedence:
