@@ -38,6 +38,47 @@ function dteBadgeClass(dte) {
   return 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200';
 }
 
+const PILL_SHAPE = 'inline-block px-2 py-0.5 text-xs rounded-full';
+
+/**
+ * coverageBadge — the per-leg covered/naked pill (issue #246, spec §2).
+ *
+ * Pure render helper. `covered` → quiet emerald pill; `naked` → amber `⚠`
+ * pill (the exact recipe `dteBadgeClass` uses at `dte <= 14`). Any other
+ * value (`null`/undefined — a short put or a pre-#246 payload) renders
+ * nothing. The badge is severity, not scan: it carries no `hidden lg:*` and
+ * survives every breakpoint. Stays pure — the InspectPanel echo wraps the
+ * call in its own testid span (it does not pass an id in).
+ */
+function coverageBadge(coverage) {
+  if (coverage === 'covered') {
+    return (
+      <span
+        data-testid="dashboard-leg-row-coverage"
+        data-coverage="covered"
+        className={`${PILL_SHAPE} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300`}
+      >
+        Covered
+      </span>
+    );
+  }
+  if (coverage === 'naked') {
+    return (
+      <span
+        data-testid="dashboard-leg-row-coverage"
+        data-coverage="naked"
+        className={`${PILL_SHAPE} bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300`}
+      >
+        <span aria-hidden="true" className="mr-0.5">
+          ⚠
+        </span>
+        Naked
+      </span>
+    );
+  }
+  return null;
+}
+
 function moneynessText(moneyness) {
   if (!moneyness) return <span className="text-slate-400">—</span>;
   if (moneyness.state === 'ITM') {
@@ -300,8 +341,18 @@ function LegRow({ leg, isExpanded, onToggle, rowRef }) {
       <span className="col-span-1 lg:col-span-1 font-semibold text-slate-900 dark:text-white">
         {leg.ticker}
       </span>
-      <span className="col-span-2 lg:col-span-1 tabular-nums text-slate-700 dark:text-slate-200">
-        {leg.strike} {leg.type === 'put' ? 'P' : 'C'}
+      {/*
+        Strike cell — a flex row so the coverage badge (#246) sits inline,
+        right of the strike. `tabular-nums` is moved to an inner span so it
+        applies to the number only, not the badge. Grid-neutral: no
+        `col-span` change. The badge carries no `hidden lg:*` — it survives
+        mobile (severity, not scan); `flex-wrap` handles a narrow cell.
+      */}
+      <span className="col-span-2 lg:col-span-1 flex items-center gap-1.5 flex-wrap text-slate-700 dark:text-slate-200">
+        <span className="tabular-nums">
+          {leg.strike} {leg.type === 'put' ? 'P' : 'C'}
+        </span>
+        {coverageBadge(leg.coverage)}
       </span>
       <span className="col-span-3 lg:col-span-2 tabular-nums text-slate-600 dark:text-slate-300 flex items-center gap-1">
         {leg.expiration}
@@ -356,7 +407,7 @@ function HeaderRow() {
       <span className="col-span-3 lg:col-span-2">Exp</span>
       <span className="col-span-2 lg:col-span-1">DTE</span>
       <span className="col-span-3 lg:col-span-2">Moneyness</span>
-      <span className="hidden lg:block lg:col-span-1">% Capt</span>
+      <span className="hidden lg:block lg:col-span-1">% Capt / P&amp;L</span>
       <span className="hidden lg:block lg:col-span-1">Risk</span>
       <span className="hidden lg:block lg:col-span-2">Action</span>
     </div>
