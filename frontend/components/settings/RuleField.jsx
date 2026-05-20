@@ -19,8 +19,15 @@
  * `TradingRulesSection` saves `""` as `null`, never as `0` or a default.
  *
  * Accessibility: the `<label htmlFor>` is bound to the input id; `aria-invalid`
- * reflects the error state; `aria-describedby` links the helper text and, when
- * present, the error message.
+ * reflects the error state; `aria-describedby` links the helper text, the
+ * optional `contextSlot` content, and (when present) the error message.
+ *
+ * `contextSlot` (optional, node): caller-provided JSX rendered between the
+ * helper text and the error. Used by the sizing-cap field (#234) to show a
+ * "X% of $NLV = $ceiling" resolved-context line. The slot's container carries
+ * `id="${fieldKey}-context"` and `data-testid="rules-field-${fieldKey}-context"`
+ * so the caller's assertions and `aria-describedby` can reference it. The
+ * caller owns the slot content's shape — `RuleField` does not validate it.
  */
 export default function RuleField({
   fieldKey,
@@ -37,11 +44,15 @@ export default function RuleField({
   options = null,
   disabled = false,
   step = 'any',
+  contextSlot = null,
 }) {
   const inputId = `rules-field-${fieldKey}`;
   const helpId = `${inputId}-help`;
   const errorId = `${inputId}-error`;
-  const describedBy = error ? `${helpId} ${errorId}` : helpId;
+  const contextId = `${fieldKey}-context`;
+  const describedBy = [helpId, contextSlot ? contextId : null, error ? errorId : null]
+    .filter(Boolean)
+    .join(' ');
   const hasValue = value !== '' && value !== null && value !== undefined;
 
   const baseInput =
@@ -143,6 +154,11 @@ export default function RuleField({
       <p id={helpId} className="text-xs text-slate-500 dark:text-slate-400 mt-1">
         {helper}
       </p>
+      {contextSlot && (
+        <div id={contextId} data-testid={`${inputId}-context`}>
+          {contextSlot}
+        </div>
+      )}
       {error && (
         <p
           id={errorId}

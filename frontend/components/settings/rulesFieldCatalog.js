@@ -25,7 +25,6 @@
  *   - 'pct0to100'  : 0 <= x <= 100
  *   - 'pctOpen100' : 0 < x <= 100 (cap that cannot be 0)
  *   - 'nonNeg'     : >= 0
- *   - 'capPos'     : > 0 (sizing cap)
  *   - 'lossPct'    : <= 0 (a loss threshold is negative)
  *   - 'posInt'     : >= 1 when set (Optional)
  *   - 'nonNegInt'  : >= 0 when set (Optional)
@@ -197,15 +196,14 @@ export const FIELDS = {
   ],
   position: [
     {
-      key: 'sizing_cap_dollars',
+      key: 'sizing_cap_pct',
       label: 'Per-position sizing cap',
-      suffix: '$',
-      suffixLeading: true,
-      default: 5000,
+      suffix: '%',
+      default: 25,
       optional: false,
-      validate: 'capPos',
+      validate: 'pctOpen100',
       helper:
-        'An absolute-dollar ceiling on capital tied up in one position — caps worst-case single-name loss regardless of account size.',
+        'Percent of total trading capital, resolved against your connected Schwab account.',
     },
     {
       key: 'max_ticker_concentration_pct',

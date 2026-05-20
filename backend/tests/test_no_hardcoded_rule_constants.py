@@ -35,7 +35,7 @@ def test_recovery_engine_default_sizing_cap_constant_removed():
     """``DEFAULT_SIZING_CAP_DOLLARS`` no longer exists on the recovery engine."""
     assert not hasattr(recovery_engine, "DEFAULT_SIZING_CAP_DOLLARS"), (
         "DEFAULT_SIZING_CAP_DOLLARS must be gone — the sizing cap is resolved "
-        "from rules_config.position.sizing_cap_dollars (issue #156)."
+        "from rules_config.position.sizing_cap_pct (issue #234)."
     )
     assert "DEFAULT_SIZING_CAP_DOLLARS" not in recovery_engine.__all__
 

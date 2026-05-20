@@ -37,7 +37,8 @@ function defaultRulesConfig() {
       min_call_distance_from_cost_basis_pct: 0.0,
     },
     position: {
-      sizing_cap_dollars: 5000.0,
+      sizing_cap_pct: 25.0,
+      sizing_cap_account: null,
       max_ticker_concentration_pct: 25.0,
       max_open_positions: null,
     },
@@ -525,5 +526,470 @@ test.describe('Settings → Trading Rules — accessibility', () => {
       'aria-describedby',
       'rules-field-min_iv_rank-help rules-field-min_iv_rank-error',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #234 — Trading Rules: per-position sizing cap as % of total capital.
+//
+// V1.0.7 swaps the sizing-cap field from an absolute dollar amount to a
+// percentage that resolves against the connected Schwab account value. The
+// tests below exercise the field itself, the resolved-context line (4
+// variants), the multi-account selector, the manual Refresh / Retry buttons,
+// and the one-time v1→v2 migration banner.
+//
+// Frozen test IDs (V1 contract; see plan §V1):
+//   - rules-field-sizing_cap_pct
+//   - rules-field-sizing_cap_pct-resolved
+//   - rules-field-sizing_cap_pct-refresh
+//   - rules-field-sizing_cap_pct-reconnect
+//   - rules-field-sizing_cap_pct-retry
+//   - rules-position-capital-account
+//   - rules-migration-banner-sizing-cap
+//   - rules-migration-banner-sizing-cap-dismiss
+// ---------------------------------------------------------------------------
+
+/** Build a rules-config payload that optionally carries an inline
+ * `migration.sizing_cap` row (S4 in the plan — the migration flag is served
+ * inline with rules so the UI doesn't need a second round-trip). */
+function rulesConfigWithMigration(migration = null) {
+  const config = defaultRulesConfig();
+  if (migration) config.migration = { sizing_cap: migration };
+  return config;
+}
+
+/**
+ * Mock the `/api/settings/rules` endpoint with a persistent in-memory store
+ * that exposes the saved body and supports inline migration toggling between
+ * calls (the dismiss flow stamps `dismissed_at` server-side, which a second
+ * GET must surface). The `lastPut` ref lets a test assert what was sent.
+ */
+function mockRulesEndpointWithCapture(page, { initialMigration = null } = {}) {
+  const store = {
+    config: rulesConfigWithMigration(initialMigration),
+    lastPut: null,
+  };
+  page.route('**/api/settings/rules', (route) => {
+    const method = route.request().method();
+    if (method === 'GET') {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(store.config),
+      });
+    }
+    if (method === 'PUT') {
+      const body = route.request().postDataJSON();
+      store.lastPut = body;
+      // Preserve any migration object across save round-trips so a save
+      // doesn't accidentally wipe the inline flag.
+      const next = { ...body };
+      if (store.config.migration) next.migration = store.config.migration;
+      store.config = next;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(next),
+      });
+    }
+    return route.continue();
+  });
+  return store;
+}
+
+/** Mock the Schwab account-value endpoints with a small mutable state machine.
+ * `currentResult` is what GET returns; `refreshResult` is what POST returns
+ * (falls back to `currentResult` when unset). Calls are counted so tests can
+ * assert the Refresh / Retry buttons actually fired. */
+function mockAccountValueEndpoints(page, { initialResult, refreshResult } = {}) {
+  const state = {
+    current: initialResult || { status: 'ok', total_capital: 20000 },
+    refresh: refreshResult,
+    getCalls: 0,
+    refreshCalls: 0,
+  };
+  page.route('**/api/settings/account-value', (route) => {
+    state.getCalls += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(state.current),
+    });
+  });
+  page.route('**/api/settings/account-value/refresh', (route) => {
+    state.refreshCalls += 1;
+    const body = state.refresh ?? state.current;
+    // Once the refresh has fired, that becomes the new GET state so a
+    // subsequent re-mount sees the post-refresh shape.
+    state.current = body;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
+  });
+  return state;
+}
+
+/** Mock the one-time migration-dismiss endpoint. Captures the call count
+ * so tests can assert the button fired (it's a side-effecting POST). */
+function mockMigrationDismiss(page) {
+  const state = { calls: 0 };
+  page.route('**/api/settings/rules/migration/sizing-cap/dismiss', (route) => {
+    state.calls += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        previous_sizing_cap_dollars: 5000,
+        migrated_at: '2026-05-19T12:00:00+00:00',
+        dismissed_at: '2026-05-19T12:05:00+00:00',
+      }),
+    });
+  });
+  return state;
+}
+
+test.describe('Sizing cap percent — V1.0.7 (#234)', () => {
+  test('field renders with % suffix and default 25', async ({ page }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: {
+        status: 'ok',
+        total_capital: 20000,
+        account_id_masked: '…4471',
+      },
+    });
+    await openTradingRulesTab(page);
+
+    const input = page.getByTestId('rules-field-sizing_cap_pct');
+    await expect(input).toBeVisible();
+    await expect(input).toHaveValue('25');
+
+    // The catalog declares a trailing `%` suffix span next to the input. It's
+    // aria-hidden, so locate it by text within the Position card.
+    const positionGroup = page.getByTestId('rules-group-position');
+    await expect(positionGroup.locator('span', { hasText: '%' }).first()).toBeVisible();
+  });
+
+  test('field accepts decimal entry', async ({ page }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: { status: 'ok', total_capital: 20000 },
+    });
+    await openTradingRulesTab(page);
+
+    const input = page.getByTestId('rules-field-sizing_cap_pct');
+    await input.fill('7.5');
+    await input.blur();
+
+    await expect(input).toHaveValue('7.5');
+    await expect(
+      page.getByTestId('rules-field-sizing_cap_pct-error'),
+    ).toHaveCount(0);
+  });
+
+  test('field rejects out-of-range entry', async ({ page }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: { status: 'ok', total_capital: 20000 },
+    });
+    await openTradingRulesTab(page);
+
+    const input = page.getByTestId('rules-field-sizing_cap_pct');
+    await input.fill('150');
+    await input.blur();
+
+    const error = page.getByTestId('rules-field-sizing_cap_pct-error');
+    await expect(error).toBeVisible();
+    await expect(error).toHaveText(
+      'Enter a percentage greater than 0 and up to 100.',
+    );
+  });
+
+  test('resolved-context line shows OK variant with masked account and dollar', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: {
+        status: 'ok',
+        total_capital: 20000,
+        account_id_masked: '…4471',
+        resolved_sizing_cap_dollars: 5000,
+      },
+    });
+    await openTradingRulesTab(page);
+
+    const resolved = page.getByTestId('rules-field-sizing_cap_pct-resolved');
+    await expect(resolved).toBeVisible();
+    await expect(resolved).toHaveAttribute('data-state', 'ok');
+    await expect(resolved).toContainText('25%');
+    await expect(resolved).toContainText('…4471');
+    await expect(resolved).toContainText('$5,000');
+
+    await expect(
+      page.getByTestId('rules-field-sizing_cap_pct-refresh'),
+    ).toBeVisible();
+  });
+
+  test('resolved-context line shows DISCONNECTED variant with Reconnect button', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: { status: 'disconnected' },
+    });
+    await openTradingRulesTab(page);
+
+    const resolved = page.getByTestId('rules-field-sizing_cap_pct-resolved');
+    await expect(resolved).toBeVisible();
+    await expect(resolved).toHaveAttribute('data-state', 'disconnected');
+
+    const reconnect = page.getByTestId('rules-field-sizing_cap_pct-reconnect');
+    await expect(reconnect).toBeVisible();
+
+    // The button fires `onSwitchToTab('general')` which flips aria-selected on
+    // the tab bar (no URL change — settings nav is query-param based but the
+    // tab callback updates local state, not the URL).
+    await reconnect.click();
+    await expect(page.getByTestId('settings-tab-general')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(page.getByTestId('settings-rules-tab')).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+  });
+
+  test('resolved-context line shows EXPIRED variant', async ({ page }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: { status: 'expired' },
+    });
+    await openTradingRulesTab(page);
+
+    const resolved = page.getByTestId('rules-field-sizing_cap_pct-resolved');
+    await expect(resolved).toBeVisible();
+    await expect(resolved).toHaveAttribute('data-state', 'expired');
+    // Disconnected and expired share the Reconnect button per the design spec.
+    await expect(
+      page.getByTestId('rules-field-sizing_cap_pct-reconnect'),
+    ).toBeVisible();
+  });
+
+  test('resolved-context line shows ERROR variant with Retry button', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: { status: 'error' },
+    });
+    await openTradingRulesTab(page);
+
+    const resolved = page.getByTestId('rules-field-sizing_cap_pct-resolved');
+    await expect(resolved).toBeVisible();
+    await expect(resolved).toHaveAttribute('data-state', 'error');
+    await expect(
+      page.getByTestId('rules-field-sizing_cap_pct-retry'),
+    ).toBeVisible();
+  });
+
+  test('Refresh button triggers POST /account-value/refresh and updates the display', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page);
+    const acct = mockAccountValueEndpoints(page, {
+      initialResult: {
+        status: 'ok',
+        total_capital: 20000,
+        account_id_masked: '…4471',
+        resolved_sizing_cap_dollars: 5000,
+      },
+      refreshResult: {
+        status: 'ok',
+        total_capital: 25000,
+        account_id_masked: '…4471',
+        resolved_sizing_cap_dollars: 6250,
+      },
+    });
+    await openTradingRulesTab(page);
+
+    // Sanity: the initial OK variant resolves to $5,000.
+    const resolved = page.getByTestId('rules-field-sizing_cap_pct-resolved');
+    await expect(resolved).toContainText('$5,000');
+
+    await page.getByTestId('rules-field-sizing_cap_pct-refresh').click();
+
+    // After the force-refresh, total_capital is 25,000 → 25% = $6,250.
+    await expect(resolved).toContainText('$6,250');
+    expect(acct.refreshCalls).toBe(1);
+  });
+
+  test('Retry button triggers force-refresh from error state', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page);
+    const acct = mockAccountValueEndpoints(page, {
+      initialResult: { status: 'error' },
+      refreshResult: {
+        status: 'ok',
+        total_capital: 20000,
+        account_id_masked: '…4471',
+        resolved_sizing_cap_dollars: 5000,
+      },
+    });
+    await openTradingRulesTab(page);
+
+    const resolved = page.getByTestId('rules-field-sizing_cap_pct-resolved');
+    await expect(resolved).toHaveAttribute('data-state', 'error');
+
+    await page.getByTestId('rules-field-sizing_cap_pct-retry').click();
+
+    await expect(resolved).toHaveAttribute('data-state', 'ok');
+    await expect(resolved).toContainText('$5,000');
+    expect(acct.refreshCalls).toBe(1);
+  });
+
+  test('Multi-account selector visible when accounts.length > 1', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: {
+        status: 'ok',
+        total_capital: 20000,
+        account_id_masked: '…4471',
+        resolved_sizing_cap_dollars: 5000,
+        accounts: [
+          { account_id_masked: '…4471', account_type: 'Brokerage' },
+          { account_id_masked: '…8888', account_type: 'Brokerage' },
+        ],
+      },
+    });
+    await openTradingRulesTab(page);
+
+    await expect(
+      page.getByTestId('rules-position-capital-account'),
+    ).toBeVisible();
+  });
+
+  test('Multi-account selector hidden in the single-account case', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: {
+        status: 'ok',
+        total_capital: 20000,
+        account_id_masked: '…4471',
+        resolved_sizing_cap_dollars: 5000,
+        accounts: [{ account_id_masked: '…4471', account_type: 'Brokerage' }],
+      },
+    });
+    await openTradingRulesTab(page);
+
+    // Wait until the form is up so the (negative) assertion isn't racing the
+    // initial render.
+    await expect(page.getByTestId('settings-rules-form')).toBeVisible();
+    await expect(
+      page.getByTestId('rules-position-capital-account'),
+    ).toHaveCount(0);
+  });
+
+  test('Multi-account selector saves selection through rules-config', async ({
+    page,
+  }) => {
+    const store = mockRulesEndpointWithCapture(page);
+    mockAccountValueEndpoints(page, {
+      initialResult: {
+        status: 'ok',
+        total_capital: 20000,
+        account_id_masked: '…4471',
+        resolved_sizing_cap_dollars: 5000,
+        accounts: [
+          { account_id_masked: '…4471', account_type: 'Brokerage' },
+          { account_id_masked: '…8888', account_type: 'Brokerage' },
+        ],
+      },
+    });
+    await openTradingRulesTab(page);
+
+    const select = page.getByTestId('rules-position-capital-account');
+    await expect(select).toBeVisible();
+    await select.selectOption('…8888');
+
+    await page.getByTestId('settings-save-rules').click();
+    await expect(
+      page.getByTestId('settings-rules-save-success'),
+    ).toBeVisible();
+
+    // The PUT body carries the new sizing_cap_account inside position.
+    expect(store.lastPut).not.toBeNull();
+    expect(store.lastPut.position.sizing_cap_account).toBe('…8888');
+  });
+
+  test('Migration banner appears on first load when migration row is present', async ({
+    page,
+  }) => {
+    mockRulesEndpointWithCapture(page, {
+      initialMigration: {
+        previous_sizing_cap_dollars: 5000,
+        migrated_at: '2026-05-19T12:00:00+00:00',
+        dismissed_at: null,
+      },
+    });
+    mockAccountValueEndpoints(page, {
+      initialResult: { status: 'ok', total_capital: 20000 },
+    });
+    mockMigrationDismiss(page);
+    await openTradingRulesTab(page);
+
+    const banner = page.getByTestId('rules-migration-banner-sizing-cap');
+    await expect(banner).toBeVisible();
+    // Copy includes the previous dollar value and the new 25% default.
+    await expect(banner).toContainText('5,000');
+    await expect(banner).toContainText('25%');
+  });
+
+  test('Migration banner dismisses on click and does not reappear after reload', async ({
+    page,
+  }) => {
+    // First load: banner present (dismissed_at = null).
+    const store = mockRulesEndpointWithCapture(page, {
+      initialMigration: {
+        previous_sizing_cap_dollars: 5000,
+        migrated_at: '2026-05-19T12:00:00+00:00',
+        dismissed_at: null,
+      },
+    });
+    mockAccountValueEndpoints(page, {
+      initialResult: { status: 'ok', total_capital: 20000 },
+    });
+    const dismissState = mockMigrationDismiss(page);
+    await openTradingRulesTab(page);
+
+    const banner = page.getByTestId('rules-migration-banner-sizing-cap');
+    await expect(banner).toBeVisible();
+
+    await page.getByTestId('rules-migration-banner-sizing-cap-dismiss').click();
+    await expect(banner).toHaveCount(0);
+    // Allow the optimistic POST to land.
+    await expect.poll(() => dismissState.calls).toBe(1);
+
+    // Simulate the server now returning the dismissed-at timestamp by
+    // mutating the mock store. A reload re-fetches and must keep the banner
+    // hidden (the pre-dismissed path).
+    store.config = rulesConfigWithMigration({
+      previous_sizing_cap_dollars: 5000,
+      migrated_at: '2026-05-19T12:00:00+00:00',
+      dismissed_at: '2026-05-19T12:05:00+00:00',
+    });
+
+    await openTradingRulesTab(page);
+    await expect(
+      page.getByTestId('rules-migration-banner-sizing-cap'),
+    ).toHaveCount(0);
   });
 });

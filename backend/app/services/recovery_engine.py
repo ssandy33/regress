@@ -220,36 +220,63 @@ def _average_down_path(
     current_price: float,
     adjusted_cost_basis: float,
     target_yield: float | None,
-    sizing_cap_dollars: float,
+    sizing_cap_pct: float,
+    total_capital: float | None,
 ) -> dict:
     """Build the ``average-down`` path scenario.
 
-    Suppressed when ``capital_tied_up > sizing_cap_dollars``. The path
-    stays in the response (frontend renders the de-emphasized treatment)
-    so the user can see *why* it isn't recommended.
+    The sizing cap is stored as a percentage of total trading capital
+    (issue #234 v1 contract — ``sizing_cap_pct`` is whole-percent, e.g.
+    ``25.0`` means 25%, NOT 0.25). The dollar ceiling is resolved at
+    evaluation time against the connected Schwab account's
+    net-liquidation value supplied as ``total_capital``.
+
+    - When ``total_capital`` is known, the resolved cap is
+      ``sizing_cap_pct * total_capital / 100``. The path is suppressed
+      when ``capital_tied_up`` exceeds that resolved ceiling.
+    - When ``total_capital is None`` (Schwab unavailable / cache empty),
+      the cap CANNOT be resolved to a dollar amount. Per the §6.2
+      "eligible-with-unenforceable" contract the path stays eligible
+      but the assumption text names the unenforceable state explicitly
+      so the user is never silently let through an oversized position.
+
+    Suppressed paths stay in the response (frontend renders the
+    de-emphasized treatment) so the user can see *why* it isn't
+    recommended.
     """
     additional_capital = max(current_price, 0.0) * max(shares, 0)
     new_basis_total = max(adjusted_cost_basis, 0.0) + additional_capital
     capital_tied_up = round(new_basis_total, 2)
 
+    # Resolve the percent cap to a dollar ceiling at evaluation time
+    # against the supplied total trading capital. ``None`` means the
+    # connected Schwab account value was unavailable — see the
+    # "cap unenforceable" branch below.
+    cap_resolved: float | None = (
+        sizing_cap_pct * total_capital / 100 if total_capital is not None else None
+    )
+
     # Sizing cap gate. Per design spec §3.3 the reason text contains the
     # word "sizing cap" so the frontend CTA mapper routes the user to
     # the Settings → Trading Rules tab (/settings?tab=rules) — the sizing
-    # cap is a Trading Rule (issue #156), not an OKR.
-    if capital_tied_up > sizing_cap_dollars:
+    # cap is a Trading Rule (issue #156 / #234), not an OKR.
+    if cap_resolved is not None and capital_tied_up > cap_resolved:
         return {
             "path_id": "average-down",
             "label": _PATH_LABELS["average-down"],
             "eligibility": "suppressed",
             "suppression_reason": (
-                f"Exceeds your {_format_dollar(sizing_cap_dollars)} per-position "
-                "sizing cap"
+                f"Exceeds your {sizing_cap_pct:.0f}% per-position sizing cap "
+                f"(≈ {_format_dollar(cap_resolved)})."
             ),
             "capital_tied_up": None,
             "months_to_breakeven": _empty_range(),
             "opportunity_cost_vs_baseline": None,
             "assumptions": [
-                f"Sizing cap from Settings → Trading Rules: {_format_dollar(sizing_cap_dollars)}.",
+                (
+                    f"Sizing cap from Settings → Trading Rules: "
+                    f"{sizing_cap_pct:.0f}% of your trading capital."
+                ),
                 (
                     f"Adding {_format_dollar(additional_capital)} would tie up "
                     f"{_format_dollar(capital_tied_up)} total."
@@ -294,13 +321,29 @@ def _average_down_path(
         # Capital that could have earned the target yield in a fresh CSP.
         opp_cost = round(additional_capital * target_yield, 2)
 
+    # Cap-status assumption. When the cap resolved to dollars, name both
+    # the % and the resolved $ ceiling so the user sees the math; when
+    # the connected Schwab account value was unavailable, surface the
+    # unenforceable state explicitly per the §6.2 contract.
+    if cap_resolved is not None:
+        cap_assumption = (
+            f"Within your {sizing_cap_pct:.0f}% sizing cap "
+            f"(≈ {_format_dollar(cap_resolved)})."
+        )
+    else:
+        cap_assumption = (
+            "Sizing cap is currently unenforceable — Schwab account value "
+            "unavailable. The recovery path is shown without sizing "
+            "enforcement; reconnect Schwab to enforce."
+        )
+
     assumptions = [
         (
             f"Adds {_format_dollar(additional_capital)} at "
             f"${current_price:,.2f}/share — new basis {_format_dollar(new_basis_per_share)} "
             "per share."
         ),
-        f"Within {_format_dollar(sizing_cap_dollars)} sizing cap.",
+        cap_assumption,
         (
             f"Breakeven projects {WHEEL_MONTHLY_PREMIUM_PCT * 100:.1f}%/month "
             "wheel-CC premium on the doubled position against the remaining loss."
@@ -373,7 +416,8 @@ def compute_recovery_paths(
     position: dict,
     current_price: float,
     target_yield: float | None,
-    sizing_cap_dollars: float,
+    sizing_cap_pct: float,
+    total_capital: float | None,
 ) -> list[dict]:
     """Compute the four candidate recovery paths for a flagged position.
 
@@ -387,9 +431,16 @@ def compute_recovery_paths(
         target_yield: OKR target yield as a fraction (e.g. ``0.18``).
             ``None`` suppresses the sell-redeploy path and zeroes out
             opportunity-cost columns that depend on it.
-        sizing_cap_dollars: Per-position sizing cap in dollars. The caller
-            resolves it from ``rules_config.position.sizing_cap_dollars``
-            (issue #156) and always supplies a concrete value.
+        sizing_cap_pct: Per-position sizing cap as a whole-percent of
+            trading capital (issue #234 v1 contract — ``25.0`` means
+            25%, NOT 0.25). The caller resolves it from
+            ``rules_config.position.sizing_cap_pct``.
+        total_capital: Connected Schwab account net-liquidation value in
+            dollars, supplied by the caller from the cached account-value
+            service. ``None`` when the Schwab account value is unavailable
+            (disconnected / expired / error); the average-down path
+            handles ``None`` by staying eligible with the explicit
+            "cap unenforceable" assumption per the §6.2 contract.
 
     Returns:
         Four-element list in canonical order (sell-redeploy, wheel-cc,
@@ -403,7 +454,8 @@ def compute_recovery_paths(
         adjusted_cost_basis = float(position.get("broker_cost_basis") or 0.0)
 
     current_price = max(float(current_price or 0.0), 0.0)
-    cap = float(sizing_cap_dollars)
+    pct = float(sizing_cap_pct)
+    capital = float(total_capital) if total_capital is not None else None
 
     # Realized loss for the sell-redeploy / wheel projections. If the
     # position is above water we still emit paths (the user can audit) but
@@ -429,7 +481,8 @@ def compute_recovery_paths(
             current_price=current_price,
             adjusted_cost_basis=adjusted_cost_basis,
             target_yield=target_yield,
-            sizing_cap_dollars=cap,
+            sizing_cap_pct=pct,
+            total_capital=capital,
         ),
         _hold_monitor_path(
             shares=shares,

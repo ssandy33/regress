@@ -1,6 +1,8 @@
+import json
 import logging
 import math
 import os
+from dataclasses import asdict
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -17,17 +19,25 @@ from app.services.schwab_auth import (
     SCHWAB_OAUTH_SCOPE,
     SCHWAB_REDIRECT_URI,
     SCHWAB_TOKEN_URL,
+    SchwabAuthError,
     SchwabTokenManager,
     store_schwab_tokens,
 )
+from app.services.schwab_client import SchwabClientError
 from app.models.database import AppSetting, CacheEntry, get_db
 from app.models.schemas import CacheStatsResponse, SettingUpdate, SettingsResponse
 from app.services.backup import create_backup, list_backups, restore_backup
 from app.services.rules_config import (
     RULES_CONFIG_KEY,
     RULES_CONFIG_SCHEMA_VERSION,
+    SIZING_CAP_MIGRATION_KEY,
     RulesConfig,
     load_rules_config,
+)
+from app.services.schwab_account_value import (
+    AccountValueResult,
+    get_account_value,
+    get_cached_account_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,15 +117,83 @@ def update_setting(req: SettingUpdate, db: DBSession = Depends(get_db)):
 # --- Trading Rules config (issue #158 — edit surface for the #156 keystone) ---
 
 
-@router.get("/rules", response_model=RulesConfig)
+# Generic, sanitised copy returned when a Schwab call fails out of the
+# account-value endpoints. Per CLAUDE.md, no raw exception text reaches the
+# client; the structured failure modes (disconnected / expired / error) are
+# surfaced INSIDE the AccountValueResult payload, while an unexpected raise
+# from the W-A service is mapped to a 503 with this detail.
+_SCHWAB_UNAVAILABLE_DETAIL = "Schwab service unavailable"
+
+
+def _read_sizing_cap_migration(db: DBSession) -> dict | None:
+    """Read the one-time sizing-cap migration marker from ``app_settings``.
+
+    Returns the decoded JSON payload (with ``previous_sizing_cap_dollars``,
+    ``migrated_at``, ``dismissed_at`` keys) or ``None`` when no migration has
+    happened on this DB. A malformed row is also treated as ``None`` —
+    callers fall through to "no migration banner" rather than 500.
+    """
+    entry = (
+        db.query(AppSetting)
+        .filter(AppSetting.key == SIZING_CAP_MIGRATION_KEY)
+        .first()
+    )
+    if entry is None or not entry.value:
+        return None
+    try:
+        parsed = json.loads(entry.value)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        logger.warning(
+            "Stored %s row is not valid JSON; surfacing as no-migration.",
+            SIZING_CAP_MIGRATION_KEY,
+        )
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+@router.get("/rules")
 def get_rules_config(db: DBSession = Depends(get_db)):
-    """Get the Trading Rules config.
+    """Get the Trading Rules config plus the sizing-cap migration status.
 
     Backed by :func:`app.services.rules_config.load_rules_config`, which
     merges any stored ``rules_config`` row over the typed defaults and never
     raises — so this endpoint always returns a complete, valid config.
+
+    **S4 augmentation (issue #234 / V1 contract):** the response carries an
+    extra ``migration`` sibling key alongside the existing flat
+    :class:`RulesConfig` fields. The frontend banner that announces the
+    v1 → v2 sizing-cap migration reads ``migration.sizing_cap`` to decide
+    whether to render the dismissible "we changed dollars → percent"
+    callout. The migration object is ``null`` when no migration has happened
+    on this DB; otherwise it carries the previous dollar value, the
+    migration timestamp, and the ``dismissed_at`` timestamp (or ``null``
+    when the banner has not been dismissed yet).
+
+    Shape::
+
+        {
+          "schema_version": 2,
+          "universe": {...},
+          "entry":    {...},
+          "position": {...},
+          "risk":     {...},
+          "management": {...},
+          "migration": {
+            "sizing_cap": null | {
+              "previous_sizing_cap_dollars": <float | null>,
+              "migrated_at": "<iso8601>",
+              "dismissed_at": "<iso8601>" | null
+            }
+          }
+        }
     """
-    return load_rules_config(db)
+    rules = load_rules_config(db)
+    migration = _read_sizing_cap_migration(db)
+    payload = rules.model_dump()
+    payload["migration"] = {"sizing_cap": migration}
+    return payload
 
 
 @router.put("/rules", response_model=RulesConfig)
@@ -139,6 +217,151 @@ def update_rules_config(config: RulesConfig, db: DBSession = Depends(get_db)):
         db.add(entry)
     db.commit()
     return config
+
+
+@router.post("/rules/migration/sizing-cap/dismiss")
+def dismiss_sizing_cap_migration(db: DBSession = Depends(get_db)):
+    """Mark the sizing-cap migration banner as dismissed.
+
+    Stamps the ``dismissed_at`` field on the one-time
+    ``sizing_cap_migration`` marker row to ``datetime.utcnow().isoformat()``.
+    Idempotent — a second call simply re-stamps ``dismissed_at`` to the new
+    timestamp and returns the same migration object.
+
+    Returns the updated migration object (the same shape carried by
+    ``GET /api/settings/rules`` under ``migration.sizing_cap``). When no
+    migration has happened on this DB at all the call is a no-op and
+    returns ``{"sizing_cap": null}`` — the UI never asks to dismiss a
+    banner that never existed, but we surface a 200 either way to keep the
+    endpoint truly idempotent.
+    """
+    entry = (
+        db.query(AppSetting)
+        .filter(AppSetting.key == SIZING_CAP_MIGRATION_KEY)
+        .first()
+    )
+    if entry is None or not entry.value:
+        return {"sizing_cap": None}
+
+    try:
+        parsed = json.loads(entry.value)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        # A malformed row is indistinguishable from "no marker" for the
+        # banner; surface as no-op. We deliberately don't repair the row
+        # here — load_rules_config already tolerates it as missing.
+        logger.warning(
+            "Stored %s row is not valid JSON; dismiss is a no-op.",
+            SIZING_CAP_MIGRATION_KEY,
+        )
+        return {"sizing_cap": None}
+
+    if not isinstance(parsed, dict):
+        return {"sizing_cap": None}
+
+    parsed["dismissed_at"] = datetime.now(timezone.utc).isoformat()
+    entry.value = json.dumps(parsed)
+    db.commit()
+    return {"sizing_cap": parsed}
+
+
+# --- Schwab account-value endpoints (issue #234 — V1 contract §6.3) ---
+
+
+def _serialise_account_value(result: AccountValueResult) -> dict:
+    """Project an :class:`AccountValueResult` into a JSON-ready dict.
+
+    ``cached_at`` is a ``datetime``; FastAPI's default JSON encoder handles
+    it, but we coerce to an ISO string explicitly so the response shape is
+    identical whether we hand back ``asdict(result)`` or a dict assembled by
+    other code paths.
+    """
+    payload = asdict(result)
+    cached_at = result.cached_at
+    if isinstance(cached_at, datetime):
+        payload["cached_at"] = cached_at.isoformat()
+    return payload
+
+
+@router.get("/account-value")
+def get_account_value_endpoint(db: DBSession = Depends(get_db)):
+    """Return the cached Schwab account-value result.
+
+    Reads ``rules.position.sizing_cap_account`` to pick the right cache
+    bucket, then calls :func:`get_cached_account_value` (cache-hit-only;
+    NEVER makes a network call). On a cold cache (first GET after a server
+    restart) the implementation falls through to
+    :func:`get_account_value` with ``force_refresh=False`` ONCE so the user
+    doesn't have to hit "Refresh" to populate the very first read. Every
+    subsequent GET hits the cache for free.
+
+    Errors are sanitised per CLAUDE.md: a raised
+    :class:`SchwabAuthError` / :class:`SchwabClientError` becomes a 503
+    with a generic detail; the W-A service's structured failure modes
+    (``status="disconnected" | "expired" | "error"``) are surfaced INSIDE
+    the JSON body with a 200, because they are typed-success states that
+    carry per-status UI affordances on the frontend.
+    """
+    rules = load_rules_config(db)
+    sizing_cap_account = rules.position.sizing_cap_account
+
+    try:
+        cached = get_cached_account_value(db, sizing_cap_account=sizing_cap_account)
+        if cached is not None:
+            return _serialise_account_value(cached)
+        # Cold cache fall-through: one ordinary fetch to warm both tiers.
+        result = get_account_value(
+            db,
+            force_refresh=False,
+            sizing_cap_account=sizing_cap_account,
+        )
+    except SchwabAuthError as exc:
+        # The W-A service never raises on auth errors — every auth failure
+        # is mapped to status="disconnected" / "expired" / "error" on the
+        # returned dataclass. This branch exists as defence in depth: if a
+        # future refactor lets one through we still degrade cleanly.
+        logger.warning("Schwab auth error in /account-value: code=%s", exc.code)
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+    except SchwabClientError:
+        logger.warning("Schwab transport error in /account-value")
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+
+    return _serialise_account_value(result)
+
+
+@router.post("/account-value/refresh")
+def refresh_account_value(db: DBSession = Depends(get_db)):
+    """Force a fresh Schwab account-value fetch.
+
+    Calls :func:`get_account_value` with ``force_refresh=True`` so the W-A
+    service bypasses both the hot in-memory cache and the durable
+    ``app_settings`` cache and makes a Schwab round-trip. Per refinement
+    **S2** of the parallel-execution plan, the W-A service falls through
+    to a fresh hot-cache entry with ``status="ok"`` when the network call
+    fails BUT a fresh cached value still exists — this endpoint surfaces
+    that exact result without remapping the status. The "Refresh"
+    affordance never flips a good cache to "error" on a transient blip.
+
+    Same error sanitisation as ``GET /account-value`` — a raised Schwab
+    auth/client exception becomes a 503 with a generic detail; structured
+    statuses ride inside the 200 body.
+    """
+    rules = load_rules_config(db)
+    sizing_cap_account = rules.position.sizing_cap_account
+
+    try:
+        result = get_account_value(
+            db,
+            force_refresh=True,
+            sizing_cap_account=sizing_cap_account,
+        )
+    except SchwabAuthError as exc:
+        logger.warning("Schwab auth error in /account-value/refresh: code=%s", exc.code)
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+    except SchwabClientError:
+        logger.warning("Schwab transport error in /account-value/refresh")
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+
+    return _serialise_account_value(result)
 
 
 @router.get("/cache", response_model=CacheStatsResponse)

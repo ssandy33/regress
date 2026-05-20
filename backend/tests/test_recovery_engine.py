@@ -52,7 +52,8 @@ class TestCanonicalShape:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         assert [p["path_id"] for p in paths] == list(canonical_path_order())
         assert len(paths) == 4
@@ -62,7 +63,8 @@ class TestCanonicalShape:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         for p in paths:
             assert set(p.keys()) >= {
@@ -94,7 +96,8 @@ class TestCanonicalShape:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         for p in paths:
             assert "irr" not in p, f"path {p['path_id']} leaked stale 'irr' field"
@@ -111,7 +114,8 @@ class TestSellRedeployPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=None,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         sell = next(p for p in paths if p["path_id"] == "sell-redeploy")
         assert sell["eligibility"] == "suppressed"
@@ -124,7 +128,8 @@ class TestSellRedeployPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         sell = next(p for p in paths if p["path_id"] == "sell-redeploy")
         assert sell["eligibility"] == "eligible"
@@ -151,7 +156,8 @@ class TestWheelCcPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         wheel = next(p for p in paths if p["path_id"] == "wheel-cc")
         # The exact "1.5%/month" copy must be in the assumption list — the
@@ -166,7 +172,8 @@ class TestWheelCcPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         wheel = next(p for p in paths if p["path_id"] == "wheel-cc")
         # monthly_premium = 0.015 * $8 * 100 = $12
@@ -183,7 +190,8 @@ class TestWheelCcPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         wheel = next(p for p in paths if p["path_id"] == "wheel-cc")
         # strike_proxy = $8, shares = 100 → $800
@@ -194,7 +202,8 @@ class TestWheelCcPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         wheel = next(p for p in paths if p["path_id"] == "wheel-cc")
         # baseline_annual = $800 * 0.18 = $144
@@ -217,7 +226,8 @@ class TestAverageDownPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=2000.0,
+            sizing_cap_pct=25.0,
+            total_capital=8000.0,
         )
         avg = next(p for p in paths if p["path_id"] == "average-down")
         assert avg["eligibility"] == "suppressed"
@@ -232,7 +242,8 @@ class TestAverageDownPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         avg = next(p for p in paths if p["path_id"] == "average-down")
         assert avg["eligibility"] == "eligible"
@@ -250,7 +261,8 @@ class TestAverageDownPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         avg = next(p for p in paths if p["path_id"] == "average-down")
         assert avg["eligibility"] == "eligible"
@@ -272,7 +284,8 @@ class TestAverageDownPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         avg = next(p for p in paths if p["path_id"] == "average-down")
         be = avg["months_to_breakeven"]
@@ -289,7 +302,8 @@ class TestAverageDownPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         avg = next(p for p in paths if p["path_id"] == "average-down")
         assumption_blob = " ".join(avg["assumptions"])
@@ -308,7 +322,8 @@ class TestAverageDownPath:
             position=_sofi_position(),
             current_price=0.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         avg_zero_price = next(
             p for p in paths_zero_price if p["path_id"] == "average-down"
@@ -321,7 +336,8 @@ class TestAverageDownPath:
             position=_sofi_position(shares=0),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         avg_zero_shares = next(
             p for p in paths_zero_shares if p["path_id"] == "average-down"
@@ -334,7 +350,8 @@ class TestAverageDownPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         avg_eligible = next(p for p in paths_eligible if p["path_id"] == "average-down")
         assert avg_eligible["months_to_breakeven"]["expected"] is not None
@@ -351,7 +368,8 @@ class TestHoldMonitorPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         hold = next(p for p in paths if p["path_id"] == "hold-monitor")
         assert hold["months_to_breakeven"] == {
@@ -365,7 +383,8 @@ class TestHoldMonitorPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         hold = next(p for p in paths if p["path_id"] == "hold-monitor")
         # freed_capital = $800; opp_cost = $800 * 0.18 = $144
@@ -376,7 +395,8 @@ class TestHoldMonitorPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         hold = next(p for p in paths if p["path_id"] == "hold-monitor")
         # adjusted_cost_basis = $3800
@@ -387,7 +407,8 @@ class TestHoldMonitorPath:
             position=_sofi_position(),
             current_price=8.0,
             target_yield=None,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         hold = next(p for p in paths if p["path_id"] == "hold-monitor")
         # Hold needs no target yield to be eligible — it's the "do nothing"
@@ -407,7 +428,8 @@ class TestDeterminism:
             "position": _sofi_position(),
             "current_price": 8.0,
             "target_yield": 0.18,
-            "sizing_cap_dollars": 5000.0,
+            "sizing_cap_pct": 25.0,
+            "total_capital": 20000.0,
         }
         out_a = compute_recovery_paths(**kwargs)
         out_b = compute_recovery_paths(**kwargs)
@@ -458,7 +480,8 @@ class TestEdgeCases:
             position=_sofi_position(adjusted_cost_basis=500.0),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         # sell-redeploy: realized_loss=0 → breakeven range collapses
         sell = next(p for p in paths if p["path_id"] == "sell-redeploy")
@@ -469,7 +492,8 @@ class TestEdgeCases:
             position=_sofi_position(),
             current_price=0.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         wheel = next(p for p in paths if p["path_id"] == "wheel-cc")
         # Premium math collapses to zero — no breakeven horizon.
@@ -480,7 +504,85 @@ class TestEdgeCases:
             position=_sofi_position(shares=0),
             current_price=8.0,
             target_yield=0.18,
-            sizing_cap_dollars=5000.0,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
         )
         wheel = next(p for p in paths if p["path_id"] == "wheel-cc")
         assert wheel["capital_tied_up"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Issue #234 — sizing_cap_pct × total_capital resolution (W-F)
+# ---------------------------------------------------------------------------
+
+
+class TestSizingCapPctResolution:
+    """Average-down sizing-cap behavior under the v1 percent-of-capital
+    contract (issue #234). The resolved dollar ceiling is computed at
+    evaluation time as ``sizing_cap_pct × total_capital ÷ 100``. When
+    ``total_capital is None`` (Schwab unavailable) the path stays
+    eligible with the "cap unenforceable" assumption per §6.2.
+    """
+
+    def test_average_down_suppressed_when_resolved_cap_breached(self):
+        # SOFI override: basis=$1700 + additional ($8 × 100 = $800)
+        # → capital_tied_up = $2500. Resolved cap = 10% × $20,000 = $2,000.
+        # 2500 > 2000 ⇒ path suppressed.
+        paths = compute_recovery_paths(
+            position=_sofi_position(adjusted_cost_basis=1700.0),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_pct=10.0,
+            total_capital=20000.0,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        assert avg["eligibility"] == "suppressed"
+        # Suppression message must name both the % and the resolved $.
+        assert "10% per-position sizing cap" in avg["suppression_reason"]
+        assert "$2,000" in avg["suppression_reason"]
+        # Suppressed contract: capital fields collapse to None.
+        assert avg["capital_tied_up"] is None
+        assert avg["opportunity_cost_vs_baseline"] is None
+
+    def test_average_down_eligible_with_cap_unenforceable_when_total_capital_none(self):
+        # §6.2 contract: when Schwab account value is unavailable
+        # (total_capital is None) the path must NOT be suppressed —
+        # the user is never silently let through. Instead the path
+        # stays eligible with an explicit "unenforceable" assumption.
+        # SOFI override: basis=$9200 + $800 = $10,000 — would be far
+        # above any reasonable cap, but with total_capital=None there
+        # is no resolved ceiling to compare against.
+        paths = compute_recovery_paths(
+            position=_sofi_position(adjusted_cost_basis=9200.0),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_pct=25.0,
+            total_capital=None,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        assert avg["eligibility"] == "eligible"
+        assert avg["suppression_reason"] is None
+        # Sanity: capital tied up is the new-basis total ($10,000).
+        assert avg["capital_tied_up"] == pytest.approx(10000.0)
+        # Assumption text must surface the unenforceable state.
+        assumption_blob = " ".join(avg["assumptions"])
+        assert "unenforceable" in assumption_blob
+        assert "Schwab account value unavailable" in assumption_blob
+
+    def test_average_down_within_resolved_cap_uses_pct_in_message(self):
+        # SOFI override: basis=$3200 + $800 = $4000.
+        # Resolved cap = 25% × $20,000 = $5,000. 4000 ≤ 5000 ⇒ eligible.
+        # Assumption text must name the % and the resolved $.
+        paths = compute_recovery_paths(
+            position=_sofi_position(adjusted_cost_basis=3200.0),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        assert avg["eligibility"] == "eligible"
+        assert avg["capital_tied_up"] == pytest.approx(4000.0)
+        assumption_blob = " ".join(avg["assumptions"])
+        assert "25% sizing cap" in assumption_blob
+        assert "≈ $5,000" in assumption_blob
