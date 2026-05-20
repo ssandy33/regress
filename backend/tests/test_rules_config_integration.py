@@ -13,7 +13,7 @@ Covered:
 - A covered-call scan surfaces ``below_cost_basis``; the candidate stays in
   the response (never dropped); ``cost_basis_floor_enabled=False`` suppresses it.
 - A stored ``min_open_interest`` rejects a strike the default floor would pass.
-- The recovery endpoint honors a stored ``sizing_cap_dollars``.
+- The recovery endpoint honors a stored ``sizing_cap_pct``.
 - The action engine's ITM/short-DTE card honors a non-default
   ``management.expiration_warning_days`` — the boundary shifts with the stored
   value, not the catalog default.
@@ -141,7 +141,7 @@ def _full_rules_config(**overrides) -> str:
             "min_call_distance_from_cost_basis_pct": 0.0,
         },
         "position": {
-            "sizing_cap_dollars": 5000.0,
+            "sizing_cap_pct": 25.0,
             "max_ticker_concentration_pct": 25.0,
         },
     }
@@ -367,15 +367,19 @@ def test_scan_min_open_interest_rejects_thin_strike(client):
 def test_recovery_endpoint_honors_stored_sizing_cap(client):
     """The recovery endpoint resolves its sizing cap from ``rules_config``.
 
-    With a stored ``position.sizing_cap_dollars`` of $500, the average-down
-    path is suppressed at a capital level the default $5,000 cap would allow.
+    With a stored ``position.sizing_cap_pct`` of 2.5 and a ``total_capital`` of
+    $20,000, the resolved cap is $500 — the average-down path is suppressed at
+    a capital level the default 25% cap would allow.
     """
     _seed_position(client, broker_cost_basis=3800.0)
     _seed_setting(client, "okr_target_yield", "0.18")
+    _seed_setting(client, "okr_total_capital", "20000.0")
     _seed_setting(
         client,
         RULES_CONFIG_KEY,
-        _full_rules_config(position={"sizing_cap_dollars": 500.0}),
+        _full_rules_config(
+            position={"sizing_cap_pct": 2.5, "sizing_cap_account": None}
+        ),
     )
     with patch.object(SchwabClient, "get_quote", return_value={"lastPrice": 8.0}):
         resp = client.post("/api/positions/pos-sofi/recovery-plan")
@@ -383,8 +387,9 @@ def test_recovery_endpoint_honors_stored_sizing_cap(client):
     payload = resp.json()
     assert payload["state"] == "populated"
     # The resolved cap is surfaced on the inputs block.
-    assert payload["inputs"]["okr"]["sizing_cap_dollars"] == pytest.approx(500.0)
-    # $800+ of fresh capital would breach the $500 cap → average-down suppressed.
+    assert payload["inputs"]["okr"]["sizing_cap_pct"] == pytest.approx(2.5)
+    assert payload["inputs"]["okr"]["resolved_sizing_cap_dollars"] == pytest.approx(500.0)
+    # $800+ of fresh capital would breach the $500 resolved cap → average-down suppressed.
     avg = next(p for p in payload["paths"] if p["path_id"] == "average-down")
     assert avg["eligibility"] == "suppressed"
 
@@ -396,7 +401,7 @@ def test_recovery_endpoint_default_sizing_cap_with_no_rules_row(client):
     with patch.object(SchwabClient, "get_quote", return_value={"lastPrice": 8.0}):
         resp = client.post("/api/positions/pos-sofi/recovery-plan")
     assert resp.status_code == 200
-    assert resp.json()["inputs"]["okr"]["sizing_cap_dollars"] == pytest.approx(5000.0)
+    assert resp.json()["inputs"]["okr"]["sizing_cap_pct"] == pytest.approx(25.0)
 
 
 # ---------------------------------------------------------------------------
