@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -26,6 +27,7 @@ from app.services.backup import create_backup, list_backups, restore_backup
 from app.services.rules_config import (
     RULES_CONFIG_KEY,
     RULES_CONFIG_SCHEMA_VERSION,
+    SIZING_CAP_MIGRATION_KEY,
     RulesConfig,
     load_rules_config,
 )
@@ -107,15 +109,75 @@ def update_setting(req: SettingUpdate, db: DBSession = Depends(get_db)):
 # --- Trading Rules config (issue #158 — edit surface for the #156 keystone) ---
 
 
-@router.get("/rules", response_model=RulesConfig)
+def _read_sizing_cap_migration(db: DBSession) -> dict | None:
+    """Read the one-time sizing-cap migration marker from ``app_settings``.
+
+    Returns the decoded JSON payload (with ``previous_sizing_cap_dollars``,
+    ``migrated_at``, ``dismissed_at`` keys) or ``None`` when no migration has
+    happened on this DB. A malformed row is also treated as ``None`` —
+    callers fall through to "no migration banner" rather than 500.
+    """
+    entry = (
+        db.query(AppSetting)
+        .filter(AppSetting.key == SIZING_CAP_MIGRATION_KEY)
+        .first()
+    )
+    if entry is None or not entry.value:
+        return None
+    try:
+        parsed = json.loads(entry.value)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        logger.warning(
+            "Stored %s row is not valid JSON; surfacing as no-migration.",
+            SIZING_CAP_MIGRATION_KEY,
+        )
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+@router.get("/rules")
 def get_rules_config(db: DBSession = Depends(get_db)):
-    """Get the Trading Rules config.
+    """Get the Trading Rules config plus the sizing-cap migration status.
 
     Backed by :func:`app.services.rules_config.load_rules_config`, which
     merges any stored ``rules_config`` row over the typed defaults and never
     raises — so this endpoint always returns a complete, valid config.
+
+    **S4 augmentation (issue #234 / V1 contract):** the response carries an
+    extra ``migration`` sibling key alongside the existing flat
+    :class:`RulesConfig` fields. The frontend banner that announces the
+    v1 → v2 sizing-cap migration reads ``migration.sizing_cap`` to decide
+    whether to render the dismissible "we changed dollars → percent"
+    callout. The migration object is ``null`` when no migration has happened
+    on this DB; otherwise it carries the previous dollar value, the
+    migration timestamp, and the ``dismissed_at`` timestamp (or ``null``
+    when the banner has not been dismissed yet).
+
+    Shape::
+
+        {
+          "schema_version": 2,
+          "universe": {...},
+          "entry":    {...},
+          "position": {...},
+          "risk":     {...},
+          "management": {...},
+          "migration": {
+            "sizing_cap": null | {
+              "previous_sizing_cap_dollars": <float | null>,
+              "migrated_at": "<iso8601>",
+              "dismissed_at": "<iso8601>" | null
+            }
+          }
+        }
     """
-    return load_rules_config(db)
+    rules = load_rules_config(db)
+    migration = _read_sizing_cap_migration(db)
+    payload = rules.model_dump()
+    payload["migration"] = {"sizing_cap": migration}
+    return payload
 
 
 @router.put("/rules", response_model=RulesConfig)
@@ -139,6 +201,51 @@ def update_rules_config(config: RulesConfig, db: DBSession = Depends(get_db)):
         db.add(entry)
     db.commit()
     return config
+
+
+@router.post("/rules/migration/sizing-cap/dismiss")
+def dismiss_sizing_cap_migration(db: DBSession = Depends(get_db)):
+    """Mark the sizing-cap migration banner as dismissed.
+
+    Stamps the ``dismissed_at`` field on the one-time
+    ``sizing_cap_migration`` marker row to ``datetime.utcnow().isoformat()``.
+    Idempotent — a second call simply re-stamps ``dismissed_at`` to the new
+    timestamp and returns the same migration object.
+
+    Returns the updated migration object (the same shape carried by
+    ``GET /api/settings/rules`` under ``migration.sizing_cap``). When no
+    migration has happened on this DB at all the call is a no-op and
+    returns ``{"sizing_cap": null}`` — the UI never asks to dismiss a
+    banner that never existed, but we surface a 200 either way to keep the
+    endpoint truly idempotent.
+    """
+    entry = (
+        db.query(AppSetting)
+        .filter(AppSetting.key == SIZING_CAP_MIGRATION_KEY)
+        .first()
+    )
+    if entry is None or not entry.value:
+        return {"sizing_cap": None}
+
+    try:
+        parsed = json.loads(entry.value)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        # A malformed row is indistinguishable from "no marker" for the
+        # banner; surface as no-op. We deliberately don't repair the row
+        # here — load_rules_config already tolerates it as missing.
+        logger.warning(
+            "Stored %s row is not valid JSON; dismiss is a no-op.",
+            SIZING_CAP_MIGRATION_KEY,
+        )
+        return {"sizing_cap": None}
+
+    if not isinstance(parsed, dict):
+        return {"sizing_cap": None}
+
+    parsed["dismissed_at"] = datetime.now(timezone.utc).isoformat()
+    entry.value = json.dumps(parsed)
+    db.commit()
+    return {"sizing_cap": parsed}
 
 
 @router.get("/cache", response_model=CacheStatsResponse)

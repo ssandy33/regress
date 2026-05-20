@@ -35,10 +35,18 @@ class TestGetRulesConfig:
     """GET /api/settings/rules — read the Trading Rules config."""
 
     def test_returns_defaults_when_unset(self, client):
-        """With no stored row, the endpoint returns the catalog defaults."""
+        """With no stored row, the endpoint returns the catalog defaults.
+
+        Note: as of issue #234 the endpoint also returns a ``migration``
+        sibling field (S4 refinement) — ``null`` when no migration has
+        happened on this DB. The rest of the payload still matches the
+        :class:`RulesConfig` defaults exactly.
+        """
         response = client.get("/api/settings/rules")
         assert response.status_code == 200
         data = response.json()
+        # Strip the S4 sibling before comparing against the typed defaults.
+        assert data.pop("migration") == {"sizing_cap": None}
         assert data == DEFAULT_RULES_CONFIG.model_dump()
         # Spot-check a few catalog defaults and the whole-percent convention.
         assert data["schema_version"] == RULES_CONFIG_SCHEMA_VERSION
@@ -143,7 +151,11 @@ class TestPutRulesConfig:
         bad = client.put("/api/settings/rules", json=config)
         assert bad.status_code == 422
         assert _read_rules_row(client) is None
-        assert client.get("/api/settings/rules").json() == DEFAULT_RULES_CONFIG.model_dump()
+        # Strip the S4 ``migration`` sibling before comparing — it is the
+        # GET-only augmentation (issue #234) and never written by PUT.
+        got = client.get("/api/settings/rules").json()
+        assert got.pop("migration") == {"sizing_cap": None}
+        assert got == DEFAULT_RULES_CONFIG.model_dump()
 
     def test_overwrites_existing_row(self, client):
         """A second PUT overwrites the first stored config."""
