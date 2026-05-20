@@ -250,6 +250,12 @@ class SchwabClient:
 
         return resp.json()
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        retry=retry_if_exception_type(SchwabClientError),
+        reraise=True,
+    )
     def get_accounts(self) -> list[dict]:
         """Get linked brokerage accounts from Trader API."""
         url = f"{self.TRADER_BASE_URL}/accounts"
