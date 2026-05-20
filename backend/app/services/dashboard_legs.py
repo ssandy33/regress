@@ -223,14 +223,19 @@ def derive_leg_economics(
 ) -> dict:
     """Return the coverage + dollar-economics payload for one open leg (#246).
 
-    ``coverage`` is derived from the ``shares`` key on the position dict, not
-    from any live option quote, so it survives the degraded path:
-    - short call & ``position_shares > 0``  → ``"covered"``
-    - short call & ``position_shares == 0`` → ``"naked"``
-    - a short put                           → ``None``
+    ``coverage`` is derived from the ``shares`` key on the position dict and
+    the ``quantity`` of contracts on the leg, not from any live option quote,
+    so it survives the degraded path. The tri-state (V1.0.8 / #251) is:
 
-    Coverage is binary — there is no "partially covered" state (a short 2-call
-    leg against 100 shares still reads ``"covered"``).
+    - short call & ``position_shares >= quantity * 100`` → ``"covered"``
+    - short call & ``0 < position_shares < quantity * 100`` → ``"partial"``
+    - short call & ``position_shares == 0`` → ``"naked"``
+    - a short put → ``None``
+
+    ``quantity`` missing / ``0`` / ``None`` degrades the tri-state to the
+    pre-#251 binary behavior (``"covered"`` if shares > 0, ``"naked"`` if
+    shares == 0) — preserves the v1.0.6 contract for legs that pre-date the
+    ``quantity`` field.
 
     ``pnl_dollars`` and ``cost_to_close`` are whole-position dollars
     (per-share value × :data:`OPTION_MULTIPLIER` × quantity) — the figures that
@@ -261,9 +266,19 @@ def derive_leg_economics(
         ``{"coverage", "premium", "pnl_dollars", "cost_to_close"}``.
     """
     if option_type == "call":
-        coverage: Literal["covered", "naked"] | None = (
-            "covered" if position_shares > 0 else "naked"
-        )
+        # Tri-state coverage (#251). ``quantity`` missing/0/None degrades to
+        # the pre-#251 binary fallback so legs that pre-date the quantity
+        # field still classify cleanly.
+        if position_shares <= 0:
+            coverage: Literal["covered", "partial", "naked"] | None = "naked"
+        elif quantity and quantity > 0:
+            underlying_needed = quantity * OPTION_MULTIPLIER
+            if position_shares >= underlying_needed:
+                coverage = "covered"
+            else:
+                coverage = "partial"
+        else:
+            coverage = "covered"
     else:
         coverage = None
 

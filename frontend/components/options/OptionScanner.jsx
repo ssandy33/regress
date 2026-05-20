@@ -219,8 +219,14 @@ export default function OptionScannerPage() {
               />
 
               {/* Rejected Strikes — humanized sentences via the backend
-                  `human_reasons` field. Spec §4.4. */}
-              <ScannerRejectedStrikes rejected={result.rejected} />
+                  `human_reasons` field. Spec §4.4. Ticker + strategy are
+                  forwarded for V1.0.8's "Relax to X" popover (#258) so the
+                  panel can echo them in the relax preview POST. */}
+              <ScannerRejectedStrikes
+                rejected={result.rejected}
+                ticker={result.ticker}
+                strategy={result.strategy}
+              />
             </>
           )}
         </main>

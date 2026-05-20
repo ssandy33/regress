@@ -43,13 +43,19 @@ export function dteBadgeClass(dte) {
 }
 
 /**
- * coverageBadge — the per-leg covered/naked pill (issue #246, spec §2).
+ * coverageBadge — the per-leg covered/partial/naked pill (issue #246 / #251).
  *
- * Pure render helper. `covered` → quiet emerald pill; `naked` → amber `⚠`
- * pill (the exact recipe `dteBadgeClass` uses at `dte <= 14`). Any other
- * value (`null`/undefined — a short put or a pre-#246 payload) renders
- * nothing. The badge is severity, not scan: it carries no `hidden lg:*` and
- * survives every breakpoint.
+ * Pure render helper. Three recipes:
+ *  - `covered` → quiet emerald pill (no glyph).
+ *  - `partial` → slate `⚠ Partial` pill (V1.0.8 / #251) — the same neutral
+ *    slate recipe `dteBadgeClass` uses at `dte > 14`, with the `⚠` glyph for
+ *    color-blind distinction from `covered`.
+ *  - `naked` → amber `⚠ Naked` pill (the exact recipe `dteBadgeClass` uses at
+ *    `dte <= 14`).
+ *
+ * Any other value (`null`/undefined — a short put or a pre-#246 payload)
+ * renders nothing. The badge is severity, not scan: it carries no
+ * `hidden lg:*` and survives every breakpoint.
  *
  * `testIdPrefix` makes the badge's `data-testid` unambiguous when the same
  * helper is rendered at two callsites (row vs. InspectPanel echo). The
@@ -66,6 +72,20 @@ export function coverageBadge(coverage, { testIdPrefix = 'dashboard-leg-row' } =
         className={`${PILL_SHAPE} bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300`}
       >
         Covered
+      </span>
+    );
+  }
+  if (coverage === 'partial') {
+    return (
+      <span
+        data-testid={`${testIdPrefix}-coverage`}
+        data-coverage="partial"
+        className={`${PILL_SHAPE} bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200`}
+      >
+        <span aria-hidden="true" className="mr-0.5">
+          ⚠
+        </span>
+        Partial
       </span>
     );
   }

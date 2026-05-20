@@ -254,6 +254,20 @@ export async function scanOptions(request) {
   return data;
 }
 
+// Rejected-strikes "Relax to X" preview (issue #258, v1.0.8).
+// Stateless what-if — client echoes the `rejected[]` array from the most
+// recent scan; the server never re-fetches market data. Mirrored test IDs
+// in `ScannerRejectedStrikesRelaxPopover.jsx`.
+export async function postRelaxPreview({ ticker, strategy, rule, rejected }) {
+  const { data } = await api.post('/api/options/scan/relax', {
+    ticker,
+    strategy,
+    rule,
+    rejected,
+  });
+  return data;
+}
+
 export async function getEarningsDate(ticker) {
   const { data } = await api.get(`/api/options/earnings/${encodeURIComponent(ticker)}`);
   return data;

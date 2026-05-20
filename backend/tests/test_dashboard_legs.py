@@ -1119,6 +1119,108 @@ class TestDeriveOpenLegsEconomics:
         assert leg["cost_to_close"] is None
         assert leg["premium"] == 0.521
 
+    # ---- V1.0.8 / #251 — partial-coverage tri-state ----
+
+    def test_wheel_position_per_leg_partial_coverage(self):
+        # 100 held shares + 2 short calls (200 shares' worth of obligation).
+        # Both call legs share the same position dict — the per-leg `quantity`
+        # is what flips them from `covered` to `partial`. The sell_put leg on
+        # the same wheel still reads `None` (coverage is a short-call axis).
+        positions = [
+            self._position(
+                "TSLA",
+                "p-tsla-partial",
+                [
+                    {
+                        "id": "t-call-2x",
+                        "trade_type": "sell_call",
+                        "strike": 260.0,
+                        "expiration": "2026-06-19",
+                        "premium": 3.00,
+                        "quantity": 2,
+                        "closed_at": None,
+                    },
+                    {
+                        "id": "t-put-1x",
+                        "trade_type": "sell_put",
+                        "strike": 220.0,
+                        "expiration": "2026-06-19",
+                        "premium": 2.50,
+                        "quantity": 1,
+                        "closed_at": None,
+                    },
+                ],
+                shares=100,
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"TSLA": 240.0},
+            today=date(2026, 5, 19),
+        )
+        by_id = {leg["id"]: leg for leg in legs}
+        # Only 100 of the 200 shares needed to back the 2 short calls — partial.
+        assert by_id["t-call-2x"]["coverage"] == "partial"
+        # The cash-secured put leg remains coverage-less.
+        assert by_id["t-put-1x"]["coverage"] is None
+
+    def test_partial_at_boundary(self):
+        # 99 shares vs. 1 short call (100 shares needed) — one share short of
+        # covered. The strict-inequality lower boundary of the `covered` branch.
+        positions = [
+            self._position(
+                "F",
+                "p-f-99",
+                [
+                    {
+                        "id": "t-f15c-99",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2026-06-26",
+                        "premium": 0.3834,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+                shares=99,
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"F": 13.50},
+            today=date(2026, 5, 19),
+        )
+        assert legs[0]["coverage"] == "partial"
+
+    def test_covered_when_shares_meet_obligation_exactly(self):
+        # 100 shares vs. 1 short call (100 shares needed) — the inclusive
+        # boundary of the `covered` branch. An exact match is `covered`, not
+        # `partial`. Pinned so a future refactor does not flip the `>=` to `>`.
+        positions = [
+            self._position(
+                "F",
+                "p-f-exact",
+                [
+                    {
+                        "id": "t-f15c-exact",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2026-06-26",
+                        "premium": 0.3834,
+                        "quantity": 1,
+                        "closed_at": None,
+                    }
+                ],
+                shares=100,
+            )
+        ]
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"F": 13.50},
+            today=date(2026, 5, 19),
+        )
+        assert legs[0]["coverage"] == "covered"
+
 
 class TestDashboardOpenLegSchemaBackwardCompat:
     """Schema-level guard: the V1.0.6 (#246) economics fields are optional.
@@ -1152,3 +1254,132 @@ class TestDashboardOpenLegSchemaBackwardCompat:
         assert leg.premium is None
         assert leg.pnl_dollars is None
         assert leg.cost_to_close is None
+
+
+class TestDashboardOpenLegQuantity:
+    """Quantity field + per-contract economics reconciliation (V1.0.8 #252).
+
+    The InspectPanel renders `Credit received = premium * 100 * quantity` on
+    the degraded path. These tests pin the schema field default and confirm
+    `derive_leg_economics` scales `pnl_dollars` / `cost_to_close` by the
+    trade's quantity (the field is wired through `dashboard_legs.py:479`).
+    """
+
+    def _position(
+        self,
+        ticker: str,
+        position_id: str,
+        trades: list[dict],
+        shares: int = 0,
+    ) -> dict:
+        return {
+            "id": position_id,
+            "ticker": ticker,
+            "shares": shares,
+            "trades": trades,
+        }
+
+    def test_quantity_field_defaults_to_1(self):
+        # A pre-#252 payload (no `quantity` key) must still validate, with
+        # `quantity` resolving to `1`. Protects backward compat with legacy
+        # tests and cached fixtures.
+        old_payload = {
+            "id": "leg-1",
+            "ticker": "AAPL",
+            "type": "put",
+            "strike": 175.0,
+            "expiration": "2026-05-08",
+            "dte": 7,
+            "moneyness": None,
+            "position_id": "pos-aapl",
+            "profit_target_status": {"captured_pct": None, "state": "unknown"},
+            "assignment_risk": "low",
+            "suggested_action": "hold",
+            "earnings_in_window": False,
+        }
+        leg = DashboardOpenLeg(**old_payload)
+        assert leg.quantity == 1
+
+    def test_quantity_2_dollars_reconcile(self):
+        # qty=2, premium=$3.00/sh, current_mid=$1.50/sh.
+        # Credit received  = premium * 100 * qty  = 3.00 * 100 * 2 = $600
+        # cost_to_close    = mid * 100 * qty      = 1.50 * 100 * 2 = $300
+        # pnl_dollars      = (prem-mid)*100*qty   = 1.50 * 100 * 2 = $300
+        # => credit_received == pnl_dollars + cost_to_close  (V1.0.6 §3.4)
+        positions = [
+            self._position(
+                "AAPL",
+                "p-aapl",
+                [
+                    {
+                        "id": "t-aapl175c",
+                        "trade_type": "sell_call",
+                        "strike": 175.0,
+                        "expiration": "2026-06-19",
+                        "premium": 3.00,
+                        "quantity": 2,
+                        "closed_at": None,
+                    }
+                ],
+                shares=200,
+            )
+        ]
+        option_marks = {("AAPL", "call", 175.0, "2026-06-19"): 1.50}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"AAPL": 170.0},
+            today=date(2026, 5, 19),
+            option_marks=option_marks,
+        )
+        leg = legs[0]
+        assert leg["quantity"] == 2
+        assert leg["pnl_dollars"] == 300.00
+        assert leg["cost_to_close"] == 300.00
+        # The reconciliation identity the InspectPanel relies on:
+        assert leg["pnl_dollars"] + leg["cost_to_close"] == leg["premium"] * 100 * leg["quantity"]
+
+    def test_quantity_3_economics_scale(self):
+        # Two-leg comparison: qty=1 vs qty=3 with identical premium/mid → the
+        # qty=3 leg's dollar figures are exactly 3× the qty=1 leg's. Confirms
+        # the field is wired through from `Trade.quantity` to the schema.
+        positions = [
+            self._position(
+                "F",
+                "p-f",
+                [
+                    {
+                        "id": "t-f15c-qty1",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2026-06-26",
+                        "premium": 0.3834,
+                        "quantity": 1,
+                        "closed_at": None,
+                    },
+                    {
+                        "id": "t-f15c-qty3",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2026-06-26",
+                        "premium": 0.3834,
+                        "quantity": 3,
+                        "closed_at": None,
+                    },
+                ],
+                shares=300,
+            )
+        ]
+        option_marks = {("F", "call", 15.0, "2026-06-26"): 0.155}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"F": 13.50},
+            today=date(2026, 5, 19),
+            option_marks=option_marks,
+        )
+        by_id = {leg["id"]: leg for leg in legs}
+        qty1 = by_id["t-f15c-qty1"]
+        qty3 = by_id["t-f15c-qty3"]
+        assert qty1["quantity"] == 1
+        assert qty3["quantity"] == 3
+        assert qty3["pnl_dollars"] == pytest.approx(qty1["pnl_dollars"] * 3)
+        assert qty3["cost_to_close"] == pytest.approx(qty1["cost_to_close"] * 3)
