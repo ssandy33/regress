@@ -4,7 +4,6 @@ import StatusStrip from './StatusStrip';
 import DataReadinessBanner from './DataReadinessBanner';
 import NextActionsSection from './NextActionsSection';
 import KpiRow from './KpiRow';
-import UpcomingExpirationsCard from './UpcomingExpirationsCard';
 import OpenLegsCard from './OpenLegsCard';
 import DashboardPositionsCard from './DashboardPositionsCard';
 import RecentActivityCard from './RecentActivityCard';
@@ -80,21 +79,7 @@ export default function DashboardPage() {
 
                 <KpiRow kpis={data?.kpis} />
 
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                  <div className="lg:col-span-7">
-                    <UpcomingExpirationsCard
-                      expirations={data?.upcoming_expirations}
-                      openLegsCount={data?.kpis?.open_legs}
-                      loading={loading}
-                    />
-                  </div>
-                  <div className="lg:col-span-5">
-                    <OpenLegsCard
-                      legs={data?.open_legs}
-                      loading={loading}
-                    />
-                  </div>
-                </div>
+                <OpenLegsCard legs={data?.open_legs} loading={loading} />
 
                 <DashboardPositionsCard
                   positions={data?.positions}
