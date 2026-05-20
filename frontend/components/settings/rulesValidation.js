@@ -67,8 +67,6 @@ export function validateScalar(kind, value, optional = false) {
       return n <= 0 || n > 100 ? MSG.pctOpen100 : null;
     case 'nonNeg':
       return n < 0 ? MSG.nonNeg : null;
-    case 'capPos':
-      return n <= 0 ? MSG.positive : null;
     case 'lossPct':
       return n > 0 ? MSG.loss : null;
     case 'posInt':
