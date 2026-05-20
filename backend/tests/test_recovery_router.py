@@ -406,3 +406,160 @@ def test_recovery_plan_response_matches_schema(client):
     from app.models.schemas import RecoveryPlanResponse
 
     RecoveryPlanResponse.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
+# Issue #234 (W-H) — RecoveryOkrInputs V1 contract
+#
+# The five sizing-cap fields (sizing_cap_pct, total_capital,
+# resolved_sizing_cap_dollars, account_id_masked, capital_status) must
+# round-trip through the populated response, and the Sizing-cap assumption
+# row must render the §6.2 contract copy on both the ok path and the
+# cap-unenforceable path.
+# ---------------------------------------------------------------------------
+
+
+def _patch_account_cache(monkeypatch, result):
+    """Patch ``positions.get_cached_account_value`` to return ``result``.
+
+    The router resolves the cache via its imported reference, so we patch
+    the binding on :mod:`app.routers.positions` rather than the source
+    module to ensure the override is honored regardless of import order.
+    """
+    from app.routers import positions as positions_router
+
+    monkeypatch.setattr(
+        positions_router,
+        "get_cached_account_value",
+        lambda db, sizing_cap_account=None: result,
+    )
+
+
+def test_okr_inputs_shape_ok_when_schwab_cache_populated(client, monkeypatch):
+    """A fresh ok-status cache entry flows into the populated OKR inputs.
+
+    Issue #234 V1 contract — the five sizing-cap fields are present and
+    populated when the Schwab account-value cache holds a fresh ok entry.
+    """
+    from datetime import datetime, timezone
+
+    from app.services.schwab_account_value import AccountValueResult
+
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    _patch_account_cache(
+        monkeypatch,
+        AccountValueResult(
+            status="ok",
+            total_capital=20000.0,
+            account_id_masked="…4471",
+            account_type="MARGIN",
+            cached_at=datetime.now(timezone.utc),
+        ),
+    )
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["state"] == "populated"
+    okr = payload["inputs"]["okr"]
+    assert okr["sizing_cap_pct"] == pytest.approx(25.0)
+    assert okr["total_capital"] == pytest.approx(20000.0)
+    assert okr["resolved_sizing_cap_dollars"] == pytest.approx(5000.0)
+    assert okr["account_id_masked"] == "…4471"
+    assert okr["capital_status"] == "ok"
+
+
+def test_okr_inputs_shape_when_capital_status_error_returns_null_total_capital(
+    client, monkeypatch
+):
+    """A cache result with ``status='error'`` surfaces as the unenforceable
+    shape: ``capital_status='error'``, ``total_capital`` and
+    ``resolved_sizing_cap_dollars`` both ``None``.
+    """
+    from datetime import datetime, timezone
+
+    from app.services.schwab_account_value import AccountValueResult
+
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    _patch_account_cache(
+        monkeypatch,
+        AccountValueResult(
+            status="error",
+            total_capital=None,
+            account_id_masked=None,
+            cached_at=datetime.now(timezone.utc),
+            error_detail="Schwab API error",
+        ),
+    )
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["state"] == "populated"
+    okr = payload["inputs"]["okr"]
+    assert okr["capital_status"] == "error"
+    assert okr["total_capital"] is None
+    assert okr["resolved_sizing_cap_dollars"] is None
+    # The percent is still surfaced — the row still tells the user what
+    # the configured cap is even when the dollar ceiling is unenforceable.
+    assert okr["sizing_cap_pct"] == pytest.approx(25.0)
+
+
+def test_assumptions_panel_formats_resolved_dollars_when_ok(client, monkeypatch):
+    """Happy path — the Sizing-cap assumption value renders the percent
+    plus the resolved dollar ceiling: ``"25% (≈ $5,000)"``.
+    """
+    from datetime import datetime, timezone
+
+    from app.services.schwab_account_value import AccountValueResult
+
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    _patch_account_cache(
+        monkeypatch,
+        AccountValueResult(
+            status="ok",
+            total_capital=20000.0,
+            account_id_masked="…4471",
+            account_type="MARGIN",
+            cached_at=datetime.now(timezone.utc),
+        ),
+    )
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    payload = resp.json()
+    by_label = {a["label"]: a for a in payload["assumptions"]}
+    cap_row = by_label["Sizing cap (Average down)"]
+    assert "25%" in cap_row["value"]
+    assert "≈ $5,000" in cap_row["value"]
+
+
+def test_assumptions_panel_formats_unavailable_when_capital_status_error(
+    client, monkeypatch
+):
+    """Degraded path — the Sizing-cap row names the unenforceable state
+    explicitly: ``"25% — Schwab account value unavailable"``.
+    """
+    from datetime import datetime, timezone
+
+    from app.services.schwab_account_value import AccountValueResult
+
+    _seed_position(client, broker_cost_basis=3800.0, shares=100)
+    _patch_account_cache(
+        monkeypatch,
+        AccountValueResult(
+            status="error",
+            total_capital=None,
+            account_id_masked=None,
+            cached_at=datetime.now(timezone.utc),
+            error_detail="Schwab API error",
+        ),
+    )
+    with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    payload = resp.json()
+    by_label = {a["label"]: a for a in payload["assumptions"]}
+    cap_row = by_label["Sizing cap (Average down)"]
+    assert "25%" in cap_row["value"]
+    assert "Schwab account value unavailable" in cap_row["value"]
