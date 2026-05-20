@@ -14,9 +14,16 @@
 //      `rejection_reasons.length === 1`, replacing the right-aligned reason
 //      count. Reason text uses a fact-led "Would pass — …" framing.
 //
+// V1.0.8 (#259, W-E) layers per-row collapse on top of the 3-tier
+// stratification: rows with `rejection_reasons.length >= 3` render a one-line
+// preview ("$NN.NN YYYY-MM-DD  N reasons hidden  Show ▾") by default. A
+// single global localStorage flag (`scanner-rejected-strikes-row-collapsed`)
+// controls whether ALL ≥3-reason rows are collapsed or expanded together —
+// clicking any one toggle flips every collapsible row at once. 1- and
+// 2-reason rows are unchanged.
+//
 // The Card shell, the toggle button, the row test ID, and the
-// `visibleCount=20` cap + tail are unchanged. #259 (W-E) will later wrap
-// `RejectedRow` in a <details> for `rejection_reasons.length >= 3`.
+// `visibleCount=20` cap + tail are unchanged.
 //
 // Source of truth for human sentences remains the backend's `human_reasons`
 // field (populated by `backend/app/services/rejection_messages.py`); the
@@ -25,6 +32,7 @@
 //
 // Specs:
 //   - frontend/design-specs/issue-257-rejected-strikes-polish.md (V1.0.8)
+//   - frontend/design-specs/issue-259-collapse-3plus.md (V1.0.8)
 //   - frontend/design-specs/scanner-education-v0.5.7.md (Affordance 4)
 
 import { useMemo, useState } from 'react';
@@ -49,6 +57,36 @@ const BINARY_RULE_HINTS = {
   itm_put: 'Not relaxable — itm_put is a yes/no rule',
   zero_bid: 'Not relaxable — zero bid means no market',
 };
+
+// V1.0.8 / #259 — single global localStorage key that controls whether ALL
+// ≥3-reason rows render collapsed (default true) or expanded. The boolean is
+// stored as '1' (collapsed) / '0' (expanded) to match `ScannerStrategyPrimer`'s
+// convention. Pinned by the V1 contract — do not rename.
+const ROW_COLLAPSE_STORAGE_KEY = 'scanner-rejected-strikes-row-collapsed';
+
+// Persistence helpers — copied verbatim from `ScannerStrategyPrimer.jsx:52-71`
+// per the spec's "copy at two, promote at three" rule. Do not lift to a shared
+// utility until a third caller appears.
+function readPersistedCollapsed(key) {
+  if (typeof window === 'undefined') return true;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return true; // default = collapsed on first visit
+    return raw === '1';
+  } catch {
+    return true;
+  }
+}
+
+function writePersistedCollapsed(key, collapsed) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, collapsed ? '1' : '0');
+  } catch {
+    // localStorage may be disabled (Safari private mode, etc.) — silently
+    // ignore. The panel will still toggle visually within the session.
+  }
+}
 
 // Defensive fallback only — the backend is the canonical source.
 // Keys are the code prefix (everything before the colon in a raw rejection).
@@ -174,9 +212,14 @@ function NearPassBadge() {
   );
 }
 
-function RejectedRow({ rejection }) {
+function RejectedRow({ rejection, rowCollapsed, onToggleCollapsed }) {
   const rawReasons = rejection.rejection_reasons || [];
   const isNearPass = rawReasons.length === 1;
+  // Collapse trigger uses rawReasons.length (structural source), NOT
+  // humanReasons.length (humanized presentation). The threshold is the
+  // canonical rejection count, regardless of presentation transforms.
+  const collapsible = rawReasons.length >= 3;
+  const isCollapsed = collapsible && rowCollapsed;
 
   // For normal/structural rows continue to prefer the backend's
   // human_reasons; fall back to the client-side humanization only when the
@@ -193,11 +236,14 @@ function RejectedRow({ rejection }) {
     ? formatNearPassReason(rawReasons[0]) || humanReasons[0]
     : null;
 
-  return (
-    <li
-      data-testid="scanner-rejected-strike-row"
-      className="py-2 border-b border-slate-100 dark:border-slate-700 last:border-0"
-    >
+  // Row body — strike + expiration header line, the count/badge cluster, and
+  // (when expanded) the reason text/bullets. For ≥3-reason rows this body is
+  // wrapped in a <div data-testid="scanner-rejected-strike-group"
+  // data-collapsed="…"> so Playwright can target the collapsible-row group
+  // without breaking W-A's existing `scanner-rejected-strike-row` assertions
+  // (the <li> retains the row testid for every row, collapsible or not).
+  const body = (
+    <>
       <div className="flex items-baseline justify-between gap-3 mb-1">
         <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
           ${rejection.strike.toFixed(2)} {rejection.expiration}
@@ -205,14 +251,29 @@ function RejectedRow({ rejection }) {
         {isNearPass ? (
           <NearPassBadge />
         ) : (
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            {humanReasons.length === 1
-              ? '1 reason'
-              : `${humanReasons.length} reasons`}
-          </span>
+          <div className="flex items-baseline gap-2">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {isCollapsed
+                ? `${rawReasons.length} reasons hidden`
+                : humanReasons.length === 1
+                ? '1 reason'
+                : `${humanReasons.length} reasons`}
+            </span>
+            {collapsible && (
+              <button
+                type="button"
+                onClick={onToggleCollapsed}
+                data-testid="scanner-rejected-strike-group-toggle"
+                className="text-xs text-blue-600 dark:text-blue-300 hover:underline focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                aria-expanded={!isCollapsed}
+              >
+                {isCollapsed ? 'Show ▾' : 'Hide ▴'}
+              </button>
+            )}
+          </div>
         )}
       </div>
-      {isNearPass ? (
+      {isCollapsed ? null : isNearPass ? (
         <p className="text-xs text-slate-600 dark:text-slate-300">
           {nearPassSentence}
         </p>
@@ -229,6 +290,24 @@ function RejectedRow({ rejection }) {
             <li key={i}>{r}</li>
           ))}
         </ul>
+      )}
+    </>
+  );
+
+  return (
+    <li
+      data-testid="scanner-rejected-strike-row"
+      className="py-2 border-b border-slate-100 dark:border-slate-700 last:border-0"
+    >
+      {collapsible ? (
+        <div
+          data-testid="scanner-rejected-strike-group"
+          data-collapsed={rowCollapsed ? 'true' : 'false'}
+        >
+          {body}
+        </div>
+      ) : (
+        body
       )}
     </li>
   );
@@ -268,6 +347,21 @@ export default function ScannerRejectedStrikes({
   const [open, setOpen] = useState(defaultOpen);
   const [sortField, setSortField] = useState('failure_count');
   const [sortDir, setSortDir] = useState('asc');
+  // #259 / W-E — single global flag at the section level. All ≥3-reason rows
+  // read this value; clicking any toggle flips it for the whole panel.
+  // Initialized from localStorage in the useState callback to avoid
+  // useEffect (matches `ScannerStrategyPrimer` precedent — see issue #198).
+  const [rowCollapsed, setRowCollapsed] = useState(() =>
+    readPersistedCollapsed(ROW_COLLAPSE_STORAGE_KEY)
+  );
+
+  const handleToggleRowCollapsed = () => {
+    setRowCollapsed((prev) => {
+      const next = !prev;
+      writePersistedCollapsed(ROW_COLLAPSE_STORAGE_KEY, next);
+      return next;
+    });
+  };
 
   // V1.0.8 "Relax to X" popover state (#258). Single-instance — only one
   // popover open at a time. Switching rules updates `rule` + `anchorEl` and
@@ -415,6 +509,8 @@ export default function ScannerRejectedStrikes({
                 <RejectedRow
                   key={`${r.strike}-${r.expiration}-${i}`}
                   rejection={r}
+                  rowCollapsed={rowCollapsed}
+                  onToggleCollapsed={handleToggleRowCollapsed}
                 />
               ))}
             </ul>

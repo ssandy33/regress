@@ -657,15 +657,19 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
     await expect(normalRow).toContainText('Delta +0.42');
     await expect(normalRow).toContainText('Only 18 contracts open');
 
-    // Tier 3 — structural row (5 reasons): no near-pass badge, '5 reasons'
-    // text, bulleted list. Treatment unchanged in this spec (#259 will wrap
-    // these in a <details>).
+    // Tier 3 — structural row (5 reasons): no near-pass badge, bulleted list.
+    // Since #259 (W-E) merged, ≥3-reason rows render collapsed by default —
+    // expand via the group toggle so the bulleted reason text becomes
+    // assertable. (The pre-merge phrasing '5 reasons' is now '5 reasons hidden'
+    // in the collapsed state — `toContainText('5 reasons')` still matches as
+    // a substring either way.)
     const structuralRow = rows.nth(3);
     await expect(structuralRow).toContainText('$5.00');
     await expect(
       structuralRow.getByTestId('scanner-rejected-strike-badge-near-pass')
     ).toHaveCount(0);
     await expect(structuralRow).toContainText('5 reasons');
+    await structuralRow.getByTestId('scanner-rejected-strike-group-toggle').click();
     await expect(structuralRow).toContainText('cost-basis floor');
   });
 });
@@ -1001,3 +1005,278 @@ test.describe('Scanner education — Relax-to-X preview popover (#258)', () => {
   });
 });
 
+
+// ============================================================================
+// V1.0.8 / #259 — Collapse-by-default for rejected strikes with ≥3 reasons
+// ============================================================================
+//
+// Appended block (S1 — append-only). Tests:
+//   - Default render: a row with `rejection_reasons.length >= 3` is wrapped
+//     in `scanner-rejected-strike-group` with `data-collapsed="true"`.
+//   - Toggling `Show ▾` on any group flips the single global flag —
+//     EVERY ≥3-reason row's `data-collapsed` flips to `"false"`.
+//   - localStorage key `scanner-rejected-strikes-row-collapsed` persists
+//     across `page.reload()`.
+//   - Rows with `<3` reasons are NOT wrapped in the collapse group
+//     (no `scanner-rejected-strike-group` testid).
+//   - Threshold boundary: exactly 3 reasons → collapsible; exactly 2 → not.
+//
+// Reuses TIERED_SCAN_PAYLOAD and setupTieredMocks defined above (5 rejected
+// strikes: 1, 1, 2, 5, 5 reasons — gives us 2 ≥3-reason groups for the
+// "all flip together" assertion). A separate BOUNDARY_SCAN_PAYLOAD covers the
+// 3-vs-2 threshold edge.
+
+// Boundary payload — two rejected strikes, one with exactly 2 reasons
+// (NOT collapsible) and one with exactly 3 reasons (collapsible). Asserts
+// the `>= 3` threshold inclusively.
+const BOUNDARY_SCAN_PAYLOAD = {
+  ticker: 'F',
+  current_price: 13.21,
+  strategy: 'covered_call',
+  scan_time: '2026-05-20T12:00:00Z',
+  earnings_date: null,
+  iv_rank: null,
+  recommendations: [],
+  rejected: [
+    // 2-reason row — NOT collapsible (just below the threshold).
+    {
+      strike: 13.0,
+      expiration: '2026-07-31',
+      rejection_reasons: [
+        'delta_out_of_range: |0.42| not in [0.20, 0.35]',
+        'low_open_interest: 18 < 50',
+      ],
+      human_reasons: [
+        'Delta +0.42 is outside your 0.20–0.35 range — too close to the money.',
+        'Only 18 contracts open — too thin to trade comfortably (the scanner requires at least 50).',
+      ],
+    },
+    // 3-reason row — collapsible exactly at the threshold.
+    {
+      strike: 7.0,
+      expiration: '2026-07-31',
+      rejection_reasons: [
+        'fails_10pct_rule: strike -47.0% above basis, requires 10.0%',
+        'delta_out_of_range: |0.85| not in [0.20, 0.35]',
+        'low_open_interest: 11 < 50',
+      ],
+      human_reasons: [
+        'Strike sits -47.0% above your $13.21 basis, but the 10.0% rule requires at least that much room.',
+        'Delta +0.85 is outside your 0.20–0.35 range — too close to the money.',
+        'Only 11 contracts open — too thin to trade comfortably (the scanner requires at least 50).',
+      ],
+    },
+  ],
+  market_context: {},
+};
+
+function setupBoundaryMocks(page) {
+  return Promise.all([
+    page.route('**/api/settings/health/schwab', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          configured: true,
+          valid: true,
+          error: null,
+          token_expiry: null,
+        }),
+      })
+    ),
+    page.route('**/api/options/scan', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(BOUNDARY_SCAN_PAYLOAD),
+      })
+    ),
+  ]);
+}
+
+// Helper — clear the row-collapse localStorage key so the default-collapsed
+// branch is exercised deterministically. We `goto('/options')` first so the
+// page origin is available to `localStorage.removeItem`. Mirrors
+// `clearScannerStorage` above; kept local to the #259 block so it does not
+// disturb upstream tests.
+async function clearRowCollapseStorage(page) {
+  await page.goto('/options');
+  await page.evaluate(() => {
+    try {
+      window.localStorage.removeItem('scanner-rejected-strikes-row-collapsed');
+    } catch {
+      // ignore
+    }
+  });
+}
+
+test.describe('Scanner education — Rejected Strikes ≥3-reason collapse (#259)', () => {
+  test('rows with >= 3 reasons render collapsed by default (data-collapsed="true")', async ({
+    page,
+  }) => {
+    await setupTieredMocks(page);
+    await clearRowCollapseStorage(page);
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    // Two ≥3-reason groups in the tiered payload (the two 5-reason rows).
+    const groups = page.getByTestId('scanner-rejected-strike-group');
+    await expect(groups).toHaveCount(2);
+
+    // Both render collapsed on first visit (default = true).
+    await expect(groups.nth(0)).toHaveAttribute('data-collapsed', 'true');
+    await expect(groups.nth(1)).toHaveAttribute('data-collapsed', 'true');
+
+    // Each collapsed group exposes a `Show ▾` toggle and the "N reasons hidden"
+    // phrase — and the reason bullets are NOT in the DOM yet.
+    const toggles = page.getByTestId('scanner-rejected-strike-group-toggle');
+    await expect(toggles).toHaveCount(2);
+    await expect(toggles.first()).toContainText('Show');
+    await expect(groups.first()).toContainText('5 reasons hidden');
+    await expect(groups.first()).not.toContainText('cost-basis floor');
+  });
+
+  test('clicking Show on one ≥3-reason group expands ALL ≥3-reason groups (single global flag)', async ({
+    page,
+  }) => {
+    await setupTieredMocks(page);
+    await clearRowCollapseStorage(page);
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    const groups = page.getByTestId('scanner-rejected-strike-group');
+    await expect(groups).toHaveCount(2);
+
+    // Click the first group's toggle — the single global flag flips, so
+    // BOTH groups expand simultaneously.
+    await page
+      .getByTestId('scanner-rejected-strike-group-toggle')
+      .first()
+      .click();
+
+    await expect(groups.nth(0)).toHaveAttribute('data-collapsed', 'false');
+    await expect(groups.nth(1)).toHaveAttribute('data-collapsed', 'false');
+
+    // Bullet text is now rendered in both groups; toggle wording flips to Hide.
+    await expect(groups.nth(0)).toContainText('cost-basis floor');
+    await expect(groups.nth(1)).toContainText('cost-basis floor');
+    await expect(
+      page.getByTestId('scanner-rejected-strike-group-toggle').first()
+    ).toContainText('Hide');
+
+    // Clicking Hide on the second group re-collapses both.
+    await page
+      .getByTestId('scanner-rejected-strike-group-toggle')
+      .nth(1)
+      .click();
+    await expect(groups.nth(0)).toHaveAttribute('data-collapsed', 'true');
+    await expect(groups.nth(1)).toHaveAttribute('data-collapsed', 'true');
+  });
+
+  test('collapse state persists across page reload via localStorage', async ({ page }) => {
+    await setupTieredMocks(page);
+    await clearRowCollapseStorage(page);
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    // Expand — flag flips to '0'.
+    await page
+      .getByTestId('scanner-rejected-strike-group-toggle')
+      .first()
+      .click();
+    await expect(
+      page.getByTestId('scanner-rejected-strike-group').first()
+    ).toHaveAttribute('data-collapsed', 'false');
+
+    // Inspect the localStorage value directly — boolean '0' (expanded).
+    const stored = await page.evaluate(() =>
+      window.localStorage.getItem('scanner-rejected-strikes-row-collapsed')
+    );
+    expect(stored).toBe('0');
+
+    // Reload — the expanded state survives (need to re-open the panel and
+    // re-run the scan because the panel mock state does not auto-persist).
+    await page.reload();
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    const groups = page.getByTestId('scanner-rejected-strike-group');
+    await expect(groups.first()).toHaveAttribute('data-collapsed', 'false');
+    await expect(groups.first()).toContainText('cost-basis floor');
+  });
+
+  test('rows with < 3 reasons are NOT wrapped in the collapse group', async ({
+    page,
+  }) => {
+    await setupTieredMocks(page);
+    await clearRowCollapseStorage(page);
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    // The tiered payload has 5 rejected strikes — 1, 1, 2, 5, 5 reasons.
+    // Only the two 5-reason rows are wrapped; the three rows with <3
+    // reasons render the normal treatment (no group testid, no toggle).
+    const groups = page.getByTestId('scanner-rejected-strike-group');
+    const toggles = page.getByTestId('scanner-rejected-strike-group-toggle');
+    await expect(groups).toHaveCount(2);
+    await expect(toggles).toHaveCount(2);
+
+    // Row 2 of the default sort (`failure_count_asc`) is the 2-reason row —
+    // it must not carry the group testid or the toggle.
+    const rows = page.getByTestId('scanner-rejected-strike-row');
+    const twoReasonRow = rows.nth(2);
+    await expect(twoReasonRow).toContainText('$13.00');
+    await expect(twoReasonRow).toContainText('2 reasons');
+    await expect(
+      twoReasonRow.getByTestId('scanner-rejected-strike-group')
+    ).toHaveCount(0);
+    await expect(
+      twoReasonRow.getByTestId('scanner-rejected-strike-group-toggle')
+    ).toHaveCount(0);
+  });
+
+  test('threshold boundary — exactly 3 reasons collapses, exactly 2 does not', async ({
+    page,
+  }) => {
+    await setupBoundaryMocks(page);
+    await clearRowCollapseStorage(page);
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    // Exactly one collapsible group — the 3-reason row.
+    const groups = page.getByTestId('scanner-rejected-strike-group');
+    await expect(groups).toHaveCount(1);
+    await expect(groups.first()).toHaveAttribute('data-collapsed', 'true');
+    await expect(groups.first()).toContainText('3 reasons hidden');
+
+    // The 2-reason row is rendered as a normal row (no group testid).
+    // Default sort = failure_count_asc, so rows.nth(0) is the 2-reason row
+    // ($13.00) and rows.nth(1) is the 3-reason row ($7.00).
+    const rows = page.getByTestId('scanner-rejected-strike-row');
+    await expect(rows).toHaveCount(2);
+    const twoReasonRow = rows.nth(0);
+    await expect(twoReasonRow).toContainText('$13.00');
+    await expect(twoReasonRow).toContainText('2 reasons');
+    await expect(
+      twoReasonRow.getByTestId('scanner-rejected-strike-group')
+    ).toHaveCount(0);
+
+    // Sanity check — the 3-reason row IS the collapsible group.
+    const threeReasonRow = rows.nth(1);
+    await expect(threeReasonRow).toContainText('$7.00');
+    await expect(
+      threeReasonRow.getByTestId('scanner-rejected-strike-group')
+    ).toHaveCount(1);
+  });
+});
