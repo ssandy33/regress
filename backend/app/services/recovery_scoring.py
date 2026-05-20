@@ -416,7 +416,7 @@ def score_recovery_paths(
             Suppressed paths must still be present; this function filters
             them.
         okr_settings: Optional dict carrying ``target_yield``,
-            ``sizing_cap_dollars``, and ``strategy_preference``. Missing
+            ``sizing_cap_pct``, and ``strategy_preference``. Missing
             keys are treated as unset.
 
     Returns:
