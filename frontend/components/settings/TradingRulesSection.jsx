@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { getRulesConfig, saveRulesConfig } from '../../api/client';
+import {
+  dismissSizingCapMigration,
+  getAccountValue,
+  getRulesConfig,
+  refreshAccountValue,
+  saveRulesConfig,
+} from '../../api/client';
 import ConfirmDialog from '../common/ConfirmDialog';
 import RuleField from './RuleField';
 import RuleRangeField from './RuleRangeField';
@@ -137,10 +143,28 @@ function SkeletonRow() {
   );
 }
 
-export default function TradingRulesSection() {
+export default function TradingRulesSection({ onSwitchToTab } = {}) {
   const [form, setForm] = useState(null);
   const [savedForm, setSavedForm] = useState(null);
   const [schemaVersion, setSchemaVersion] = useState(1);
+  // `sizingCapAccount` is the multi-account selector value (#234 §7) — a
+  // sibling of the scalar form because it isn't in the catalog (it's a card-
+  // header selector, not a per-field input). `null` = default first account;
+  // `"sum"` = sum of all linked accounts; `"…1234"` = explicit masked id.
+  const [sizingCapAccount, setSizingCapAccount] = useState(null);
+  const [savedSizingCapAccount, setSavedSizingCapAccount] = useState(null);
+  // Migration banner state (#234 §13.5). `migration` is the inline
+  // `migration.sizing_cap` sibling from GET /api/settings/rules (S4) —
+  // `null` when no migration has happened. `bannerDismissed` is the local
+  // optimistic flag set after a successful dismiss POST.
+  const [migration, setMigration] = useState(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  // Account-value state (#234 §5–§6). Fetched once on mount; the resolved-
+  // context line below sizing_cap_pct renders one of four variants keyed
+  // off `accountValue.status`.
+  const [accountValue, setAccountValue] = useState(null);
+  const [accountValueLoading, setAccountValueLoading] = useState(true);
+  const [accountValueRefreshing, setAccountValueRefreshing] = useState(false);
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -161,6 +185,15 @@ export default function TradingRulesSection() {
         setForm(f);
         setSavedForm(f);
         setSchemaVersion(config?.schema_version || 1);
+        const acct = config?.position?.sizing_cap_account ?? null;
+        setSizingCapAccount(acct);
+        setSavedSizingCapAccount(acct);
+        const m = config?.migration?.sizing_cap ?? null;
+        setMigration(m);
+        // Pre-dismissed banners (server-side `dismissed_at` not null) start
+        // with the banner already hidden so a reload after dismiss doesn't
+        // momentarily flash the banner.
+        setBannerDismissed(Boolean(m?.dismissed_at));
       })
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
@@ -168,10 +201,69 @@ export default function TradingRulesSection() {
 
   useEffect(load, []);
 
+  // Fetch the Schwab account value once on mount. The resolved-context line
+  // is inert without it — it falls through to "Resolving…" until this lands,
+  // then renders the ok / disconnected / expired / error variant. Failures
+  // surface as status="error" so the user always sees an honest treatment
+  // (never a stale dollar figure — design spec §6.4).
+  useEffect(() => {
+    let cancelled = false;
+    setAccountValueLoading(true);
+    getAccountValue()
+      .then((result) => {
+        if (!cancelled) setAccountValue(result);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAccountValue({ status: 'error', error_detail: null });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAccountValueLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleRefreshAccountValue = async () => {
+    setAccountValueRefreshing(true);
+    try {
+      const result = await refreshAccountValue();
+      setAccountValue(result);
+    } catch {
+      setAccountValue({ status: 'error', error_detail: null });
+    } finally {
+      setAccountValueRefreshing(false);
+    }
+  };
+
+  const handleSwitchToGeneral = () => {
+    if (typeof onSwitchToTab === 'function') onSwitchToTab('general');
+  };
+
+  const handleDismissBanner = async () => {
+    // Optimistic — flip locally so the banner disappears immediately and the
+    // POST runs in the background. A failed dismiss is silent because the
+    // server already has the record; a retry on next load will repeat it.
+    setBannerDismissed(true);
+    try {
+      await dismissSizingCapMigration();
+    } catch {
+      // Swallow — the banner stays dismissed locally; next reload will
+      // re-fetch the (un-stamped) server state and show the banner again,
+      // which is the conservative behaviour.
+    }
+  };
+
   const dirty = useMemo(() => {
     if (!form || !savedForm) return false;
-    return JSON.stringify(form) !== JSON.stringify(savedForm);
-  }, [form, savedForm]);
+    if (JSON.stringify(form) !== JSON.stringify(savedForm)) return true;
+    // sizing_cap_account isn't in the catalog (it's a card-header selector,
+    // not a per-field input), so we track it separately and compare it
+    // explicitly to keep the Save button honest.
+    return sizingCapAccount !== savedSizingCapAccount;
+  }, [form, savedForm, sizingCapAccount, savedSizingCapAccount]);
 
   const errorCount = Object.keys(errors).length;
   const canSave = dirty && errorCount === 0 && !saving;
@@ -203,14 +295,28 @@ export default function TradingRulesSection() {
     setSaveError(false);
     try {
       const payload = formToConfig(form, schemaVersion);
+      // Fold the multi-account selector (#234 §7) into the position group
+      // before persisting. The catalog doesn't know about this key — it lives
+      // at the Position card header, not on a field row — so we splice it in
+      // here. `null` is the default-first-account signal and is serialised as
+      // `null`, not omitted, to match the Pydantic Optional contract.
+      payload.position = { ...payload.position, sizing_cap_account: sizingCapAccount };
       const saved = await saveRulesConfig(payload);
       const f = configToForm(saved);
       setForm(f);
       setSavedForm(f);
+      const newAcct = saved?.position?.sizing_cap_account ?? null;
+      setSizingCapAccount(newAcct);
+      setSavedSizingCapAccount(newAcct);
       setSchemaVersion(saved?.schema_version || schemaVersion);
       setLastSaved(new Date());
       setHasEverSaved(true);
       setSaveSuccess(true);
+      // Per #234 §13.5.3, a successful save implicitly acknowledges the
+      // migration — hide the banner locally so the user doesn't see it after
+      // saving an unchanged form. The server doesn't auto-stamp dismissal
+      // on save in this slice; the explicit dismiss POST is the durable path.
+      setBannerDismissed(true);
       toast.success('Trading rules saved');
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch {
@@ -223,6 +329,8 @@ export default function TradingRulesSection() {
 
   const handleResetConfirm = () => {
     setForm(defaultsToForm());
+    // The catalog default for sizing_cap_account is "first account" (null).
+    setSizingCapAccount(null);
     setErrors({});
     setSaveError(false);
     setSaveSuccess(false);
