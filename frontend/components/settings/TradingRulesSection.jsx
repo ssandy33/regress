@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import { getRulesConfig, saveRulesConfig } from '../../api/client';
+import {
+  dismissSizingCapMigration,
+  getAccountValue,
+  getRulesConfig,
+  refreshAccountValue,
+  saveRulesConfig,
+} from '../../api/client';
 import ConfirmDialog from '../common/ConfirmDialog';
 import RuleField from './RuleField';
 import RuleRangeField from './RuleRangeField';
@@ -128,6 +134,168 @@ function validateForm(form) {
   return errors;
 }
 
+/** Whole-dollar formatter for the sizing-cap resolved-context line (#234 §5.2):
+ * thousands separators, no cents. Matches the recovery-engine `_format_dollar`
+ * convention so the same ceiling reads identically across surfaces. */
+function formatDollars(amount) {
+  if (amount === null || amount === undefined || Number.isNaN(amount)) return '';
+  const rounded = Math.round(Number(amount));
+  return `$${rounded.toLocaleString('en-US')}`;
+}
+
+/** Build the resolved-context slot for the sizing-cap field (#234 §5–§6).
+ *
+ * Four variants, keyed off `accountValue.status`:
+ *  - "ok"           — "25% of …4471 (≈ $5,240)" + Refresh button. Slate background.
+ *  - "disconnected" — "Schwab not connected — Reconnect Schwab" (amber). Tab-switch
+ *                     to General per #234 §6.3 — NOT a hash anchor.
+ *  - "expired"      — "Schwab session expired — Reconnect Schwab" (amber). Same button.
+ *  - "error"        — "Schwab error — Retry" (amber). Retry force-refreshes.
+ *
+ * While `loading` (initial fetch) the slot shows "Resolving…". The slot's
+ * wrapper carries `data-testid="rules-field-sizing_cap_pct-resolved"` and
+ * `data-state=<status>` so e2e can pick the variant. Per CLAUDE.md, no raw
+ * exception text is interpolated — only the four fixed lead clauses. */
+function renderSizingCapContext({
+  pctRaw,
+  loading,
+  refreshing,
+  accountValue,
+  onRefresh,
+  onReconnect,
+}) {
+  const baseRow =
+    'mt-1.5 flex items-start gap-2 text-xs rounded-md px-2.5 py-1.5';
+  const slateTone = 'bg-slate-100 dark:bg-slate-900/40 text-slate-600 dark:text-slate-300';
+  const amberTone =
+    'bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200';
+
+  if (loading || !accountValue) {
+    return (
+      <div
+        data-testid="rules-field-sizing_cap_pct-resolved"
+        data-state="loading"
+        className={`${baseRow} ${slateTone}`}
+        role="status"
+      >
+        <span aria-hidden="true" className="text-slate-400 dark:text-slate-500">
+          ⓘ
+        </span>
+        <span>Resolving…</span>
+      </div>
+    );
+  }
+
+  if (accountValue.status === 'ok') {
+    const pctNum = Number(pctRaw);
+    const validPct =
+      pctRaw !== '' && pctRaw !== null && !Number.isNaN(pctNum) && pctNum > 0;
+    const account = accountValue.account_id_masked || '';
+    const ceiling = validPct
+      ? formatDollars((pctNum * (accountValue.total_capital || 0)) / 100)
+      : null;
+    return (
+      <div
+        data-testid="rules-field-sizing_cap_pct-resolved"
+        data-state="ok"
+        className={`${baseRow} ${slateTone}`}
+        role="status"
+      >
+        <span aria-hidden="true" className="text-slate-400 dark:text-slate-500">
+          ⓘ
+        </span>
+        <span className="flex-1">
+          {validPct ? (
+            <>
+              <span className="font-semibold text-slate-800 dark:text-slate-100">
+                {pctNum}%
+              </span>
+              {' of '}
+              {account ? <span>{account}</span> : <span>your account</span>}
+              {ceiling ? (
+                <>
+                  {' (≈ '}
+                  <span className="font-semibold text-slate-800 dark:text-slate-100">
+                    {ceiling}
+                  </span>
+                  {')'}
+                </>
+              ) : null}
+            </>
+          ) : (
+            <span>
+              Enter a percentage to see the resolved dollar ceiling.
+            </span>
+          )}
+        </span>
+        <button
+          type="button"
+          data-testid="rules-field-sizing_cap_pct-refresh"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+        >
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+    );
+  }
+
+  if (accountValue.status === 'disconnected' || accountValue.status === 'expired') {
+    const lead =
+      accountValue.status === 'disconnected'
+        ? 'Schwab not connected'
+        : 'Schwab session expired';
+    return (
+      <div
+        data-testid="rules-field-sizing_cap_pct-resolved"
+        data-state={accountValue.status}
+        className={`${baseRow} ${amberTone}`}
+        role="status"
+      >
+        <span aria-hidden="true" className="text-amber-500">
+          ⚠
+        </span>
+        <span className="flex-1">{lead} —{' '}</span>
+        <button
+          type="button"
+          data-testid="rules-field-sizing_cap_pct-reconnect"
+          onClick={onReconnect}
+          className="font-medium text-amber-800 dark:text-amber-200 hover:underline whitespace-nowrap"
+        >
+          Reconnect Schwab
+        </button>
+      </div>
+    );
+  }
+
+  // status === 'error' (or any unknown future status — fall through here so
+  // the user sees an honest amber treatment rather than a silently-resolved
+  // dollar figure built on partial data).
+  return (
+    <div
+      data-testid="rules-field-sizing_cap_pct-resolved"
+      data-state="error"
+      className={`${baseRow} ${amberTone}`}
+      role="status"
+    >
+      <span aria-hidden="true" className="text-amber-500">
+        ⚠
+      </span>
+      <span className="flex-1">Schwab error —{' '}</span>
+      <button
+        type="button"
+        data-testid="rules-field-sizing_cap_pct-retry"
+        onClick={onRefresh}
+        disabled={refreshing}
+        className="font-medium text-amber-800 dark:text-amber-200 hover:underline disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+      >
+        {refreshing ? 'Retrying…' : 'Retry'}
+      </button>
+    </div>
+  );
+}
+
 function SkeletonRow() {
   return (
     <div className="space-y-2">
@@ -137,10 +305,28 @@ function SkeletonRow() {
   );
 }
 
-export default function TradingRulesSection() {
+export default function TradingRulesSection({ onSwitchToTab } = {}) {
   const [form, setForm] = useState(null);
   const [savedForm, setSavedForm] = useState(null);
   const [schemaVersion, setSchemaVersion] = useState(1);
+  // `sizingCapAccount` is the multi-account selector value (#234 §7) — a
+  // sibling of the scalar form because it isn't in the catalog (it's a card-
+  // header selector, not a per-field input). `null` = default first account;
+  // `"sum"` = sum of all linked accounts; `"…1234"` = explicit masked id.
+  const [sizingCapAccount, setSizingCapAccount] = useState(null);
+  const [savedSizingCapAccount, setSavedSizingCapAccount] = useState(null);
+  // Migration banner state (#234 §13.5). `migration` is the inline
+  // `migration.sizing_cap` sibling from GET /api/settings/rules (S4) —
+  // `null` when no migration has happened. `bannerDismissed` is the local
+  // optimistic flag set after a successful dismiss POST.
+  const [migration, setMigration] = useState(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  // Account-value state (#234 §5–§6). Fetched once on mount; the resolved-
+  // context line below sizing_cap_pct renders one of four variants keyed
+  // off `accountValue.status`.
+  const [accountValue, setAccountValue] = useState(null);
+  const [accountValueLoading, setAccountValueLoading] = useState(true);
+  const [accountValueRefreshing, setAccountValueRefreshing] = useState(false);
   const [errors, setErrors] = useState({});
   const [touched, setTouched] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -161,6 +347,15 @@ export default function TradingRulesSection() {
         setForm(f);
         setSavedForm(f);
         setSchemaVersion(config?.schema_version || 1);
+        const acct = config?.position?.sizing_cap_account ?? null;
+        setSizingCapAccount(acct);
+        setSavedSizingCapAccount(acct);
+        const m = config?.migration?.sizing_cap ?? null;
+        setMigration(m);
+        // Pre-dismissed banners (server-side `dismissed_at` not null) start
+        // with the banner already hidden so a reload after dismiss doesn't
+        // momentarily flash the banner.
+        setBannerDismissed(Boolean(m?.dismissed_at));
       })
       .catch(() => setLoadError(true))
       .finally(() => setLoading(false));
@@ -168,10 +363,69 @@ export default function TradingRulesSection() {
 
   useEffect(load, []);
 
+  // Fetch the Schwab account value once on mount. The resolved-context line
+  // is inert without it — it falls through to "Resolving…" until this lands,
+  // then renders the ok / disconnected / expired / error variant. Failures
+  // surface as status="error" so the user always sees an honest treatment
+  // (never a stale dollar figure — design spec §6.4).
+  useEffect(() => {
+    let cancelled = false;
+    setAccountValueLoading(true);
+    getAccountValue()
+      .then((result) => {
+        if (!cancelled) setAccountValue(result);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAccountValue({ status: 'error', error_detail: null });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAccountValueLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleRefreshAccountValue = async () => {
+    setAccountValueRefreshing(true);
+    try {
+      const result = await refreshAccountValue();
+      setAccountValue(result);
+    } catch {
+      setAccountValue({ status: 'error', error_detail: null });
+    } finally {
+      setAccountValueRefreshing(false);
+    }
+  };
+
+  const handleSwitchToGeneral = () => {
+    if (typeof onSwitchToTab === 'function') onSwitchToTab('general');
+  };
+
+  const handleDismissBanner = async () => {
+    // Optimistic — flip locally so the banner disappears immediately and the
+    // POST runs in the background. A failed dismiss is silent because the
+    // server already has the record; a retry on next load will repeat it.
+    setBannerDismissed(true);
+    try {
+      await dismissSizingCapMigration();
+    } catch {
+      // Swallow — the banner stays dismissed locally; next reload will
+      // re-fetch the (un-stamped) server state and show the banner again,
+      // which is the conservative behaviour.
+    }
+  };
+
   const dirty = useMemo(() => {
     if (!form || !savedForm) return false;
-    return JSON.stringify(form) !== JSON.stringify(savedForm);
-  }, [form, savedForm]);
+    if (JSON.stringify(form) !== JSON.stringify(savedForm)) return true;
+    // sizing_cap_account isn't in the catalog (it's a card-header selector,
+    // not a per-field input), so we track it separately and compare it
+    // explicitly to keep the Save button honest.
+    return sizingCapAccount !== savedSizingCapAccount;
+  }, [form, savedForm, sizingCapAccount, savedSizingCapAccount]);
 
   const errorCount = Object.keys(errors).length;
   const canSave = dirty && errorCount === 0 && !saving;
@@ -203,14 +457,28 @@ export default function TradingRulesSection() {
     setSaveError(false);
     try {
       const payload = formToConfig(form, schemaVersion);
+      // Fold the multi-account selector (#234 §7) into the position group
+      // before persisting. The catalog doesn't know about this key — it lives
+      // at the Position card header, not on a field row — so we splice it in
+      // here. `null` is the default-first-account signal and is serialised as
+      // `null`, not omitted, to match the Pydantic Optional contract.
+      payload.position = { ...payload.position, sizing_cap_account: sizingCapAccount };
       const saved = await saveRulesConfig(payload);
       const f = configToForm(saved);
       setForm(f);
       setSavedForm(f);
+      const newAcct = saved?.position?.sizing_cap_account ?? null;
+      setSizingCapAccount(newAcct);
+      setSavedSizingCapAccount(newAcct);
       setSchemaVersion(saved?.schema_version || schemaVersion);
       setLastSaved(new Date());
       setHasEverSaved(true);
       setSaveSuccess(true);
+      // Per #234 §13.5.3, a successful save implicitly acknowledges the
+      // migration — hide the banner locally so the user doesn't see it after
+      // saving an unchanged form. The server doesn't auto-stamp dismissal
+      // on save in this slice; the explicit dismiss POST is the durable path.
+      setBannerDismissed(true);
       toast.success('Trading rules saved');
       setTimeout(() => setSaveSuccess(false), 2500);
     } catch {
@@ -223,6 +491,8 @@ export default function TradingRulesSection() {
 
   const handleResetConfirm = () => {
     setForm(defaultsToForm());
+    // The catalog default for sizing_cap_account is "first account" (null).
+    setSizingCapAccount(null);
     setErrors({});
     setSaveError(false);
     setSaveSuccess(false);
@@ -335,6 +605,102 @@ export default function TradingRulesSection() {
             {GROUP_META[group].description}
           </p>
 
+          {/* Position-card-only: the one-time sizing-cap migration banner
+              (#234 §13.5) and the multi-account selector (#234 §7). Both are
+              scoped to where the changed rule lives so an unrelated rule in
+              another group never reads as "all of Trading Rules changed." */}
+          {group === 'position' && migration && !bannerDismissed && (
+            <div
+              data-testid="rules-migration-banner-sizing-cap"
+              role="status"
+              className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-100 rounded-lg px-4 py-3 mb-5 flex items-start gap-3"
+            >
+              <span aria-hidden="true" className="text-blue-500 dark:text-blue-300 text-lg leading-none mt-0.5">
+                ⓘ
+              </span>
+              <div className="flex-1 text-sm">
+                <p>
+                  <span className="font-semibold">
+                    Your &ldquo;Per-position sizing cap&rdquo; rule was updated in this release.
+                  </span>{' '}
+                  The rule is now a percentage of your Schwab account value
+                  instead of an absolute dollar amount.
+                  {migration.previous_sizing_cap_dollars != null ? (
+                    <>
+                      {' '}Your previous value of{' '}
+                      <span className="font-semibold">
+                        {formatDollars(migration.previous_sizing_cap_dollars)}
+                      </span>
+                      {' '}has been replaced with the new default, 25%.
+                    </>
+                  ) : (
+                    <>
+                      {' '}Your previous absolute-dollar value has been replaced
+                      with the new default, 25%.
+                    </>
+                  )}
+                  {' '}Review and Save to confirm.
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="rules-migration-banner-sizing-cap-dismiss"
+                onClick={handleDismissBanner}
+                className="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 text-sm whitespace-nowrap"
+                aria-label="Dismiss migration notice"
+              >
+                Dismiss ×
+              </button>
+            </div>
+          )}
+
+          {/* Multi-account selector (#234 §7). The single-account case shows
+              the masked account label inline on the resolved-context line —
+              no selector chrome is justified for one option. The selector
+              renders only when the backend returned more than one usable
+              account. Native <select>, styled like the General-tab
+              Preferences select; "First account" (the default) is `null`,
+              "Sum" is the explicit deliberate-aggregate choice. */}
+          {group === 'position' &&
+            accountValue?.accounts &&
+            accountValue.accounts.length > 1 && (
+              <div className="mb-5 flex items-center justify-between gap-3 flex-wrap">
+                <label
+                  htmlFor="rules-position-capital-account"
+                  className="text-sm text-slate-700 dark:text-slate-300"
+                >
+                  Capital account
+                </label>
+                <select
+                  id="rules-position-capital-account"
+                  data-testid="rules-position-capital-account"
+                  value={sizingCapAccount ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // `""` is the "First account" sentinel — store as null so
+                    // the persisted shape matches the Pydantic `Optional[str]`.
+                    setSizingCapAccount(v === '' ? null : v);
+                    setSaveError(false);
+                    setSaveSuccess(false);
+                  }}
+                  disabled={saving}
+                  className="px-3 py-2 text-sm border rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 border-slate-300 dark:border-slate-600 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="">First account</option>
+                  <option value="sum">All accounts (sum)</option>
+                  {accountValue.accounts.map((acct) => (
+                    <option
+                      key={acct.account_id_masked}
+                      value={acct.account_id_masked}
+                    >
+                      {acct.account_id_masked}
+                      {acct.account_type ? ` · ${acct.account_type}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
           <div className="space-y-5">
             {FIELDS[group].map((field) => {
               const id = `${group}.${field.key}`;
@@ -361,6 +727,23 @@ export default function TradingRulesSection() {
                   />
                 );
               }
+              // The sizing-cap field gets the resolved-context slot (#234 §5):
+              // a small line below the helper that resolves "25% of account → $X"
+              // or surfaces the disconnected / expired / error variant. The slot
+              // is sizing-cap-only, so we build it inline instead of extracting
+              // a reusable primitive (per the plan's gap-resolution table).
+              const isSizingCap =
+                group === 'position' && field.key === 'sizing_cap_pct';
+              const contextSlot = isSizingCap
+                ? renderSizingCapContext({
+                    pctRaw: form[id],
+                    loading: accountValueLoading,
+                    refreshing: accountValueRefreshing,
+                    accountValue,
+                    onRefresh: handleRefreshAccountValue,
+                    onReconnect: handleSwitchToGeneral,
+                  })
+                : null;
               return (
                 <RuleField
                   key={field.key}
@@ -384,6 +767,7 @@ export default function TradingRulesSection() {
                   onBlur={revalidate}
                   error={errors[id]}
                   disabled={saving}
+                  contextSlot={contextSlot}
                 />
               );
             })}

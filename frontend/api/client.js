@@ -149,6 +149,32 @@ export async function saveRulesConfig(config) {
   return data;
 }
 
+// Schwab account-value endpoints (issue #234) — back the per-position sizing-cap
+// percentage's resolved-context line ("25% of $52,400 ≈ $13,100"). `getAccountValue`
+// is cache-respecting (cheap, called once on Trading Rules mount); `refreshAccountValue`
+// is force-refresh (drives the explicit "Refresh" button + the API-error "Retry").
+// Both return an `AccountValueResult` shape:
+//   { status: 'ok' | 'disconnected' | 'expired' | 'error',
+//     total_capital, account_id_masked, account_type, accounts, cached_at, error_detail }
+export async function getAccountValue() {
+  const { data } = await api.get('/api/settings/account-value');
+  return data;
+}
+
+export async function refreshAccountValue() {
+  const { data } = await api.post('/api/settings/account-value/refresh');
+  return data;
+}
+
+// Marks the one-time v1→v2 sizing-cap migration banner as dismissed (#234 §13.5).
+// Idempotent — a second call simply re-stamps `dismissed_at`. Server returns the
+// updated migration object under the same shape carried by `GET /api/settings/rules`
+// under `migration.sizing_cap`.
+export async function dismissSizingCapMigration() {
+  const { data } = await api.post('/api/settings/rules/migration/sizing-cap/dismiss');
+  return data;
+}
+
 export async function getCacheStats() {
   const { data } = await api.get('/api/settings/cache');
   return data;
