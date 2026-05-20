@@ -509,3 +509,80 @@ class TestEdgeCases:
         )
         wheel = next(p for p in paths if p["path_id"] == "wheel-cc")
         assert wheel["capital_tied_up"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Issue #234 — sizing_cap_pct × total_capital resolution (W-F)
+# ---------------------------------------------------------------------------
+
+
+class TestSizingCapPctResolution:
+    """Average-down sizing-cap behavior under the v1 percent-of-capital
+    contract (issue #234). The resolved dollar ceiling is computed at
+    evaluation time as ``sizing_cap_pct × total_capital ÷ 100``. When
+    ``total_capital is None`` (Schwab unavailable) the path stays
+    eligible with the "cap unenforceable" assumption per §6.2.
+    """
+
+    def test_average_down_suppressed_when_resolved_cap_breached(self):
+        # SOFI override: basis=$1700 + additional ($8 × 100 = $800)
+        # → capital_tied_up = $2500. Resolved cap = 10% × $20,000 = $2,000.
+        # 2500 > 2000 ⇒ path suppressed.
+        paths = compute_recovery_paths(
+            position=_sofi_position(adjusted_cost_basis=1700.0),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_pct=10.0,
+            total_capital=20000.0,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        assert avg["eligibility"] == "suppressed"
+        # Suppression message must name both the % and the resolved $.
+        assert "10% per-position sizing cap" in avg["suppression_reason"]
+        assert "$2,000" in avg["suppression_reason"]
+        # Suppressed contract: capital fields collapse to None.
+        assert avg["capital_tied_up"] is None
+        assert avg["opportunity_cost_vs_baseline"] is None
+
+    def test_average_down_eligible_with_cap_unenforceable_when_total_capital_none(self):
+        # §6.2 contract: when Schwab account value is unavailable
+        # (total_capital is None) the path must NOT be suppressed —
+        # the user is never silently let through. Instead the path
+        # stays eligible with an explicit "unenforceable" assumption.
+        # SOFI override: basis=$9200 + $800 = $10,000 — would be far
+        # above any reasonable cap, but with total_capital=None there
+        # is no resolved ceiling to compare against.
+        paths = compute_recovery_paths(
+            position=_sofi_position(adjusted_cost_basis=9200.0),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_pct=25.0,
+            total_capital=None,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        assert avg["eligibility"] == "eligible"
+        assert avg["suppression_reason"] is None
+        # Sanity: capital tied up is the new-basis total ($10,000).
+        assert avg["capital_tied_up"] == pytest.approx(10000.0)
+        # Assumption text must surface the unenforceable state.
+        assumption_blob = " ".join(avg["assumptions"])
+        assert "unenforceable" in assumption_blob
+        assert "Schwab account value unavailable" in assumption_blob
+
+    def test_average_down_within_resolved_cap_uses_pct_in_message(self):
+        # SOFI override: basis=$3200 + $800 = $4000.
+        # Resolved cap = 25% × $20,000 = $5,000. 4000 ≤ 5000 ⇒ eligible.
+        # Assumption text must name the % and the resolved $.
+        paths = compute_recovery_paths(
+            position=_sofi_position(adjusted_cost_basis=3200.0),
+            current_price=8.0,
+            target_yield=0.18,
+            sizing_cap_pct=25.0,
+            total_capital=20000.0,
+        )
+        avg = next(p for p in paths if p["path_id"] == "average-down")
+        assert avg["eligibility"] == "eligible"
+        assert avg["capital_tied_up"] == pytest.approx(4000.0)
+        assumption_blob = " ".join(avg["assumptions"])
+        assert "25% sizing cap" in assumption_blob
+        assert "≈ $5,000" in assumption_blob
