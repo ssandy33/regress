@@ -537,3 +537,58 @@ def test_action_engine_honors_non_default_expiration_warning_days():
     rules = RulesConfig(management={"expiration_warning_days": 14})
     assert rules.management.expiration_warning_days == 14
     assert "expiration.itm_short_dte" in _itm_short_dte_ids(rules)
+
+
+# ---------------------------------------------------------------------------
+# Issue #234 (W-H) — RecoveryOkrInputs v2 includes capital_status
+#
+# The recovery endpoint's OKR-inputs block carries the full V1 sizing-cap
+# contract. A stored ``rules_config`` row paired with a mocked account-value
+# cache produces a response that round-trips through ``RecoveryOkrInputs``.
+# ---------------------------------------------------------------------------
+
+
+def test_okr_response_includes_capital_status_field(client, monkeypatch):
+    """The recovery endpoint's OKR inputs match the V1 ``RecoveryOkrInputs``
+    contract — sizing_cap_pct, total_capital, resolved_sizing_cap_dollars,
+    account_id_masked, capital_status all populated.
+    """
+    from datetime import datetime, timezone
+
+    from app.models.schemas import RecoveryOkrInputs
+    from app.routers import positions as positions_router
+    from app.services.schwab_account_value import AccountValueResult
+
+    _seed_position(client, broker_cost_basis=3800.0)
+    _seed_setting(
+        client,
+        RULES_CONFIG_KEY,
+        _full_rules_config(
+            position={"sizing_cap_pct": 25.0, "sizing_cap_account": None}
+        ),
+    )
+    monkeypatch.setattr(
+        positions_router,
+        "get_cached_account_value",
+        lambda db, sizing_cap_account=None: AccountValueResult(
+            status="ok",
+            total_capital=20000.0,
+            account_id_masked="…4471",
+            account_type="MARGIN",
+            cached_at=datetime.now(timezone.utc),
+        ),
+    )
+    with patch.object(SchwabClient, "get_quote", return_value={"lastPrice": 8.0}):
+        resp = client.post("/api/positions/pos-sofi/recovery-plan")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["state"] == "populated"
+    okr = payload["inputs"]["okr"]
+    # Round-trip the shape through the v2 contract — raises if a field
+    # is missing or shaped wrong.
+    RecoveryOkrInputs.model_validate(okr)
+    assert okr["sizing_cap_pct"] == pytest.approx(25.0)
+    assert okr["total_capital"] == pytest.approx(20000.0)
+    assert okr["resolved_sizing_cap_dollars"] == pytest.approx(5000.0)
+    assert okr["account_id_masked"] == "…4471"
+    assert okr["capital_status"] == "ok"
