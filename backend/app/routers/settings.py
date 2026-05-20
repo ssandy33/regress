@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import os
+from dataclasses import asdict
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -18,9 +19,11 @@ from app.services.schwab_auth import (
     SCHWAB_OAUTH_SCOPE,
     SCHWAB_REDIRECT_URI,
     SCHWAB_TOKEN_URL,
+    SchwabAuthError,
     SchwabTokenManager,
     store_schwab_tokens,
 )
+from app.services.schwab_client import SchwabClientError
 from app.models.database import AppSetting, CacheEntry, get_db
 from app.models.schemas import CacheStatsResponse, SettingUpdate, SettingsResponse
 from app.services.backup import create_backup, list_backups, restore_backup
@@ -30,6 +33,11 @@ from app.services.rules_config import (
     SIZING_CAP_MIGRATION_KEY,
     RulesConfig,
     load_rules_config,
+)
+from app.services.schwab_account_value import (
+    AccountValueResult,
+    get_account_value,
+    get_cached_account_value,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,6 +115,14 @@ def update_setting(req: SettingUpdate, db: DBSession = Depends(get_db)):
 
 
 # --- Trading Rules config (issue #158 — edit surface for the #156 keystone) ---
+
+
+# Generic, sanitised copy returned when a Schwab call fails out of the
+# account-value endpoints. Per CLAUDE.md, no raw exception text reaches the
+# client; the structured failure modes (disconnected / expired / error) are
+# surfaced INSIDE the AccountValueResult payload, while an unexpected raise
+# from the W-A service is mapped to a 503 with this detail.
+_SCHWAB_UNAVAILABLE_DETAIL = "Schwab service unavailable"
 
 
 def _read_sizing_cap_migration(db: DBSession) -> dict | None:
@@ -246,6 +262,106 @@ def dismiss_sizing_cap_migration(db: DBSession = Depends(get_db)):
     entry.value = json.dumps(parsed)
     db.commit()
     return {"sizing_cap": parsed}
+
+
+# --- Schwab account-value endpoints (issue #234 — V1 contract §6.3) ---
+
+
+def _serialise_account_value(result: AccountValueResult) -> dict:
+    """Project an :class:`AccountValueResult` into a JSON-ready dict.
+
+    ``cached_at`` is a ``datetime``; FastAPI's default JSON encoder handles
+    it, but we coerce to an ISO string explicitly so the response shape is
+    identical whether we hand back ``asdict(result)`` or a dict assembled by
+    other code paths.
+    """
+    payload = asdict(result)
+    cached_at = result.cached_at
+    if isinstance(cached_at, datetime):
+        payload["cached_at"] = cached_at.isoformat()
+    return payload
+
+
+@router.get("/account-value")
+def get_account_value_endpoint(db: DBSession = Depends(get_db)):
+    """Return the cached Schwab account-value result.
+
+    Reads ``rules.position.sizing_cap_account`` to pick the right cache
+    bucket, then calls :func:`get_cached_account_value` (cache-hit-only;
+    NEVER makes a network call). On a cold cache (first GET after a server
+    restart) the implementation falls through to
+    :func:`get_account_value` with ``force_refresh=False`` ONCE so the user
+    doesn't have to hit "Refresh" to populate the very first read. Every
+    subsequent GET hits the cache for free.
+
+    Errors are sanitised per CLAUDE.md: a raised
+    :class:`SchwabAuthError` / :class:`SchwabClientError` becomes a 503
+    with a generic detail; the W-A service's structured failure modes
+    (``status="disconnected" | "expired" | "error"``) are surfaced INSIDE
+    the JSON body with a 200, because they are typed-success states that
+    carry per-status UI affordances on the frontend.
+    """
+    rules = load_rules_config(db)
+    sizing_cap_account = rules.position.sizing_cap_account
+
+    try:
+        cached = get_cached_account_value(db, sizing_cap_account=sizing_cap_account)
+        if cached is not None:
+            return _serialise_account_value(cached)
+        # Cold cache fall-through: one ordinary fetch to warm both tiers.
+        result = get_account_value(
+            db,
+            force_refresh=False,
+            sizing_cap_account=sizing_cap_account,
+        )
+    except SchwabAuthError as exc:
+        # The W-A service never raises on auth errors — every auth failure
+        # is mapped to status="disconnected" / "expired" / "error" on the
+        # returned dataclass. This branch exists as defence in depth: if a
+        # future refactor lets one through we still degrade cleanly.
+        logger.warning("Schwab auth error in /account-value: code=%s", exc.code)
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+    except SchwabClientError:
+        logger.warning("Schwab transport error in /account-value")
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+
+    return _serialise_account_value(result)
+
+
+@router.post("/account-value/refresh")
+def refresh_account_value(db: DBSession = Depends(get_db)):
+    """Force a fresh Schwab account-value fetch.
+
+    Calls :func:`get_account_value` with ``force_refresh=True`` so the W-A
+    service bypasses both the hot in-memory cache and the durable
+    ``app_settings`` cache and makes a Schwab round-trip. Per refinement
+    **S2** of the parallel-execution plan, the W-A service falls through
+    to a fresh hot-cache entry with ``status="ok"`` when the network call
+    fails BUT a fresh cached value still exists — this endpoint surfaces
+    that exact result without remapping the status. The "Refresh"
+    affordance never flips a good cache to "error" on a transient blip.
+
+    Same error sanitisation as ``GET /account-value`` — a raised Schwab
+    auth/client exception becomes a 503 with a generic detail; structured
+    statuses ride inside the 200 body.
+    """
+    rules = load_rules_config(db)
+    sizing_cap_account = rules.position.sizing_cap_account
+
+    try:
+        result = get_account_value(
+            db,
+            force_refresh=True,
+            sizing_cap_account=sizing_cap_account,
+        )
+    except SchwabAuthError as exc:
+        logger.warning("Schwab auth error in /account-value/refresh: code=%s", exc.code)
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+    except SchwabClientError:
+        logger.warning("Schwab transport error in /account-value/refresh")
+        raise HTTPException(status_code=503, detail=_SCHWAB_UNAVAILABLE_DETAIL)
+
+    return _serialise_account_value(result)
 
 
 @router.get("/cache", response_model=CacheStatsResponse)
