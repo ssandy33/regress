@@ -201,7 +201,10 @@ function InspectPanel({ leg }) {
   if (leg.pnl_dollars != null && leg.cost_to_close != null) {
     creditReceived = leg.pnl_dollars + leg.cost_to_close;
   } else if (leg.premium != null) {
-    creditReceived = leg.premium * 100;
+    // Degraded path (#252): scale by quantity so `Credit received` matches a
+    // multi-contract leg's true credit. `?? 1` is defensive — the schema
+    // default is `1` so this only matters for stale fixtures.
+    creditReceived = leg.premium * 100 * (leg.quantity ?? 1);
   }
   const verdict = leg.verdict || 'hold';
   // A "closing" verdict gets a "Buy to close" CTA; a quiet/review leg does not.
