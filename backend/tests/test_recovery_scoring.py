@@ -57,12 +57,17 @@ def _sofi_position(**overrides) -> dict:
     return base
 
 
-def _sofi_paths(target_yield: float | None = 0.18, sizing_cap: float = 5000.0):
+def _sofi_paths(
+    target_yield: float | None = 0.18,
+    sizing_cap_pct: float = 25.0,
+    total_capital: float = 20000.0,
+):
     return compute_recovery_paths(
         position=_sofi_position(),
         current_price=8.0,
         target_yield=target_yield,
-        sizing_cap_dollars=sizing_cap,
+        sizing_cap_pct=sizing_cap_pct,
+        total_capital=total_capital,
     )
 
 

@@ -12,7 +12,7 @@ Covers:
 - ``state == "not-flagged"`` for position above the threshold.
 - 500 with the **generic** detail message when the quote fails — and the
   500 body does NOT leak ``str(e)`` (CLAUDE.md compliance).
-- ``okr_target_yield`` / ``okr_sizing_cap_dollars`` read from
+- ``okr_target_yield`` / ``okr_sizing_cap_pct`` read from
   ``app_settings``; defaults when unset.
 """
 
@@ -265,7 +265,8 @@ def test_recovery_assumptions_sizing_cap_source_is_trading_rules(client):
 def test_recovery_plan_populated_for_flagged_position(client):
     _seed_position(client, broker_cost_basis=3800.0, shares=100)
     _seed_setting(client, "okr_target_yield", "0.18")
-    _seed_setting(client, "okr_sizing_cap_dollars", "5000.0")
+    _seed_setting(client, "okr_sizing_cap_pct", "25.0")
+    _seed_setting(client, "okr_total_capital", "20000.0")
     with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
         resp = client.post("/api/positions/pos-sofi/recovery-plan")
     assert resp.status_code == 200
@@ -325,7 +326,8 @@ def test_recovery_plan_uses_default_sizing_cap_when_unset(client):
     with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
         resp = client.post("/api/positions/pos-sofi/recovery-plan")
     payload = resp.json()
-    assert payload["inputs"]["okr"]["sizing_cap_dollars"] == pytest.approx(5000.0)
+    assert payload["inputs"]["okr"]["sizing_cap_pct"] == pytest.approx(25.0)
+    assert payload["inputs"]["okr"]["resolved_sizing_cap_dollars"] == pytest.approx(5000.0)
 
 
 def test_recovery_plan_sell_redeploy_populated_after_target_yield_set(client):

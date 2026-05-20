@@ -37,7 +37,8 @@ function defaultRulesConfig() {
       min_call_distance_from_cost_basis_pct: 0.0,
     },
     position: {
-      sizing_cap_dollars: 5000.0,
+      sizing_cap_pct: 25.0,
+      sizing_cap_account: null,
       max_ticker_concentration_pct: 25.0,
       max_open_positions: null,
     },
