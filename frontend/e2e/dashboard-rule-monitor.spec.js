@@ -62,7 +62,6 @@ const BASE_PAYLOAD = {
       broker_cost_basis: 1500.0,
     },
   ],
-  upcoming_expirations: [],
   recent_activity: [],
   data_meta: {
     is_stale: false,

@@ -61,7 +61,6 @@ function buildPayloadWithActivityAt(iso, opts = {}) {
       },
     ],
     open_legs: [],
-    upcoming_expirations: [],
     recent_activity: [event],
     data_meta: {
       is_stale: false,

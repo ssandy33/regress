@@ -5,11 +5,14 @@ import { test, expect } from '@playwright/test';
  *
  * Mirrors the AC scenarios:
  * - default-route redirect (`/` → `/dashboard`)
- * - populated state (KPIs, expirations, positions, activity)
+ * - populated state (KPIs, positions, activity)
  * - empty state (onboarding panel)
  * - disconnected Schwab indicator (red status pill, em-dash placeholders)
  * - Analysis still reachable at `/analysis`
  * - Header has Dashboard + Analysis links
+ *
+ * Issue #248: the Upcoming expirations panel was retired — assertions on
+ * `dashboard-expirations-card` collapse to `toHaveCount(0)` in every branch.
  */
 
 const POPULATED_PAYLOAD = {
@@ -128,40 +131,6 @@ const POPULATED_PAYLOAD = {
       earnings_in_window: false,
     },
   ],
-  upcoming_expirations: [
-    {
-      id: 'leg-1',
-      ticker: 'AAPL',
-      type: 'put',
-      strike: 175.0,
-      expiration: '2026-05-08',
-      dte: 3,
-      moneyness: { state: 'ITM', distance_pct: 0.0024, distance_dollars: 0.42 },
-      position_id: 'pos-aapl',
-      decision_tag: 'roll-or-assign',
-      decision_reason: 'ITM by $0.42',
-      profit_target_status: { captured_pct: null, state: 'unknown' },
-      assignment_risk: 'high',
-      suggested_action: 'roll',
-      earnings_in_window: false,
-    },
-    {
-      id: 'leg-2',
-      ticker: 'TSLA',
-      type: 'call',
-      strike: 240.0,
-      expiration: '2026-05-15',
-      dte: 10,
-      moneyness: { state: 'OTM', distance_pct: 0.041, distance_dollars: 1.2 },
-      position_id: 'pos-tsla',
-      decision_tag: 'hold',
-      decision_reason: 'OTM 4.1%',
-      profit_target_status: { captured_pct: null, state: 'unknown' },
-      assignment_risk: 'low',
-      suggested_action: 'hold',
-      earnings_in_window: false,
-    },
-  ],
   recent_activity: [
     {
       kind: 'trade_added',
@@ -211,7 +180,6 @@ const EMPTY_PAYLOAD = {
   },
   positions: [],
   open_legs: [],
-  upcoming_expirations: [],
   recent_activity: [],
   data_meta: {
     is_stale: false,
@@ -264,7 +232,7 @@ test.describe('Dashboard route', () => {
     expect(page.url()).toMatch(/\/dashboard$/);
   });
 
-  test('renders populated state with KPIs, expirations, positions, activity', async ({ page }) => {
+  test('renders populated state with KPIs, positions, activity', async ({ page }) => {
     await mockDashboard(page, POPULATED_PAYLOAD);
     await page.goto('/dashboard');
     await page.waitForLoadState('networkidle');
@@ -287,10 +255,9 @@ test.describe('Dashboard route', () => {
     await expect(openPosTile).toContainText('1 wheel');
     await expect(openPosTile).toContainText('1 holding');
 
-    // Decision row — AAPL roll-or-assign
-    const expirationCard = page.getByTestId('dashboard-expirations-card');
-    await expect(expirationCard).toContainText('AAPL');
-    await expect(expirationCard).toContainText('Roll or assign');
+    // Issue #248 — the Upcoming expirations panel is retired. Assert it is
+    // absent even on a populated dashboard (it has no remaining DOM home).
+    await expect(page.getByTestId('dashboard-expirations-card')).toHaveCount(0);
 
     // Positions table — 3 rows
     await expect(page.getByTestId('dashboard-position-row')).toHaveCount(3);

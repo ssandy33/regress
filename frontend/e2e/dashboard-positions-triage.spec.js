@@ -105,7 +105,6 @@ const TRIAGE_PAYLOAD = {
   kpis: BASE_KPIS,
   positions: TRIAGE_POSITIONS,
   open_legs: [],
-  upcoming_expirations: [],
   recent_activity: [],
   data_meta: {
     is_stale: false,
