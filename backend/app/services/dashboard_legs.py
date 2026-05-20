@@ -134,24 +134,6 @@ def compute_decision_tag(
     return "hold"
 
 
-def format_decision_reason(
-    moneyness: dict | None,
-    dte: int,
-) -> str:
-    """Build the human-readable single-line reason rendered under the leg.
-
-    Examples: "ITM by $0.42", "OTM 4.1%", "3 DTE - awaiting price".
-    """
-    if moneyness is None:
-        return f"{dte} DTE — awaiting price"
-    state = moneyness["state"]
-    if state == "ITM":
-        return f"ITM by ${moneyness['distance_dollars']:.2f}"
-    if state == "ATM":
-        return "At the money"
-    return f"OTM {moneyness['distance_pct'] * 100:.1f}%"
-
-
 def compute_assignment_risk(
     dte: int,
     moneyness_state: str | None,
@@ -524,37 +506,6 @@ def derive_open_legs(
             )
     legs.sort(key=lambda x: (x["dte"], x["ticker"]))
     return legs
-
-
-def filter_upcoming(
-    legs: list[dict],
-    horizon_days: int = 14,
-) -> list[dict]:
-    """Return legs expiring within `horizon_days` (inclusive), enriched
-    with `decision_tag` and `decision_reason`.
-
-    Sort order: DTE ascending, ITM before OTM within the same DTE.
-    """
-    upcoming: list[dict] = []
-    for leg in legs:
-        if leg["dte"] > horizon_days:
-            continue
-        moneyness_state = leg["moneyness"]["state"] if leg["moneyness"] else None
-        leg_with_tag = {
-            **leg,
-            "decision_tag": compute_decision_tag(leg["dte"], moneyness_state),
-            "decision_reason": format_decision_reason(leg["moneyness"], leg["dte"]),
-        }
-        upcoming.append(leg_with_tag)
-    # ITM before OTM within the same DTE — encode "ITM" as 0, others as 1.
-    upcoming.sort(
-        key=lambda x: (
-            x["dte"],
-            0 if (x["moneyness"] and x["moneyness"]["state"] == "ITM") else 1,
-            x["ticker"],
-        )
-    )
-    return upcoming
 
 
 def parse_iso_to_utc(value: str | None) -> datetime | None:

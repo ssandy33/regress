@@ -25,7 +25,6 @@ from app.services.alpha_vantage_client import get_cached_next_earnings_date
 from app.services.dashboard_legs import (
     build_option_mark_index,
     derive_open_legs,
-    filter_upcoming,
     parse_iso_to_utc,
 )
 from app.services.rules_config import load_rules_config
@@ -693,7 +692,6 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         dte_review_days=rules.management.dte_review_days,
         expiration_warning_days=rules.management.expiration_warning_days,
     )
-    upcoming = filter_upcoming(open_legs, horizon_days=14)
 
     # Position rows + KPIs piggyback on the same data — no extra DB hits.
     position_rows = _build_position_rows(open_positions, quotes_by_ticker, open_legs)
@@ -745,7 +743,6 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         "kpis": kpis,
         "positions": position_rows,
         "open_legs": open_legs,
-        "upcoming_expirations": upcoming,
         "recent_activity": recent_activity,
         "data_meta": {
             "is_stale": is_stale,

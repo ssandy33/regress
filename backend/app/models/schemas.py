@@ -551,7 +551,6 @@ class ReconcileResponse(BaseModel):
 
 DASHBOARD_OPTION_TYPE = Literal["put", "call"]
 DASHBOARD_MONEYNESS_STATE = Literal["ITM", "ATM", "OTM"]
-DASHBOARD_DECISION_TAG = Literal["roll-or-assign", "manage", "watch", "hold"]
 DASHBOARD_ACTIVITY_KIND = Literal["session_saved", "trade_added"]
 DASHBOARD_PROFIT_TARGET_STATE = Literal[
     "captured_50", "in_progress", "underwater", "unknown"
@@ -763,11 +762,6 @@ class DashboardOpenLeg(BaseModel):
     cost_to_close: Optional[float] = None
 
 
-class DashboardUpcomingExpiration(DashboardOpenLeg):
-    decision_tag: DASHBOARD_DECISION_TAG
-    decision_reason: str
-
-
 class DashboardNextActionSubject(BaseModel):
     """Structured subject identifier for a Next Action card.
 
@@ -834,7 +828,6 @@ class DashboardResponse(BaseModel):
     kpis: DashboardKpis
     positions: list[DashboardPositionRow]
     open_legs: list[DashboardOpenLeg]
-    upcoming_expirations: list[DashboardUpcomingExpiration]
     recent_activity: list[DashboardActivity]
     data_meta: DashboardDataMeta
     # New in V0.5.4 — server-side ranked action engine output. See

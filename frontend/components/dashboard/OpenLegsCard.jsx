@@ -35,9 +35,27 @@ import { formatCurrency, formatPercent } from '../../utils/formatters';
  *     verdict is non-`hold`.
  */
 
+// DTE-urgency thresholds (issue #248) — must stay in lockstep with the
+// `compute_assignment_risk()` helper in
+// `backend/app/services/dashboard_legs.py` (~line 155). Both use `<=` at the
+// boundary, so DTE 7 is red and DTE 14 is amber. The frontend visual recipe
+// and the backend risk classification share the same constants by intent.
+const DTE_RED_THRESHOLD = 7;
+const DTE_AMBER_THRESHOLD = 14;
+
+// Tier label feeding both `dteBadgeClass` (color) and the row's
+// `data-dte-urgency` attribute (the stable Playwright hook). Single source so
+// the class and the data attribute cannot drift.
+function dteUrgencyTier(dte) {
+  if (dte <= DTE_RED_THRESHOLD) return 'red';
+  if (dte <= DTE_AMBER_THRESHOLD) return 'amber';
+  return 'neutral';
+}
+
 function dteBadgeClass(dte) {
-  if (dte <= 7) return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
-  if (dte <= 14) return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300';
+  const tier = dteUrgencyTier(dte);
+  if (tier === 'red') return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
+  if (tier === 'amber') return 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300';
   return 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-200';
 }
 
@@ -490,6 +508,8 @@ function LegRow({ leg, isExpanded, onToggle }) {
       </span>
       <span className="col-span-2 lg:col-span-1">
         <span
+          data-testid="dashboard-leg-row-dte"
+          data-dte-urgency={dteUrgencyTier(leg.dte)}
           className={`inline-block px-2 py-0.5 text-xs rounded-full ${dteBadgeClass(leg.dte)}`}
         >
           {leg.dte}d
@@ -579,12 +599,21 @@ export default function OpenLegsCard({ legs, loading }) {
       title="Open option legs"
       dataTestid="dashboard-legs-card"
       footer={
-        <Link
-          href="/options"
-          className="text-blue-600 dark:text-blue-400 hover:underline"
-        >
-          → View all in Options
-        </Link>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/options"
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            → View all in Options
+          </Link>
+          <Link
+            href="/journal"
+            data-testid="dashboard-legs-card-journal-link"
+            className="text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            → Open Journal
+          </Link>
+        </div>
       }
     >
       {legs?.length ? (

@@ -180,7 +180,6 @@ const DASHBOARD_BASE = {
     largest_loser: null,
   },
   positions: [],
-  upcoming_expirations: [],
   open_legs: [],
   recent_activity: [],
   data_meta: { is_stale: false, fetched_at: '2026-05-19T13:42:00+00:00', sources_unavailable: [] },

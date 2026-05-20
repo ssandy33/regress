@@ -60,7 +60,6 @@ const BASE_PAYLOAD = {
       open_legs_count: 1,
     },
   ],
-  upcoming_expirations: [],
   recent_activity: [],
   data_meta: {
     is_stale: false,
