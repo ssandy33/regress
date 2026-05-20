@@ -6,8 +6,10 @@
 //      failure_count). Default `failure_count_asc` (closest-to-passing first).
 //      State component-local; no localStorage.
 //   2. Per-rule summary band — one chip per non-zero rule family, count-desc
-//      with canonical-order tie-break. Chip is a <button> (W-D's #258
-//      popover anchors here — this issue ships an inert click target).
+//      with canonical-order tie-break. Chip is a <button>; W-D (#258) wires
+//      its `onClick` to the Relax-to-X popover (see imports below). Binary
+//      rules (`itm_put`, `zero_bid`) render in a disabled register with a
+//      title hint and short-circuit before the popover opens.
 //   3. Near-pass badge — emerald "One rule away" pill on rows with
 //      `rejection_reasons.length === 1`, replacing the right-aligned reason
 //      count. Reason text uses a fact-led "Would pass — …" framing.
@@ -27,6 +29,9 @@
 
 import { useMemo, useState } from 'react';
 
+import { postRelaxPreview } from '../../api/client';
+
+import ScannerRejectedStrikesRelaxPopover from './ScannerRejectedStrikesRelaxPopover';
 import {
   CANONICAL_RULE_ORDER,
   REJECTION_RULE_LABELS,
@@ -34,6 +39,16 @@ import {
   formatNearPassReason,
   labelForRuleFamily,
 } from './scannerRejectionLabels';
+
+// Binary rule families — no meaningful "relax to X" exists. The chip is
+// visually disabled and the click handler short-circuits so the popover
+// never opens. The backend returns 400 "rule not relaxable" if asked.
+const BINARY_RULES = new Set(['itm_put', 'zero_bid']);
+
+const BINARY_RULE_HINTS = {
+  itm_put: 'Not relaxable — itm_put is a yes/no rule',
+  zero_bid: 'Not relaxable — zero bid means no market',
+};
 
 // Defensive fallback only — the backend is the canonical source.
 // Keys are the code prefix (everything before the colon in a raw rejection).
@@ -112,14 +127,34 @@ function SortHeader({ field, label, sortField, sortDir, onSort }) {
   );
 }
 
-function SummaryChip({ family, count }) {
+function SummaryChip({ family, count, onClick }) {
   const label = labelForRuleFamily(family);
+  const isBinary = BINARY_RULES.has(family);
+
+  // Binary rules render in a desaturated, disabled register (per V1.0.8
+  // spec §2.1) — they keep their count but cannot open the popover; the
+  // click handler short-circuits AND the chip carries the `disabled` +
+  // `aria-disabled` attributes so user agents will not fire the click in
+  // most cases. The title hint teaches the user *why* relax is not offered.
+  const className = isBinary
+    ? 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-slate-50 text-slate-400 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-slate-400 transition-colors'
+    : 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-slate-100 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600/60 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors';
+
+  const handleClick = (e) => {
+    if (isBinary) return; // §2.1 — defensive; chip is already disabled.
+    if (onClick) onClick(e.currentTarget);
+  };
+
   return (
     <button
       type="button"
       data-testid={`scanner-rejected-strikes-summary-rule-${family}`}
       data-count={count}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-slate-100 text-slate-700 dark:bg-slate-700/60 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600/60 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors"
+      onClick={handleClick}
+      disabled={isBinary || undefined}
+      aria-disabled={isBinary || undefined}
+      title={isBinary ? BINARY_RULE_HINTS[family] : undefined}
+      className={className}
     >
       <span>{label}</span>
       <span aria-hidden>&middot;</span>
@@ -227,10 +262,60 @@ export default function ScannerRejectedStrikes({
   rejected = [],
   defaultOpen = false,
   visibleCount = 20,
+  ticker = null,
+  strategy = null,
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [sortField, setSortField] = useState('failure_count');
   const [sortDir, setSortDir] = useState('asc');
+
+  // V1.0.8 "Relax to X" popover state (#258). Single-instance — only one
+  // popover open at a time. Switching rules updates `rule` + `anchorEl` and
+  // re-fetches; closing nulls the whole object.
+  //   state ∈ { 'idle', 'loading', 'ready', 'error' }
+  const [popover, setPopover] = useState({
+    rule: null,
+    state: 'idle',
+    data: null,
+    anchorEl: null,
+  });
+
+  const openRelaxFor = async (family, chipEl) => {
+    if (BINARY_RULES.has(family)) return; // §2.1 — redundant with disabled chip.
+    setPopover({ rule: family, state: 'loading', data: null, anchorEl: chipEl });
+    try {
+      const data = await postRelaxPreview({
+        ticker,
+        strategy,
+        rule: family,
+        rejected,
+      });
+      // The `p.rule === family` guard protects against a stale response
+      // landing after the user has already switched chips or closed.
+      setPopover((p) =>
+        p.rule === family ? { ...p, state: 'ready', data } : p,
+      );
+    } catch {
+      setPopover((p) =>
+        p.rule === family ? { ...p, state: 'error', data: null } : p,
+      );
+    }
+  };
+
+  const closePopover = () => {
+    // Return focus to the chip that opened the popover.
+    const anchor = popover.anchorEl;
+    setPopover({ rule: null, state: 'idle', data: null, anchorEl: null });
+    if (anchor && typeof anchor.focus === 'function') {
+      anchor.focus();
+    }
+  };
+
+  const retryPopover = () => {
+    if (popover.rule && popover.anchorEl) {
+      openRelaxFor(popover.rule, popover.anchorEl);
+    }
+  };
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -260,6 +345,7 @@ export default function ScannerRejectedStrikes({
   const hiddenCount = sorted.length - shown.length;
 
   return (
+    <>
     <section
       data-testid="scanner-rejected-strikes"
       className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
@@ -313,7 +399,12 @@ export default function ScannerRejectedStrikes({
               Of {rejected.length} rejected:
             </span>
             {summary.map(([family, count]) => (
-              <SummaryChip key={family} family={family} count={count} />
+              <SummaryChip
+                key={family}
+                family={family}
+                count={count}
+                onClick={(chipEl) => openRelaxFor(family, chipEl)}
+              />
             ))}
           </div>
 
@@ -336,6 +427,19 @@ export default function ScannerRejectedStrikes({
         </>
       )}
     </section>
+    {/* V1.0.8 #258 — Relax to X popover. Owned by the panel, anchored to
+        whichever chip last fired `openRelaxFor`. Single-instance; closing
+        nulls the popover state and returns focus to the chip. */}
+    <ScannerRejectedStrikesRelaxPopover
+      open={popover.rule !== null}
+      anchorEl={popover.anchorEl}
+      rule={popover.rule}
+      state={popover.state}
+      data={popover.data}
+      onClose={closePopover}
+      onRetry={retryPopover}
+    />
+    </>
   );
 }
 

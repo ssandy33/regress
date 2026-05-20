@@ -669,3 +669,335 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
     await expect(structuralRow).toContainText('cost-basis floor');
   });
 });
+
+// ============================================================================
+// V1.0.8 / #258 — Rejected Strikes "Relax to X" preview popover
+// ============================================================================
+//
+// Appended block. Tests:
+//   - Clicking a summary-band chip opens the popover anchored to that chip.
+//   - Mocked /relax response renders data-state="ready" + recovered-count.
+//   - Close button + Escape both dismiss.
+//   - Binary-rule chip (`itm_put`) is `aria-disabled` and click is a no-op.
+//   - Error state: mocked endpoint failure → data-state="error".
+//   - Empty recovered_count=0 → slate-tone empty copy, no strike list.
+
+// Fixed mocked relax payload — used by the "ready" + recovered_count > 0 case.
+const RELAX_PAYLOAD_LOW_OI = {
+  rule: 'low_open_interest',
+  current_threshold_text: '500',
+  relaxed_threshold_text: '250',
+  recovered_count: 3,
+  recovered_strikes: [
+    { strike: 14.0, expiration: '2026-06-26' },
+    { strike: 14.5, expiration: '2026-06-26' },
+    { strike: 15.0, expiration: '2026-07-31' },
+  ],
+};
+
+// Payload used by the empty-state test — endpoint returns 200 with zero count.
+const RELAX_PAYLOAD_EMPTY = {
+  rule: 'delta_out_of_range',
+  current_threshold_text: '0.20–0.35',
+  relaxed_threshold_text: '0.15–0.40',
+  recovered_count: 0,
+  recovered_strikes: [],
+};
+
+function setupRelaxMocks(page, { relaxStatus = 200, relaxBody = RELAX_PAYLOAD_LOW_OI } = {}) {
+  return Promise.all([
+    page.route('**/api/settings/health/schwab', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          configured: true,
+          valid: true,
+          error: null,
+          token_expiry: null,
+        }),
+      }),
+    ),
+    page.route('**/api/options/scan', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(TIERED_SCAN_PAYLOAD),
+      }),
+    ),
+    page.route('**/api/options/scan/relax', (route) =>
+      route.fulfill({
+        status: relaxStatus,
+        contentType: 'application/json',
+        body: JSON.stringify(
+          relaxStatus >= 400 ? { detail: 'Failed to compute relax preview' } : relaxBody,
+        ),
+      }),
+    ),
+  ]);
+}
+
+test.describe('Scanner education — Relax-to-X preview popover (#258)', () => {
+  test('clicking a relaxable chip opens the popover and renders the ready state', async ({
+    page,
+  }) => {
+    await setupRelaxMocks(page);
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    // Popover not rendered until the chip is clicked.
+    await expect(page.getByTestId('scanner-rejected-strikes-relax-popover')).toHaveCount(0);
+
+    // Click the low_open_interest chip — popover opens.
+    await page
+      .getByTestId('scanner-rejected-strikes-summary-rule-low_open_interest')
+      .click();
+
+    const popover = page.getByTestId('scanner-rejected-strikes-relax-popover');
+    await expect(popover).toBeVisible();
+
+    // Eventually settles to data-state="ready".
+    await expect(popover).toHaveAttribute('data-state', 'ready');
+    await expect(popover).toHaveAttribute('data-rule', 'low_open_interest');
+
+    // Recovered count matches the mocked payload.
+    const count = page.getByTestId('scanner-rejected-strikes-relax-recovered-count');
+    await expect(count).toHaveAttribute('data-count', '3');
+    await expect(count).toContainText('3 strikes');
+
+    // Threshold delta line shows current → relaxed values.
+    await expect(popover).toContainText('500');
+    await expect(popover).toContainText('250');
+
+    // Strike list renders the first 3 mocked strikes.
+    await expect(popover).toContainText('$14.00');
+    await expect(popover).toContainText('$15.00');
+
+    // Footer disclaimer.
+    await expect(popover).toContainText('Preview only');
+
+    // Per-rule scoped test ID is present (selector convenience for tests).
+    await expect(
+      page.getByTestId('scanner-rejected-strikes-relax-rule-low_open_interest'),
+    ).toBeVisible();
+  });
+
+  test('close button and Escape both dismiss the popover', async ({ page }) => {
+    await setupRelaxMocks(page);
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    // Open via click.
+    await page
+      .getByTestId('scanner-rejected-strikes-summary-rule-low_open_interest')
+      .click();
+    const popover = page.getByTestId('scanner-rejected-strikes-relax-popover');
+    await expect(popover).toBeVisible();
+
+    // Close via the × button.
+    await page.getByTestId('scanner-rejected-strikes-relax-popover-close').click();
+    await expect(page.getByTestId('scanner-rejected-strikes-relax-popover')).toHaveCount(0);
+
+    // Re-open + close via Escape.
+    await page
+      .getByTestId('scanner-rejected-strikes-summary-rule-low_open_interest')
+      .click();
+    await expect(page.getByTestId('scanner-rejected-strikes-relax-popover')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('scanner-rejected-strikes-relax-popover')).toHaveCount(0);
+  });
+
+  test('binary-rule chip (itm_put) is disabled and clicking it does NOT open the popover', async ({
+    page,
+  }) => {
+    // Bolt an `itm_put` rejection onto the canonical covered_call tiered
+    // payload so the chip renders alongside the relaxable chips. The chip
+    // is the unit under test — the popover's wire-up does not care which
+    // scanner strategy emitted the rejection.
+    const itmPutPayload = {
+      ...TIERED_SCAN_PAYLOAD,
+      rejected: [
+        ...TIERED_SCAN_PAYLOAD.rejected,
+        {
+          strike: 15.0,
+          expiration: '2026-06-26',
+          rejection_reasons: ['itm_put: strike $15.00 > price $13.21'],
+          human_reasons: [
+            'Put is already in the money. CSPs work best below current price.',
+          ],
+        },
+      ],
+    };
+
+    await Promise.all([
+      page.route('**/api/settings/health/schwab', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            configured: true,
+            valid: true,
+            error: null,
+            token_expiry: null,
+          }),
+        }),
+      ),
+      page.route('**/api/options/scan', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(itmPutPayload),
+        }),
+      ),
+      // Endpoint should NEVER be hit — assert via routing not invoked.
+      page.route('**/api/options/scan/relax', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({}),
+        }),
+      ),
+    ]);
+
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    const chip = page.getByTestId('scanner-rejected-strikes-summary-rule-itm_put');
+    await expect(chip).toBeVisible();
+    await expect(chip).toHaveAttribute('aria-disabled', 'true');
+    await expect(chip).toBeDisabled();
+
+    // A click on a disabled <button> is a no-op for HTML; assert force-click
+    // also short-circuits via the handler.
+    await chip.click({ force: true });
+    await expect(page.getByTestId('scanner-rejected-strikes-relax-popover')).toHaveCount(0);
+  });
+
+  test('error state — mocked endpoint failure renders data-state="error"', async ({
+    page,
+  }) => {
+    await setupRelaxMocks(page, { relaxStatus: 500 });
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    await page
+      .getByTestId('scanner-rejected-strikes-summary-rule-low_open_interest')
+      .click();
+
+    const popover = page.getByTestId('scanner-rejected-strikes-relax-popover');
+    await expect(popover).toBeVisible();
+    await expect(popover).toHaveAttribute('data-state', 'error');
+    await expect(popover).toContainText("Couldn't compute preview");
+    await expect(popover.getByRole('button', { name: 'Try again' })).toBeVisible();
+  });
+
+  test('empty state — recovered_count: 0 renders slate-tone empty copy and no strike list', async ({
+    page,
+  }) => {
+    await setupRelaxMocks(page, { relaxBody: RELAX_PAYLOAD_EMPTY });
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    await page
+      .getByTestId('scanner-rejected-strikes-summary-rule-delta_out_of_range')
+      .click();
+
+    const popover = page.getByTestId('scanner-rejected-strikes-relax-popover');
+    await expect(popover).toBeVisible();
+    await expect(popover).toHaveAttribute('data-state', 'ready');
+
+    const count = page.getByTestId('scanner-rejected-strikes-relax-recovered-count');
+    await expect(count).toHaveAttribute('data-count', '0');
+    await expect(count).toContainText('No strikes would recover');
+
+    // No example-strike list (the bullets are an `<li>` carrying a `$` —
+    // assert none of the visible $ figures from the relax payload made it
+    // into the popover).
+    await expect(popover).not.toContainText('+');
+    // Threshold text still renders.
+    await expect(popover).toContainText('0.20–0.35');
+  });
+
+  test('switching chips re-fetches and updates the popover', async ({ page }) => {
+    // Second mocked payload for delta_out_of_range.
+    const relaxDeltaPayload = {
+      rule: 'delta_out_of_range',
+      current_threshold_text: '0.20–0.35',
+      relaxed_threshold_text: '0.15–0.40',
+      recovered_count: 1,
+      recovered_strikes: [{ strike: 13.5, expiration: '2026-06-26' }],
+    };
+
+    let callCount = 0;
+    await Promise.all([
+      page.route('**/api/settings/health/schwab', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            configured: true,
+            valid: true,
+            error: null,
+            token_expiry: null,
+          }),
+        }),
+      ),
+      page.route('**/api/options/scan', (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(TIERED_SCAN_PAYLOAD),
+        }),
+      ),
+      page.route('**/api/options/scan/relax', async (route) => {
+        callCount += 1;
+        const req = JSON.parse(route.request().postData() || '{}');
+        const body =
+          req.rule === 'delta_out_of_range' ? relaxDeltaPayload : RELAX_PAYLOAD_LOW_OI;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(body),
+        });
+      }),
+    ]);
+
+    await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.21');
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: 'Scan Options' }).click();
+    await page.getByTestId('scanner-rejected-strikes-toggle').click();
+
+    // Open OI popover.
+    await page
+      .getByTestId('scanner-rejected-strikes-summary-rule-low_open_interest')
+      .click();
+    const popover = page.getByTestId('scanner-rejected-strikes-relax-popover');
+    await expect(popover).toBeVisible();
+    await expect(popover).toHaveAttribute('data-rule', 'low_open_interest');
+    await expect(popover).toHaveAttribute('data-state', 'ready');
+
+    // Switch to delta — popover re-anchors and re-fetches.
+    await page
+      .getByTestId('scanner-rejected-strikes-summary-rule-delta_out_of_range')
+      .click();
+    await expect(popover).toHaveAttribute('data-rule', 'delta_out_of_range');
+    await expect(popover).toHaveAttribute('data-state', 'ready');
+    await expect(
+      page.getByTestId('scanner-rejected-strikes-relax-recovered-count'),
+    ).toHaveAttribute('data-count', '1');
+
+    // Two fetches: one per chip click.
+    expect(callCount).toBe(2);
+  });
+});
+
