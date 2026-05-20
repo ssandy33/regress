@@ -897,11 +897,46 @@ class RecoveryPositionSummary(BaseModel):
 
 
 class RecoveryOkrInputs(BaseModel):
-    """Snapshot of OKR settings consumed by the engine + scoring layer."""
+    """Snapshot of OKR settings consumed by the engine + scoring layer.
+
+    Sizing cap (issue #234, V1 contract)
+    ------------------------------------
+    The sizing cap is no longer a stored dollar amount — it is a percent of
+    total capital resolved at evaluation time against the connected Schwab
+    account's net-liquidation value. The five sizing-cap fields below mirror
+    the shape the recovery-engine + Settings UI consume:
+
+    - ``sizing_cap_pct`` — whole-percent (e.g. ``25.0``).
+    - ``total_capital`` — Schwab net-liquidation value (``None`` when the
+      account-value cache is unavailable: disconnected / expired / error).
+    - ``resolved_sizing_cap_dollars`` — ``sizing_cap_pct × total_capital ÷ 100``
+      (``None`` when ``total_capital`` is unavailable).
+    - ``account_id_masked`` — the selected account's masked id (``"…4471"``);
+      ``None`` when no account is in use or the cache is unavailable.
+    - ``capital_status`` — discriminator on the account-value resolution.
+    """
 
     target_yield: Optional[float] = None
-    sizing_cap_dollars: Optional[float] = None
     strategy_preference: Optional[str] = None
+    sizing_cap_pct: float = Field(
+        ..., description="Sizing cap as percent of total capital"
+    )
+    total_capital: Optional[float] = Field(
+        None,
+        description="Resolved Schwab account net-liquidation value; None when unavailable",
+    )
+    resolved_sizing_cap_dollars: Optional[float] = Field(
+        None,
+        description="sizing_cap_pct × total_capital ÷ 100; None when capital unavailable",
+    )
+    account_id_masked: Optional[str] = Field(
+        None,
+        description="The selected account's masked id (e.g. '…4471'); None when no account in use",
+    )
+    capital_status: Literal["ok", "disconnected", "expired", "error"] = Field(
+        "error",
+        description="Schwab account value resolution status",
+    )
 
 
 class RecoveryInputs(BaseModel):
