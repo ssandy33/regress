@@ -134,6 +134,168 @@ function validateForm(form) {
   return errors;
 }
 
+/** Whole-dollar formatter for the sizing-cap resolved-context line (#234 §5.2):
+ * thousands separators, no cents. Matches the recovery-engine `_format_dollar`
+ * convention so the same ceiling reads identically across surfaces. */
+function formatDollars(amount) {
+  if (amount === null || amount === undefined || Number.isNaN(amount)) return '';
+  const rounded = Math.round(Number(amount));
+  return `$${rounded.toLocaleString('en-US')}`;
+}
+
+/** Build the resolved-context slot for the sizing-cap field (#234 §5–§6).
+ *
+ * Four variants, keyed off `accountValue.status`:
+ *  - "ok"           — "25% of …4471 (≈ $5,240)" + Refresh button. Slate background.
+ *  - "disconnected" — "Schwab not connected — Reconnect Schwab" (amber). Tab-switch
+ *                     to General per #234 §6.3 — NOT a hash anchor.
+ *  - "expired"      — "Schwab session expired — Reconnect Schwab" (amber). Same button.
+ *  - "error"        — "Schwab error — Retry" (amber). Retry force-refreshes.
+ *
+ * While `loading` (initial fetch) the slot shows "Resolving…". The slot's
+ * wrapper carries `data-testid="rules-field-sizing_cap_pct-resolved"` and
+ * `data-state=<status>` so e2e can pick the variant. Per CLAUDE.md, no raw
+ * exception text is interpolated — only the four fixed lead clauses. */
+function renderSizingCapContext({
+  pctRaw,
+  loading,
+  refreshing,
+  accountValue,
+  onRefresh,
+  onReconnect,
+}) {
+  const baseRow =
+    'mt-1.5 flex items-start gap-2 text-xs rounded-md px-2.5 py-1.5';
+  const slateTone = 'bg-slate-100 dark:bg-slate-900/40 text-slate-600 dark:text-slate-300';
+  const amberTone =
+    'bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200';
+
+  if (loading || !accountValue) {
+    return (
+      <div
+        data-testid="rules-field-sizing_cap_pct-resolved"
+        data-state="loading"
+        className={`${baseRow} ${slateTone}`}
+        role="status"
+      >
+        <span aria-hidden="true" className="text-slate-400 dark:text-slate-500">
+          ⓘ
+        </span>
+        <span>Resolving…</span>
+      </div>
+    );
+  }
+
+  if (accountValue.status === 'ok') {
+    const pctNum = Number(pctRaw);
+    const validPct =
+      pctRaw !== '' && pctRaw !== null && !Number.isNaN(pctNum) && pctNum > 0;
+    const account = accountValue.account_id_masked || '';
+    const ceiling = validPct
+      ? formatDollars((pctNum * (accountValue.total_capital || 0)) / 100)
+      : null;
+    return (
+      <div
+        data-testid="rules-field-sizing_cap_pct-resolved"
+        data-state="ok"
+        className={`${baseRow} ${slateTone}`}
+        role="status"
+      >
+        <span aria-hidden="true" className="text-slate-400 dark:text-slate-500">
+          ⓘ
+        </span>
+        <span className="flex-1">
+          {validPct ? (
+            <>
+              <span className="font-semibold text-slate-800 dark:text-slate-100">
+                {pctNum}%
+              </span>
+              {' of '}
+              {account ? <span>{account}</span> : <span>your account</span>}
+              {ceiling ? (
+                <>
+                  {' (≈ '}
+                  <span className="font-semibold text-slate-800 dark:text-slate-100">
+                    {ceiling}
+                  </span>
+                  {')'}
+                </>
+              ) : null}
+            </>
+          ) : (
+            <span>
+              Enter a percentage to see the resolved dollar ceiling.
+            </span>
+          )}
+        </span>
+        <button
+          type="button"
+          data-testid="rules-field-sizing_cap_pct-refresh"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+        >
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+    );
+  }
+
+  if (accountValue.status === 'disconnected' || accountValue.status === 'expired') {
+    const lead =
+      accountValue.status === 'disconnected'
+        ? 'Schwab not connected'
+        : 'Schwab session expired';
+    return (
+      <div
+        data-testid="rules-field-sizing_cap_pct-resolved"
+        data-state={accountValue.status}
+        className={`${baseRow} ${amberTone}`}
+        role="status"
+      >
+        <span aria-hidden="true" className="text-amber-500">
+          ⚠
+        </span>
+        <span className="flex-1">{lead} —{' '}</span>
+        <button
+          type="button"
+          data-testid="rules-field-sizing_cap_pct-reconnect"
+          onClick={onReconnect}
+          className="font-medium text-amber-800 dark:text-amber-200 hover:underline whitespace-nowrap"
+        >
+          Reconnect Schwab
+        </button>
+      </div>
+    );
+  }
+
+  // status === 'error' (or any unknown future status — fall through here so
+  // the user sees an honest amber treatment rather than a silently-resolved
+  // dollar figure built on partial data).
+  return (
+    <div
+      data-testid="rules-field-sizing_cap_pct-resolved"
+      data-state="error"
+      className={`${baseRow} ${amberTone}`}
+      role="status"
+    >
+      <span aria-hidden="true" className="text-amber-500">
+        ⚠
+      </span>
+      <span className="flex-1">Schwab error —{' '}</span>
+      <button
+        type="button"
+        data-testid="rules-field-sizing_cap_pct-retry"
+        onClick={onRefresh}
+        disabled={refreshing}
+        className="font-medium text-amber-800 dark:text-amber-200 hover:underline disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+      >
+        {refreshing ? 'Retrying…' : 'Retry'}
+      </button>
+    </div>
+  );
+}
+
 function SkeletonRow() {
   return (
     <div className="space-y-2">
@@ -469,6 +631,23 @@ export default function TradingRulesSection({ onSwitchToTab } = {}) {
                   />
                 );
               }
+              // The sizing-cap field gets the resolved-context slot (#234 §5):
+              // a small line below the helper that resolves "25% of account → $X"
+              // or surfaces the disconnected / expired / error variant. The slot
+              // is sizing-cap-only, so we build it inline instead of extracting
+              // a reusable primitive (per the plan's gap-resolution table).
+              const isSizingCap =
+                group === 'position' && field.key === 'sizing_cap_pct';
+              const contextSlot = isSizingCap
+                ? renderSizingCapContext({
+                    pctRaw: form[id],
+                    loading: accountValueLoading,
+                    refreshing: accountValueRefreshing,
+                    accountValue,
+                    onRefresh: handleRefreshAccountValue,
+                    onReconnect: handleSwitchToGeneral,
+                  })
+                : null;
               return (
                 <RuleField
                   key={field.key}
@@ -492,6 +671,7 @@ export default function TradingRulesSection({ onSwitchToTab } = {}) {
                   onBlur={revalidate}
                   error={errors[id]}
                   disabled={saving}
+                  contextSlot={contextSlot}
                 />
               );
             })}
