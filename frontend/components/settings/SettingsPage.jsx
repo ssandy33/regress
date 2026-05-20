@@ -245,7 +245,10 @@ export default function SettingsPage() {
           </div>
         ) : activeTab === 'rules' ? (
           <div role="tabpanel" aria-label="Trading Rules">
-            <TradingRulesSection />
+            {/* `onSwitchToTab` lets the sizing-cap "Reconnect Schwab" affordance
+                (#234 §6) jump to the General tab without using a hash anchor —
+                settings nav is query-param based, not hash-based. */}
+            <TradingRulesSection onSwitchToTab={(tab) => setActiveTab(tab)} />
           </div>
         ) : loading ? (
           <div className="flex items-center justify-center py-24">
