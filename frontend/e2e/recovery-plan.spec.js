@@ -185,7 +185,9 @@ function populatedPayload() {
       shares: 200,
       okr: {
         target_yield: 0.12,
-        sizing_cap_dollars: 5000.0,
+        sizing_cap_pct: 25.0,
+        sizing_cap_account: null,
+        total_capital: 20000.0,
         strategy_preference: null,
       },
     },
