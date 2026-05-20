@@ -351,4 +351,13 @@ export async function getBtcDetail(positionId, legId) {
   return data;
 }
 
+// --- Combined covered-call P&L + if-assigned (V1.0.6, issue #247) ---
+
+export async function getCoveredCallView(positionId) {
+  const { data } = await api.get(
+    `/api/positions/${encodeURIComponent(positionId)}/covered-call`,
+  );
+  return data;
+}
+
 export default api;
