@@ -517,4 +517,74 @@ test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
     await expect(pnl).toHaveText('—');
     await expect(pnl).toHaveAttribute('data-pnl-sign', 'none');
   });
+
+  // ---- V1.0.8 / #251 — partial-coverage tri-state ----
+
+  function partialLeg(overrides = {}) {
+    // The 50-shares / 1-call worked example from issue #251 spec §0.
+    // Backend already classifies coverage; the frontend just renders whatever
+    // value the payload carries (no shares-vs-quantity math on the client).
+    return makeLeg({
+      id: 'leg-f15c-partial',
+      ticker: 'F',
+      type: 'call',
+      strike: 15.0,
+      expiration: '2026-06-26',
+      dte: 38,
+      moneyness: { state: 'OTM', distance_pct: 0.124, distance_dollars: 1.86 },
+      profit_target_status: { captured_pct: 0.4, state: 'in_progress' },
+      assignment_risk: 'low',
+      verdict: 'hold',
+      coverage: 'partial',
+      premium: 0.3834,
+      pnl_dollars: 15.34,
+      cost_to_close: 23.0,
+      ...overrides,
+    });
+  }
+
+  test('coverage badge renders "⚠ Partial" for a 50sh / 1-call leg', async ({ page }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [partialLeg()] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const badge = page.getByTestId('dashboard-leg-row-coverage').first();
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveAttribute('data-coverage', 'partial');
+    await expect(badge).toContainText('Partial');
+    // Slate neutral recipe — distinct from amber `naked` and emerald `covered`.
+    await expect(badge).toHaveClass(/bg-slate-100/);
+  });
+
+  test('100 shares / 2 short calls → both call legs render partial', async ({ page }) => {
+    // A multi-contract income-harvest posture: only half of the share
+    // obligation is backed. Both legs surface the same partial pill.
+    const legA = partialLeg({ id: 'leg-tsla-call-a', ticker: 'TSLA', strike: 260.0 });
+    const legB = partialLeg({ id: 'leg-tsla-call-b', ticker: 'TSLA', strike: 270.0 });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [legA, legB] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const badges = page.getByTestId('dashboard-leg-row-coverage');
+    await expect(badges).toHaveCount(2);
+    await expect(badges.nth(0)).toHaveAttribute('data-coverage', 'partial');
+    await expect(badges.nth(1)).toHaveAttribute('data-coverage', 'partial');
+  });
+
+  test('InspectPanel echoes the partial coverage badge', async ({ page }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [partialLeg()] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByTestId('dashboard-leg-row').first().click();
+    // Same testid format as the covered/naked echoes — the helper plumbs
+    // `testIdPrefix` through all three branches.
+    const echo = page.getByTestId('dashboard-leg-inspect-leg-f15c-partial-coverage');
+    await expect(echo).toBeVisible();
+    await expect(echo).toHaveAttribute('data-coverage', 'partial');
+    await expect(echo).toContainText('Partial');
+  });
 });
