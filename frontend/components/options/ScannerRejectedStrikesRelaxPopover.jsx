@@ -19,7 +19,7 @@
 //
 // Spec: frontend/design-specs/issue-258-relax-to-x-preview.md
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 import { REJECTION_RULE_LABELS } from './scannerRejectionLabels';
@@ -180,21 +180,19 @@ export default function ScannerRejectedStrikesRelaxPopover({
   const closeBtnRef = useRef(null);
   const retryBtnRef = useRef(null);
 
-  const [position, setPosition] = useState({ top: 0, left: 0, placement: 'below' });
-  const [mounted, setMounted] = useState(false);
-
-  // SSR safety — `createPortal(..., document.body)` would crash during SSR
-  // because `document` is undefined. Only render the portal after mount.
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Recompute placement when opening or when the rule (and therefore the
-  // anchor) changes.
-  useLayoutEffect(() => {
-    if (!open || !anchorEl) return;
-    setPosition(computePlacement(anchorEl));
+  // Placement is a pure function of the anchor element (and the rule, which
+  // is folded in to force a recompute when the chip changes). Memoizing
+  // avoids the setState-in-effect anti-pattern entirely — the placement is
+  // recomputed *during render* whenever its inputs change.
+  const position = useMemo(() => {
+    if (!open || !anchorEl) return { top: 0, left: 0, placement: 'below' };
+    return computePlacement(anchorEl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, anchorEl, rule]);
+
+  // SSR / hydration safety — `createPortal(..., document.body)` requires
+  // `document`. Guard the early return below on `typeof document`.
+  const canRenderPortal = typeof document !== 'undefined';
 
   // Resize + scroll close the popover (per spec §4.1 — no live tracking).
   useEffect(() => {
@@ -253,7 +251,7 @@ export default function ScannerRejectedStrikesRelaxPopover({
     };
   }, [open, anchorEl, onClose]);
 
-  if (!open || !mounted) return null;
+  if (!open || !canRenderPortal) return null;
 
   const label = REJECTION_RULE_LABELS[rule] || rule;
 
