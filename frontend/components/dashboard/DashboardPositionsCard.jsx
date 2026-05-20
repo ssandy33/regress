@@ -141,20 +141,45 @@ function StatusPill({ status }) {
   );
 }
 
+/**
+ * The secondary `Covered call view →` link (#247, Q4 option b).
+ *
+ * Lives in the same cell as the rule-driven `next_suggested_action` CTA,
+ * stacked below it. Only renders for positions that have shares AND a
+ * wheel_status of CC or Wheel — both indicate at least one open short call
+ * against the position, which is the precondition for the combined-P&L
+ * screen being meaningful. A Holding row with shares but no short call
+ * intentionally does NOT show the link (the screen would resolve to the
+ * `no-short-call` empty state, which is not where we want the user to land).
+ */
+function CoveredCallLink({ position }) {
+  const status = position?.wheel_status;
+  const shares = position?.shares ?? 0;
+  if (shares <= 0) return null;
+  if (status !== 'CC' && status !== 'Wheel') return null;
+  return (
+    <Link
+      href={`/positions/${encodeURIComponent(position.id)}/covered-call`}
+      data-testid="dashboard-position-covered-call-link"
+      className="block text-xs text-blue-600 dark:text-blue-400 hover:underline mt-1"
+    >
+      Covered call view
+      <span aria-hidden="true"> →</span>
+    </Link>
+  );
+}
+
 function NextActionCell({ position }) {
   const action = position.next_suggested_action;
   const cta = nextActionCta(action, position.ticker, position.id);
-  if (!cta) {
-    return (
-      <span
-        data-testid="dashboard-position-next-action"
-        className="text-slate-500 dark:text-slate-400"
-      >
-        {action === 'hold' || !action ? 'Hold' : action}
-      </span>
-    );
-  }
-  return (
+  const primary = !cta ? (
+    <span
+      data-testid="dashboard-position-next-action"
+      className="text-slate-500 dark:text-slate-400"
+    >
+      {action === 'hold' || !action ? 'Hold' : action}
+    </span>
+  ) : (
     <Link
       href={cta.href}
       data-testid="dashboard-position-next-action"
@@ -163,6 +188,12 @@ function NextActionCell({ position }) {
       {cta.label}
       <span aria-hidden="true"> →</span>
     </Link>
+  );
+  return (
+    <div className="flex flex-col items-end">
+      {primary}
+      <CoveredCallLink position={position} />
+    </div>
   );
 }
 
