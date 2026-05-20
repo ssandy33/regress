@@ -1,11 +1,17 @@
 import logging
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
 from app.models.schemas import OptionScanRequest, OptionScanResponse
 from app.services.options_scanner import OptionScanner, OptionScannerError
+from app.services.rejection_relax import (
+    NotRelaxableError,
+    RelaxPreviewRequest,
+    RelaxPreviewResponse,
+    preview_relax,
+)
 from app.services.rules_config import RulesConfig, load_rules_config
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
@@ -82,6 +88,38 @@ def scan_options(
     """
     _resolve_scan_rules(req, load_rules_config(db))
     return scanner.scan(req)
+
+
+@router.post("/scan/relax", response_model=RelaxPreviewResponse)
+def scan_relax(
+    req: RelaxPreviewRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Preview how many rejected strikes recover at a relaxed threshold.
+
+    Stateless what-if (issue #258, v1.0.8): the client echoes the
+    ``rejected`` array from the last scan; the server re-applies the
+    relaxed threshold to those strikes and returns the recovered set. No
+    market data is fetched. See :func:`app.services.rejection_relax.preview_relax`
+    for the relax math.
+
+    Errors (generic strings only, per CLAUDE.md):
+
+    - 400 ``"rule not relaxable"`` — binary or unknown rule family.
+    - 500 ``"Failed to compute relax preview"`` — unexpected internal failure.
+    """
+    try:
+        rules = load_rules_config(db)
+        return preview_relax(req, rules)
+    except NotRelaxableError:
+        raise HTTPException(status_code=400, detail="rule not relaxable")
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 — last-resort generic boundary
+        logger.exception("Failed to compute relax preview for rule=%s", req.rule)
+        raise HTTPException(
+            status_code=500, detail="Failed to compute relax preview"
+        )
 
 
 @router.get("/earnings/{ticker}")
