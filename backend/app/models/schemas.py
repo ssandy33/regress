@@ -744,6 +744,12 @@ class DashboardOpenLeg(BaseModel):
     assignment_risk: DASHBOARD_ASSIGNMENT_RISK
     suggested_action: DASHBOARD_SUGGESTED_ACTION
     earnings_in_window: bool = False
+    # Contract count for the leg. Strict `int = 1` (not Optional) — the dict
+    # pass-through at `dashboard_legs.py:479` already coerces via
+    # `int(trade.get("quantity") or 1)`. Logically part of the core leg shape;
+    # predates the V1.0.6 economics block below. Made explicit in V1.0.8 (#252)
+    # so the InspectPanel `Credit received` line can scale by quantity.
+    quantity: int = 1
     # New in V1.0.4 (#240) — the §R6 rule-monitor verdict layer. All four
     # fields default so older payloads / tests that omit them still validate.
     verdict: DASHBOARD_VERDICT = "hold"
