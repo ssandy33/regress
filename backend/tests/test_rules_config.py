@@ -26,6 +26,7 @@ from app.services.rules_config import (
     DEFAULT_RULES_CONFIG,
     RULES_CONFIG_KEY,
     RULES_CONFIG_SCHEMA_VERSION,
+    SIZING_CAP_MIGRATION_KEY,
     EntryRules,
     ManagementTriggers,
     PositionRules,
@@ -68,7 +69,9 @@ def _store(db, value: str) -> None:
 def test_module_constants():
     """The key and schema-version constants match the ADR-002 spec."""
     assert RULES_CONFIG_KEY == "rules_config"
-    assert RULES_CONFIG_SCHEMA_VERSION == 1
+    # v2 = dollars → percent migration (issue #234 / v1.0.7).
+    assert RULES_CONFIG_SCHEMA_VERSION == 2
+    assert SIZING_CAP_MIGRATION_KEY == "sizing_cap_migration"
 
 
 # ---------------------------------------------------------------------------
@@ -98,9 +101,11 @@ def test_default_config_entry_matches_catalog():
 
 
 def test_default_config_position_matches_catalog():
-    """Position defaults equal PRD #209 §R4."""
+    """Position defaults equal PRD #209 §R4 (v1.0.7 / issue #234)."""
     p = DEFAULT_RULES_CONFIG.position
-    assert p.sizing_cap_dollars == 5000.0
+    # Default 25% per the user override of the design-spec's 10%.
+    assert p.sizing_cap_pct == 25.0
+    assert p.sizing_cap_account is None
     assert p.max_ticker_concentration_pct == 25.0
     assert p.max_open_positions is None
 
@@ -126,7 +131,7 @@ def test_default_config_carries_schema_version():
     """The top-level model carries the schema-version integer."""
     assert DEFAULT_RULES_CONFIG.schema_version == RULES_CONFIG_SCHEMA_VERSION
     dumped = DEFAULT_RULES_CONFIG.model_dump()
-    assert dumped["schema_version"] == 1
+    assert dumped["schema_version"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +189,25 @@ def test_validator_rejects_negative_open_interest():
         UniverseRules(min_open_interest=-1)
 
 
-def test_validator_rejects_non_positive_sizing_cap():
-    """A sizing cap of zero or less is rejected."""
-    with pytest.raises(ValidationError):
-        PositionRules(sizing_cap_dollars=0.0)
+def test_validator_rejects_out_of_range_sizing_cap_pct():
+    """``sizing_cap_pct`` is a whole-percent in ``(0, 100]``.
+
+    Boundaries:
+
+    - ``0`` and any negative value → rejected (would suppress every path).
+    - Anything strictly above 100 → rejected (the cap can't exceed total
+      capital).
+    - ``0.01``, ``25``, ``100`` → accepted (open lower, closed upper).
+    """
+    # Reject: 0, negative, above 100.
+    for bad in (0, -5, 100.01, 150):
+        with pytest.raises(ValidationError):
+            PositionRules(sizing_cap_pct=bad)
+    # Accept: just-above-zero, default, exact upper bound.
+    for good in (0.01, 25, 100):
+        # Construct must not raise.
+        cfg = PositionRules(sizing_cap_pct=good)
+        assert cfg.sizing_cap_pct == good
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +277,7 @@ def test_load_valid_full_object_returns_stored_values(db):
             "min_call_distance_from_cost_basis_pct": 2.0,
         },
         "position": {
-            "sizing_cap_dollars": 8000.0,
+            "sizing_cap_pct": 8.0,
             "max_ticker_concentration_pct": 15.0,
             "max_open_positions": 10,
         },
@@ -279,7 +299,7 @@ def test_load_valid_full_object_returns_stored_values(db):
     assert cfg.universe.min_open_interest == 1000
     assert cfg.entry.dte_range.min == 30 and cfg.entry.dte_range.max == 60
     assert cfg.entry.min_monthly_return_pct == 3.5
-    assert cfg.position.sizing_cap_dollars == 8000.0
+    assert cfg.position.sizing_cap_pct == 8.0
     assert cfg.position.max_open_positions == 10
     assert cfg.risk.hard_max_loss_pct == -50.0
     assert cfg.management.assignment_risk_review == "Medium"
@@ -398,13 +418,13 @@ def test_load_bad_field_in_one_group_does_not_poison_others(db):
         json.dumps(
             {
                 "risk": {"loss_review_threshold_pct": 99},  # invalid (> 0)
-                "position": {"sizing_cap_dollars": 1234.0},  # valid
+                "position": {"sizing_cap_pct": 12.34},  # valid
             }
         ),
     )
     cfg = load_rules_config(db)
     assert cfg.risk.loss_review_threshold_pct == -15.0  # reverted
-    assert cfg.position.sizing_cap_dollars == 1234.0  # honored
+    assert cfg.position.sizing_cap_pct == 12.34  # honored
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +444,7 @@ def test_load_bad_field_in_one_group_does_not_poison_others(db):
         json.dumps({"entry": "not an object"}),
         json.dumps({"entry": {"dte_range": {"min": -5, "max": -1}}}),
         json.dumps({"universe": {"min_open_interest": "abc"}}),
-        json.dumps({"position": {"sizing_cap_dollars": -100}}),
+        json.dumps({"position": {"sizing_cap_pct": -100}}),
         json.dumps({"unknown_group": {"foo": 1}}),
         json.dumps({"entry": {"unknown_field": 123}}),
     ],

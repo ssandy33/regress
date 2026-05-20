@@ -91,7 +91,22 @@ RULES_CONFIG_KEY = "rules_config"
 
 # Schema version embedded in the persisted JSON document. Bump when the shape
 # changes in a way an older reader could not merge-over-defaults safely.
-RULES_CONFIG_SCHEMA_VERSION = 1
+#
+# v1 → v2 (issue #234, v1.0.7): per-position sizing cap migrated from absolute
+# dollars (``sizing_cap_dollars``) to a percentage of total capital
+# (``sizing_cap_pct``, default 25.0), and an optional ``sizing_cap_account``
+# multi-account selector was added. ``load_rules_config`` carries an idempotent
+# migration block that drops the old key, writes a one-time marker into
+# ``app_settings`` so the UI banner can name the previous value, and re-saves
+# the persisted row with ``schema_version=2``.
+RULES_CONFIG_SCHEMA_VERSION = 2
+
+# ``app_settings`` key used to record the one-time sizing-cap migration so the
+# UI can render the dismissible "we changed dollars → percent" banner. JSON
+# shape: ``{"previous_sizing_cap_dollars": <float>, "migrated_at": <iso>,
+# "dismissed_at": <iso | null>}``. Written lazily by :func:`load_rules_config`
+# the first time a v1 row is read; never overwritten.
+SIZING_CAP_MIGRATION_KEY = "sizing_cap_migration"
 
 
 # ---------------------------------------------------------------------------
@@ -260,13 +275,41 @@ class EntryRules(BaseModel):
 
 
 class PositionRules(BaseModel):
-    """Position rules — how much capital a position may use (PRD #209 §R4)."""
+    """Position rules — how much capital a position may use (PRD #209 §R4).
+
+    Per-position sizing cap — percent of total capital
+    --------------------------------------------------
+    ``sizing_cap_pct`` is a whole-percent in ``(0, 100]`` that the recovery
+    engine resolves to a dollar ceiling at evaluation time against the
+    connected Schwab account's net-liquidation value. Default ``25.0``
+    (issue #234 / v1.0.7 — user-confirmed override of the design-spec's 10).
+    Older rows that stored ``sizing_cap_dollars`` are migrated to the default
+    25.0 by :func:`load_rules_config` (we cannot compute a sensible % at
+    migration time without the account size; the UI shows a one-time banner
+    naming the previous dollar value).
+
+    ``sizing_cap_account`` is the multi-account selector key used when the
+    Schwab connection returns more than one account:
+
+    - ``None`` → first account in the response (single-account default).
+    - ``"sum"`` → sum across all linked accounts.
+    - Any other string → masked account id (``"…1234"``); matched at
+      resolution time, falls back to the first account if not found.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    # Per-position capital cap in dollars. PRD #209 §R4. Consumed by the
-    # recovery engine's average-down path.
-    sizing_cap_dollars: float = 5000.0
+    # Per-position capital cap as a percent of total account value, whole-
+    # percent in ``(0, 100]``. PRD #209 §R4 (issue #234). The recovery engine
+    # resolves this to a dollar ceiling at evaluation time against the
+    # connected Schwab account's net-liquidation value. Default 25.0 (user
+    # override of the design-spec's 10).
+    sizing_cap_pct: float = 25.0
+    # Multi-account selector for ``sizing_cap_pct`` resolution. ``None`` =
+    # first account in the Schwab response, ``"sum"`` = aggregate across all
+    # linked accounts, otherwise a masked account id (``"…1234"``). See the
+    # class docstring.
+    sizing_cap_account: str | None = None
     # Maximum share of the portfolio a single ticker may occupy, whole-percent.
     # PRD #209 §R4.
     max_ticker_concentration_pct: float = 25.0
@@ -274,12 +317,12 @@ class PositionRules(BaseModel):
     # default None, no enforcement on None (PRD Q1 / ADR-002 OQ1).
     max_open_positions: int | None = None
 
-    @field_validator("sizing_cap_dollars")
+    @field_validator("sizing_cap_pct")
     @classmethod
-    def _cap_positive(cls, v: float) -> float:
-        """A sizing cap of zero or less would suppress every sized path."""
-        if v <= 0:
-            raise ValueError("sizing_cap_dollars must be > 0")
+    def _pct_in_range(cls, v: float) -> float:
+        """The sizing cap is a whole-percent in ``(0, 100]``."""
+        if not 0 < v <= 100:
+            raise ValueError("sizing_cap_pct must be in (0, 100]")
         return v
 
     @field_validator("max_ticker_concentration_pct")
@@ -557,6 +600,7 @@ def load_rules_config(db: DBSession) -> RulesConfig:
 __all__ = [
     "RULES_CONFIG_KEY",
     "RULES_CONFIG_SCHEMA_VERSION",
+    "SIZING_CAP_MIGRATION_KEY",
     "RangeRule",
     "UniverseRules",
     "EntryRules",
