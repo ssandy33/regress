@@ -39,7 +39,13 @@ function opportunityCostSuffix(slug) {
 
 function keyAssumption(path) {
   if (!path.assumptions || path.assumptions.length === 0) return null;
-  // Surface the first assumption (engine emits the most-load-bearing one first).
+  // When the sizing cap is unenforceable (capital_status != 'ok'), surface that
+  // assumption — it's the user-actionable state. Otherwise fall back to the
+  // first assumption (engine emits the most-load-bearing one first).
+  const unenforceable = path.assumptions.find(
+    (a) => typeof a === 'string' && a.toLowerCase().includes('unenforceable')
+  );
+  if (unenforceable) return unenforceable;
   return path.assumptions[0];
 }
 
