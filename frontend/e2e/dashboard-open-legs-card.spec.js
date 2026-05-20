@@ -518,3 +518,79 @@ test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
     await expect(pnl).toHaveAttribute('data-pnl-sign', 'none');
   });
 });
+
+test.describe('OpenLegsCard (V1.0.8 #252 — quantity scales degraded Credit received)', () => {
+  // The primary path (`pnl_dollars + cost_to_close`) is already qty-scaled by
+  // `derive_leg_economics`. These tests pin the degraded fallback formula in
+  // `OpenLegsCard.jsx:204`: `creditReceived = premium * 100 * (quantity ?? 1)`.
+  //
+  // A qty=2 leg with both dollar figures null falls through to the degraded
+  // branch, so we can assert the scaled-credit value lands in the InspectPanel.
+
+  test('qty=2 degraded leg renders premium * 100 * 2 in Credit received', async ({ page }) => {
+    const leg = makeLeg({
+      id: 'leg-qty2',
+      ticker: 'AAPL',
+      type: 'call',
+      strike: 175.0,
+      expiration: '2026-06-19',
+      dte: 31,
+      moneyness: { state: 'OTM', distance_pct: 0.03, distance_dollars: 5 },
+      profit_target_status: { captured_pct: null, state: 'unknown' },
+      assignment_risk: 'low',
+      verdict: 'hold',
+      coverage: 'covered',
+      premium: 3.0,
+      quantity: 2,
+      // Degraded — no live mid → both dollar figures null. The InspectPanel
+      // must still compute Credit received = $3.00 * 100 * 2 = $600.00.
+      pnl_dollars: null,
+      cost_to_close: null,
+    });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByTestId('dashboard-leg-row').first().click();
+    const economics = page.getByTestId('dashboard-leg-inspect-economics-leg-qty2');
+    await expect(economics).toBeVisible();
+    await expect(economics).toContainText('$600.00');
+    // The Cost to close / P&L cells degrade to `—`.
+    await expect(economics).toContainText('Cost to close —');
+  });
+
+  test('qty=1 leg preserves the pre-#252 Credit received value (regression sanity)', async ({
+    page,
+  }) => {
+    // Identical fixture to the qty=2 case but with quantity=1 → Credit
+    // received = $3.00 * 100 * 1 = $300.00. Guards against an accidental
+    // off-by-quantity regression on the single-contract happy path.
+    const leg = makeLeg({
+      id: 'leg-qty1',
+      ticker: 'AAPL',
+      type: 'call',
+      strike: 175.0,
+      expiration: '2026-06-19',
+      dte: 31,
+      moneyness: { state: 'OTM', distance_pct: 0.03, distance_dollars: 5 },
+      profit_target_status: { captured_pct: null, state: 'unknown' },
+      assignment_risk: 'low',
+      verdict: 'hold',
+      coverage: 'covered',
+      premium: 3.0,
+      quantity: 1,
+      pnl_dollars: null,
+      cost_to_close: null,
+    });
+    await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByTestId('dashboard-leg-row').first().click();
+    const economics = page.getByTestId('dashboard-leg-inspect-economics-leg-qty1');
+    await expect(economics).toBeVisible();
+    await expect(economics).toContainText('$300.00');
+  });
+});
