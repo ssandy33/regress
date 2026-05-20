@@ -455,7 +455,7 @@ def _leg_profit_take_review_actions(
                 # `opportunity` tone — a profit-take is a win, not a warning;
                 # NextActionCard renders it emerald with a ✓ glyph (§4.3 Q6).
                 "tone": "opportunity",
-                "title": "Profit-take review",
+                "title": "Buy-to-close review",
                 "subject": {
                     "ticker": ticker,
                     "amount": f"{strike:g}{option_letter}",
@@ -467,7 +467,7 @@ def _leg_profit_take_review_actions(
                     expiration_warning_days=expiration_warning_days,
                 ),
                 "cta": {
-                    "label": "Inspect rule",
+                    "label": "Review buy-to-close",
                     "href": (
                         f"/positions/{quote(str(leg['position_id']), safe='')}"
                         f"/legs/{quote(str(leg['id']), safe='')}/btc"
@@ -520,7 +520,7 @@ def _leg_dte_review_actions(
                     dte_review_days=dte_review_days,
                 ),
                 "cta": {
-                    "label": "Inspect rule",
+                    "label": "Review buy-to-close",
                     "href": (
                         f"/positions/{quote(str(leg['position_id']), safe='')}"
                         f"/legs/{quote(str(leg['id']), safe='')}/btc"

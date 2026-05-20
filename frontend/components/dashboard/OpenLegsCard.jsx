@@ -23,7 +23,7 @@ import { formatCurrency, formatPercent } from '../../utils/formatters';
  *     to make room (spec §5.1 Q8).
  *
  * V1.0.6 (issue #244): the dead `#leg-{id}` hash deep-link was removed. The
- * rule-monitor card "Inspect rule →" CTA now navigates to the dedicated
+ * rule-monitor card "Review buy-to-close →" CTA now navigates to the dedicated
  * per-leg buy-to-close detail screen. The inline expandable inspect row
  * (toggled by clicking the leg row) is unchanged.
  *
