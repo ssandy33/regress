@@ -39,6 +39,7 @@ from app.services.recovery_engine import (
 )
 from app.services.rules_config import RulesConfig, load_rules_config
 from app.services.recovery_scoring import DISCLAIMER_TEXT, score_recovery_paths
+from app.services.schwab_account_value import get_cached_account_value
 from app.services.schwab_client import SchwabClient
 
 logger = logging.getLogger(__name__)
@@ -82,11 +83,29 @@ def _read_okr_settings(db: DBSession, rules: RulesConfig) -> dict[str, Any]:
     - ``okr_target_yield`` → ``None`` (suppresses sell-redeploy)
     - ``okr_strategy_preference`` → ``None`` (dormant bonus row in V0.5.8)
 
-    The per-position sizing cap is **no longer** an ``okr_*`` flat key. Per
-    ADR-001 it is a Trading Rule, so it is read from the already-resolved
-    ``rules.position.sizing_cap_dollars`` (issue #156). The caller resolves
-    the :class:`RulesConfig` once and passes it in; with no stored
-    ``rules_config`` row it carries the catalog default ($5,000).
+    Sizing cap (issue #234, V1 contract)
+    ------------------------------------
+    The sizing cap is **no longer** a stored dollar amount and is **not** an
+    ``okr_*`` flat key. Per ADR-001 it is a Trading Rule, so the percent
+    (``rules.position.sizing_cap_pct``) and the multi-account selector
+    (``rules.position.sizing_cap_account``) come from the resolved
+    :class:`RulesConfig`.
+
+    Resolving ``total_capital`` follows a three-tier precedence:
+
+    1. ``okr_total_capital`` flat app-setting (W-D test-friendly override —
+       lets fixture-driven tests pin a capital value without standing up the
+       full Schwab account-value cache).
+    2. :func:`get_cached_account_value` on the connected Schwab account —
+       **cache-hit-only**: this function is on the hot path and never blocks
+       on a Schwab round-trip. The GET ``/api/settings/account-value``
+       endpoint owns the network fall-through.
+    3. Catalog default of ``$20,000`` so the recovery engine has a
+       resolvable ceiling on a fresh install before Schwab is connected.
+
+    ``capital_status`` mirrors the cache result's status when resolved from
+    the cache; the flat-setting / default paths emit ``"ok"`` so the
+    recovery engine treats the cap as enforceable.
     """
     target_raw = _get_app_setting(db, "okr_target_yield")
     pref_raw = _get_app_setting(db, "okr_strategy_preference")
@@ -97,15 +116,66 @@ def _read_okr_settings(db: DBSession, rules: RulesConfig) -> dict[str, Any]:
     except (TypeError, ValueError):
         target_yield = None
 
-    # Sizing cap comes from rules_config (issue #156), not an okr_* flat key.
-    sizing_cap = rules.position.sizing_cap_dollars
-
     strategy_preference = pref_raw if pref_raw not in (None, "") else None
+
+    # Sizing cap comes from rules_config (issue #156 / #234), not an okr_*
+    # flat key.
+    sizing_cap_pct = rules.position.sizing_cap_pct
+    sizing_cap_account = rules.position.sizing_cap_account
+
+    total_capital: float | None = None
+    account_id_masked: str | None = None
+    capital_status: str = "ok"
+
+    # Tier 1 — test-friendly flat app-setting override (see W-D contract).
+    # Pin a capital value without standing up the Schwab account-value
+    # cache; if the value is malformed we fall through to tier 2.
+    flat_capital_raw = _get_app_setting(db, "okr_total_capital")
+    if flat_capital_raw not in (None, ""):
+        try:
+            total_capital = float(flat_capital_raw)
+        except (TypeError, ValueError):
+            total_capital = None
+
+    # Tier 2 — cached Schwab account value (cache-hit-only, no network).
+    # ``None`` from the cache means "no fresh entry" (we never warmed it);
+    # the GET /api/settings/account-value endpoint owns the network
+    # fall-through. A non-ok ``AccountValueResult`` is the explicit
+    # cap-unenforceable signal — surface its status so the assumption
+    # panel can render the "account value unavailable" copy.
+    if total_capital is None:
+        account_value_result = get_cached_account_value(
+            db, sizing_cap_account=sizing_cap_account
+        )
+        if account_value_result is not None:
+            if account_value_result.status == "ok":
+                total_capital = account_value_result.total_capital
+                account_id_masked = account_value_result.account_id_masked
+                capital_status = "ok"
+            else:
+                # disconnected / expired / error → cap unenforceable.
+                account_id_masked = account_value_result.account_id_masked
+                capital_status = account_value_result.status
+
+    # Tier 3 — catalog default so a fresh install (no flat setting, no
+    # cache row at all) still resolves to an enforceable ceiling. Only
+    # applies when neither tier 1 nor tier 2 produced a value AND tier 2
+    # didn't return an explicit failure status.
+    if total_capital is None and capital_status == "ok":
+        total_capital = 20000.0
+
+    resolved_sizing_cap_dollars = (
+        sizing_cap_pct * total_capital / 100 if total_capital is not None else None
+    )
 
     return {
         "target_yield": target_yield,
-        "sizing_cap_dollars": sizing_cap,
         "strategy_preference": strategy_preference,
+        "sizing_cap_pct": sizing_cap_pct,
+        "total_capital": total_capital,
+        "resolved_sizing_cap_dollars": resolved_sizing_cap_dollars,
+        "account_id_masked": account_id_masked,
+        "capital_status": capital_status,
     }
 
 
@@ -186,6 +256,26 @@ def _format_dollar(value: float | None) -> str:
     return f"${value:,.0f}"
 
 
+def _format_sizing_cap(okr: dict[str, Any]) -> str:
+    """Format the sizing-cap assumption-row value.
+
+    Mirrors the recovery-engine assumption text (issue #234 §6.2 contract):
+
+    - ``"ok"`` → ``"25% (≈ $5,000)"`` — percent and the resolved dollar
+      ceiling so the user sees the math.
+    - ``"disconnected" / "expired" / "error"`` → ``"25% — Schwab account
+      value unavailable"`` — the cap-unenforceable state surfaced
+      explicitly per the §6.2 contract.
+    """
+    pct = okr.get("sizing_cap_pct")
+    if not isinstance(pct, (int, float)):
+        return "Not set"
+    if okr.get("capital_status") == "ok":
+        resolved = okr.get("resolved_sizing_cap_dollars")
+        return f"{pct:.0f}% (≈ {_format_dollar(resolved)})"
+    return f"{pct:.0f}% — Schwab account value unavailable"
+
+
 def _build_assumptions_panel(
     okr: dict[str, Any],
     current_price: float | None,
@@ -207,7 +297,7 @@ def _build_assumptions_panel(
         },
         {
             "label": "Sizing cap (Average down)",
-            "value": _format_dollar(okr.get("sizing_cap_dollars")),
+            "value": _format_sizing_cap(okr),
             "source": "Settings → Trading Rules",
         },
         {
@@ -316,7 +406,8 @@ def build_recovery_plan(
         position=position,
         current_price=current_price,
         target_yield=okr["target_yield"],
-        sizing_cap_dollars=okr["sizing_cap_dollars"],
+        sizing_cap_pct=okr["sizing_cap_pct"],
+        total_capital=okr["total_capital"],
     )
     recommendation = score_recovery_paths(paths, okr)
     assumptions = _build_assumptions_panel(okr, current_price)
