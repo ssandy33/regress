@@ -752,11 +752,13 @@ class DashboardOpenLeg(BaseModel):
     triggered_rules: list[DashboardRuleEvaluation] = []
     # New in V1.0.6 (#246) — coverage severity + dollar economics. All four
     # default so older payloads / tests that omit them still validate.
-    # coverage: "covered" / "naked" for a short call by Position.shares; None
-    # for a short put. premium is the per-share credit booked at open.
-    # pnl_dollars / cost_to_close are whole-position dollars (per-share value
-    # × 100 × quantity); both None whenever % CAPT is unavailable.
-    coverage: Optional[Literal["covered", "naked"]] = None
+    # coverage: "covered" / "partial" / "naked" for a short call by
+    # Position.shares vs. quantity × 100; None for a short put. premium is
+    # the per-share credit booked at open. pnl_dollars / cost_to_close are
+    # whole-position dollars (per-share value × 100 × quantity); both None
+    # whenever % CAPT is unavailable. ``partial`` (V1.0.8 / #251) covers the
+    # 0 < shares < quantity × 100 range — see dashboard_legs.derive_leg_economics.
+    coverage: Optional[Literal["covered", "partial", "naked"]] = None
     premium: Optional[float] = None
     pnl_dollars: Optional[float] = None
     cost_to_close: Optional[float] = None
@@ -1154,7 +1156,7 @@ class CoveredCallLegBreakdown(BaseModel):
     strike: float
     type: Literal["call", "put"]
     dte: int
-    coverage: Optional[Literal["covered", "naked"]] = None
+    coverage: Optional[Literal["covered", "partial", "naked"]] = None
     pnl_dollars: Optional[float] = None
     if_assigned_pnl: Optional[float] = None
 
