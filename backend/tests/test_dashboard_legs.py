@@ -16,8 +16,6 @@ from app.services.dashboard_legs import (
     compute_suggested_action,
     derive_leg_economics,
     derive_open_legs,
-    filter_upcoming,
-    format_decision_reason,
 )
 
 
@@ -100,23 +98,6 @@ class TestComputeDecisionTag:
         # Conservative fallback: never recommend an action without a price.
         assert compute_decision_tag(2, None) == "hold"
         assert compute_decision_tag(20, None) == "hold"
-
-
-class TestFormatDecisionReason:
-    def test_itm_includes_dollar_distance(self):
-        moneyness = {"state": "ITM", "distance_pct": 0.005, "distance_dollars": 0.42}
-        assert format_decision_reason(moneyness, dte=3) == "ITM by $0.42"
-
-    def test_otm_includes_pct_distance(self):
-        moneyness = {"state": "OTM", "distance_pct": 0.041, "distance_dollars": 9.84}
-        assert format_decision_reason(moneyness, dte=10) == "OTM 4.1%"
-
-    def test_atm_label(self):
-        moneyness = {"state": "ATM", "distance_pct": 0.0, "distance_dollars": 0.0}
-        assert format_decision_reason(moneyness, dte=5) == "At the money"
-
-    def test_no_moneyness_uses_dte(self):
-        assert format_decision_reason(None, dte=3) == "3 DTE — awaiting price"
 
 
 class TestDeriveOpenLegs:
@@ -278,62 +259,6 @@ class TestDeriveOpenLegs:
         assert [leg["ticker"] for leg in legs] == ["AAPL", "TSLA"]
 
 
-class TestFilterUpcoming:
-    def test_keeps_only_within_horizon(self):
-        legs = [
-            {
-                "id": "soon",
-                "ticker": "AAPL",
-                "type": "put",
-                "strike": 175.0,
-                "expiration": "2026-05-08",
-                "dte": 3,
-                "moneyness": {"state": "ITM", "distance_pct": 0.005, "distance_dollars": 0.42},
-                "position_id": "p1",
-            },
-            {
-                "id": "far",
-                "ticker": "AAPL",
-                "type": "call",
-                "strike": 200.0,
-                "expiration": "2026-08-01",
-                "dte": 30,
-                "moneyness": None,
-                "position_id": "p1",
-            },
-        ]
-        upcoming = filter_upcoming(legs, horizon_days=14)
-        assert [leg["id"] for leg in upcoming] == ["soon"]
-        assert upcoming[0]["decision_tag"] == "roll-or-assign"
-        assert upcoming[0]["decision_reason"] == "ITM by $0.42"
-
-    def test_sorts_itm_before_otm_at_same_dte(self):
-        legs = [
-            {
-                "id": "otm",
-                "ticker": "AAPL",
-                "type": "put",
-                "strike": 170.0,
-                "expiration": "2026-05-08",
-                "dte": 3,
-                "moneyness": {"state": "OTM", "distance_pct": 0.03, "distance_dollars": 5.0},
-                "position_id": "p1",
-            },
-            {
-                "id": "itm",
-                "ticker": "AAPL",
-                "type": "put",
-                "strike": 200.0,
-                "expiration": "2026-05-08",
-                "dte": 3,
-                "moneyness": {"state": "ITM", "distance_pct": 0.10, "distance_dollars": 25.0},
-                "position_id": "p1",
-            },
-        ]
-        upcoming = filter_upcoming(legs)
-        assert [leg["id"] for leg in upcoming] == ["itm", "otm"]
-
-
 # ---------------------------------------------------------------------------
 # V0.5 per-leg signal helpers (issue #146)
 # ---------------------------------------------------------------------------
@@ -360,6 +285,30 @@ class TestComputeAssignmentRisk:
 
     def test_low_when_moneyness_unknown(self):
         assert compute_assignment_risk(3, None) == "low"
+
+    # Issue #248 — boundary cases that pin the `<=` semantics the frontend's
+    # urgency-aware DTE pill mirrors. `dteUrgencyTier()` in OpenLegsCard.jsx
+    # consumes the same 7/14 thresholds; drifting either side breaks the
+    # "thresholds must match" AC. These assertions sit alongside the existing
+    # tests on purpose so a single test file reads as the canonical pin.
+    @pytest.mark.parametrize(
+        "dte,moneyness_state,expected",
+        [
+            # Red-tier boundary on the frontend ↔ "high" on the backend.
+            (7, "ITM", "high"),
+            # Just past the red threshold on the frontend ↔ "watch".
+            (8, "ITM", "watch"),
+            # Amber-tier boundary on the frontend ↔ "watch" on the backend.
+            (14, "ITM", "watch"),
+            # Just past the amber threshold on the frontend ↔ "low".
+            (15, "ITM", "low"),
+            # Non-ITM is "low" regardless of DTE — moneyness gates the risk.
+            (7, "OTM", "low"),
+            (14, "OTM", "low"),
+        ],
+    )
+    def test_dte_boundary_cases(self, dte, moneyness_state, expected):
+        assert compute_assignment_risk(dte, moneyness_state) == expected
 
 
 class TestComputeSuggestedAction:

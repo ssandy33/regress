@@ -107,8 +107,10 @@ def test_dashboard_empty_journal(client, monkeypatch):
 
     assert data["positions"] == []
     assert data["open_legs"] == []
-    assert data["upcoming_expirations"] == []
     assert data["recent_activity"] == []
+    # Issue #248 — the Upcoming-expirations panel was retired; the field is
+    # gone from the response and no consumer reads it.
+    assert "upcoming_expirations" not in data
 
     assert data["data_meta"]["is_stale"] is False
     assert data["data_meta"]["sources_unavailable"] == []
@@ -225,15 +227,6 @@ def test_dashboard_populated(client, monkeypatch):
 
     # Unrealized P/L is computed because both quotes resolved.
     assert data["kpis"]["unrealized_pl"] is not None
-
-    # AAPL leg is in upcoming with the right tag.
-    upcoming_tickers = {leg["ticker"] for leg in data["upcoming_expirations"]}
-    assert "AAPL" in upcoming_tickers
-    aapl_upcoming = next(
-        leg for leg in data["upcoming_expirations"] if leg["ticker"] == "AAPL"
-    )
-    assert aapl_upcoming["decision_tag"] == "roll-or-assign"
-    assert aapl_upcoming["dte"] == 3
 
     # % CAPT is now a real value — AAPL short put 175 opened for 2.25, current
     # mid 0.90 → (2.25 - 0.90) / 2.25 = 0.60 captured, past the 50% target.
@@ -525,18 +518,20 @@ def test_dashboard_payload_schema_v05_keys(client, monkeypatch):
     data = resp.json()
 
     # Top-level keys — `next_actions` is the V0.5 addition.
+    # Issue #248 — `upcoming_expirations` was retired; assert its absence so a
+    # future regression that resurrects the field is caught here.
     expected_top_level = {
         "generated_at",
         "status",
         "kpis",
         "positions",
         "open_legs",
-        "upcoming_expirations",
         "recent_activity",
         "data_meta",
         "next_actions",
     }
     assert expected_top_level <= set(data.keys())
+    assert "upcoming_expirations" not in data
 
     # KPI extensions per spec §14.4.
     kpi_keys = set(data["kpis"].keys())
