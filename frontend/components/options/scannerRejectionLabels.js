@@ -46,12 +46,14 @@ export const CANONICAL_RULE_ORDER = [
 ];
 
 // Extract the rule family — the prefix up to the first colon — from a raw
-// rejection-reason string. Mirrors the existing `humanizeFallback` regex at
-// `ScannerRejectedStrikes.jsx:39` so the summary aggregator and the per-row
-// fallback agree.
+// rejection-reason string. The character class `[a-z0-9_]+` matches the
+// scanner's emitted family names, including `fails_10pct_rule` (which the
+// original `humanizeFallback` regex at `ScannerRejectedStrikes.jsx` would
+// have truncated at the first digit — pre-existing bug; the per-row branch
+// then fell back to the raw string).
 export function extractRuleFamily(raw) {
   if (!raw) return null;
-  const match = /^([a-z_]+)/i.exec(raw);
+  const match = /^([a-z0-9_]+)/i.exec(raw);
   return match ? match[1] : null;
 }
 
