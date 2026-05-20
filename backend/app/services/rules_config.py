@@ -77,9 +77,11 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import AppSetting
@@ -462,6 +464,120 @@ def _get_rules_config_row(db: DBSession, key: str) -> str | None:
     return entry.value if entry else None
 
 
+def _migrate_sizing_cap_v1_to_v2(db: DBSession, parsed: dict[str, Any]) -> dict[str, Any]:
+    """Idempotently migrate a v1 ``rules_config`` row to v2.
+
+    The v1 → v2 transition swaps the per-position sizing cap from an absolute
+    dollar amount (``sizing_cap_dollars``) to a percent of total capital
+    (``sizing_cap_pct``, default 25.0 — issue #234, V1 contract). The
+    migration:
+
+    1. Detects ``position.sizing_cap_dollars`` is present **and**
+       ``position.sizing_cap_pct`` is absent. If either condition fails the
+       block is a no-op (idempotent on a second call).
+    2. Drops ``sizing_cap_dollars`` from the persisted JSON; ``sizing_cap_pct``
+       is left to default to ``25.0`` via :class:`PositionRules` — we cannot
+       compute a sensible percent at migration time without knowing the
+       account size, so the UI shows a one-time banner naming the previous
+       dollar value and asks the trader to review.
+    3. Writes a one-time marker row to ``app_settings`` keyed
+       :data:`SIZING_CAP_MIGRATION_KEY` with JSON
+       ``{"previous_sizing_cap_dollars": <float>, "migrated_at": <iso>,
+       "dismissed_at": null}``. **Only writes if the marker does not already
+       exist** — a dismissed banner is never re-armed.
+    4. Re-saves the migrated config back to ``app_settings[rules_config]``
+       with ``schema_version=2``.
+
+    Wraps every DB write in a try/except :class:`SQLAlchemyError` so the
+    "never raises" guarantee of :func:`load_rules_config` is preserved; a
+    failure logs a generic ``WARNING`` (no ``str(e)``) and the caller falls
+    through to ordinary merge-over-defaults behavior.
+
+    Args:
+        db: A SQLAlchemy session (request-scoped).
+        parsed: The freshly JSON-parsed stored config dict (mutated in place
+            when the migration runs).
+
+    Returns:
+        The (possibly mutated) ``parsed`` dict — same object identity as the
+        argument, so callers can chain.
+    """
+    position = parsed.get("position")
+    if not isinstance(position, dict):
+        return parsed
+
+    old_dollar = position.get("sizing_cap_dollars")
+    new_pct = position.get("sizing_cap_pct")
+
+    # Idempotent gate: only migrate when the v1 key exists AND the v2 key
+    # does not. Once migration runs the v1 key is dropped, so a subsequent
+    # call short-circuits here.
+    if old_dollar is None or new_pct is not None:
+        return parsed
+
+    # Drop the v1 key so ``_coerce_group``'s ``extra="forbid"`` does not trip.
+    # ``sizing_cap_pct`` will fall through to the model default (25.0) since
+    # we cannot compute a sensible percent without the account value.
+    position.pop("sizing_cap_dollars", None)
+
+    # Capture the previous dollar value when it is a usable number, so the UI
+    # banner can name it. A non-numeric/garbage value still triggers the drop
+    # above (so the row loads), but the marker carries ``null`` so the UI
+    # falls back to its generic copy.
+    if isinstance(old_dollar, (int, float)) and not isinstance(old_dollar, bool):
+        previous_value: float | None = float(old_dollar)
+    else:
+        previous_value = None
+
+    try:
+        existing_marker = (
+            db.query(AppSetting)
+            .filter(AppSetting.key == SIZING_CAP_MIGRATION_KEY)
+            .first()
+        )
+        if existing_marker is None:
+            marker_value = json.dumps(
+                {
+                    "previous_sizing_cap_dollars": previous_value,
+                    "migrated_at": datetime.now(timezone.utc).isoformat(),
+                    "dismissed_at": None,
+                }
+            )
+            db.add(AppSetting(key=SIZING_CAP_MIGRATION_KEY, value=marker_value))
+
+        # Re-save the migrated config back to ``app_settings[rules_config]``
+        # carrying ``schema_version=2`` so a future reader short-circuits on
+        # the version check without re-running the migration block.
+        parsed["schema_version"] = RULES_CONFIG_SCHEMA_VERSION
+        rules_row = (
+            db.query(AppSetting)
+            .filter(AppSetting.key == RULES_CONFIG_KEY)
+            .first()
+        )
+        new_value = json.dumps(parsed)
+        if rules_row is None:
+            db.add(AppSetting(key=RULES_CONFIG_KEY, value=new_value))
+        else:
+            rules_row.value = new_value
+
+        db.commit()
+        logger.info(
+            "Migrated %s row from v1 (sizing_cap_dollars) to v2 (sizing_cap_pct).",
+            RULES_CONFIG_KEY,
+        )
+    except SQLAlchemyError:
+        # Preserve the "never raises" contract of ``load_rules_config``; the
+        # in-memory ``parsed`` dict is already migrated so the current request
+        # still resolves to the v2 shape — only the persistence side failed.
+        db.rollback()
+        logger.warning(
+            "Failed to persist %s v1 → v2 migration; in-memory config still resolved.",
+            RULES_CONFIG_KEY,
+        )
+
+    return parsed
+
+
 def _coerce_group(
     model_cls: type[BaseModel],
     group_dict: dict[str, Any],
@@ -563,6 +679,13 @@ def load_rules_config(db: DBSession) -> RulesConfig:
             RULES_CONFIG_KEY,
         )
         return DEFAULT_RULES_CONFIG
+
+    # One-time idempotent migration of v1 (``sizing_cap_dollars``) rows to v2
+    # (``sizing_cap_pct``). Runs before the merge-over-defaults loop because
+    # ``_coerce_group`` would otherwise reject the unknown v1 key under
+    # ``extra="forbid"`` and silently lose the previous dollar value. See
+    # :func:`_migrate_sizing_cap_v1_to_v2` for the full contract.
+    parsed = _migrate_sizing_cap_v1_to_v2(db, parsed)
 
     # Merge-over-defaults at group + field granularity. Each group is validated
     # independently so a bad field in one group cannot poison the others.
