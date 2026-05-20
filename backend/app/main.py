@@ -17,7 +17,7 @@ from app.config import settings as app_settings
 from app.logging_config import setup_logging
 from app.middleware import RequestLoggingMiddleware
 from app.models.database import init_db, SessionLocal
-from app.routers import assets, dashboard, data, health, journal, legs, options, positions, regression, sessions, settings
+from app.routers import assets, covered_call, dashboard, data, health, journal, legs, options, positions, regression, sessions, settings
 from app.services.backup import create_backup
 from app.services.cache import CacheService
 from app.services.data_fetcher import DataFetcher, DataFetchError, InvalidTickerError, DataAlignmentError
@@ -166,6 +166,7 @@ app.include_router(journal.router, dependencies=[Depends(get_current_user)])
 app.include_router(dashboard.router, dependencies=[Depends(get_current_user)])
 app.include_router(positions.router, dependencies=[Depends(get_current_user)])
 app.include_router(legs.router, dependencies=[Depends(get_current_user)])
+app.include_router(covered_call.router, dependencies=[Depends(get_current_user)])
 
 
 # --- Exception handlers ---

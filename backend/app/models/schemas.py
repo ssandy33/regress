@@ -1036,3 +1036,109 @@ class BtcDetailResponse(BaseModel):
     economics: BtcEconomics
     triggered_rules: list[DashboardRuleEvaluation] = Field(default_factory=list)
     disclaimer: Optional[str] = None
+
+
+# --- Combined covered-call P&L + if-assigned (V1.0.6, issue #247) ---
+
+# The four states the covered-call endpoint can resolve a position into. The
+# "covered_call" bucket carries real today/if-assigned blocks; the three
+# not_applicable_* buckets carry empty blocks and drive the screen's
+# EmptyState rendering (spec §7).
+COVERED_CALL_APPLICABILITY = Literal[
+    "covered_call",
+    "not_applicable_no_shares",
+    "not_applicable_no_short_call",
+    "not_applicable_closed",
+]
+
+
+class CoveredCallPositionSummary(BaseModel):
+    """Position-identity block on the covered-call response (spec §5.2).
+
+    ``broker_cost_basis`` here is **per-share** — the screen divides the
+    stored total by ``shares`` so the downstream consumers can multiply by
+    share count again without surprises. ``current_price`` is ``None`` in
+    the no-live-quote degraded path; the timestamp goes ``None`` in lockstep.
+    """
+
+    id: str
+    ticker: str
+    shares: int
+    broker_cost_basis: float
+    current_price: Optional[float] = None
+    current_price_stale: bool = False
+    current_price_as_of: Optional[str] = None
+
+
+class CoveredCallToday(BaseModel):
+    """The "today — unrealized" block (spec §3.2 left card).
+
+    Each field degrades to ``None`` per spec §5.5: ``stock_pnl`` when
+    ``current_price`` is missing, ``options_pnl`` when any open leg's
+    ``pnl_dollars`` is missing, ``combined_pnl`` when either side is missing.
+    """
+
+    stock_pnl: Optional[float] = None
+    options_pnl: Optional[float] = None
+    combined_pnl: Optional[float] = None
+
+
+class CoveredCallIfAssignedLeg(BaseModel):
+    """One open-short-call leg's if-assigned projection (spec §5.2 / §7).
+
+    ``shares_called`` is capped at the position's available shares by
+    :func:`app.services.covered_call._allocate_shares_called` —
+    earliest-expiring-first (Q6) when multiple legs exist. ``premium_kept``
+    is independent of ``shares_called``: the credit booked at open stays
+    with the seller whether or not THIS leg's shares end up called.
+    ``if_assigned_pnl`` is ``None`` when premium is missing or the leg has
+    already expired (those legs are excluded from the array).
+    """
+
+    leg_id: str
+    strike: float
+    premium: float
+    qty: int
+    shares_called: int
+    share_pnl: float
+    premium_kept: float
+    if_assigned_pnl: Optional[float] = None
+
+
+class CoveredCallLegBreakdown(BaseModel):
+    """One row of the per-leg breakdown table (spec §3.3).
+
+    Mirrors the dashboard's `DashboardOpenLeg` fields the breakdown table
+    reuses — ``coverage`` and ``pnl_dollars`` from #246 — plus the per-leg
+    ``if_assigned_pnl`` (``None`` for a non-short-call leg, an expired leg,
+    or a leg with no booked premium).
+    """
+
+    leg_id: str
+    ticker: str
+    strike: float
+    type: Literal["call", "put"]
+    dte: int
+    coverage: Optional[Literal["covered", "naked"]] = None
+    pnl_dollars: Optional[float] = None
+    if_assigned_pnl: Optional[float] = None
+
+
+class CoveredCallView(BaseModel):
+    """Top-level response for ``GET /api/positions/{id}/covered-call``.
+
+    Composes the position summary, the today block, the if-assigned per-leg
+    projections, the per-leg breakdown rows, and the applicability flag the
+    frontend keys its state machine off. The disclaimer sentence (spec §3.6)
+    is shipped in the payload so the frontend renders the house framing
+    rule verbatim.
+    """
+
+    position: CoveredCallPositionSummary
+    combined_today: CoveredCallToday
+    if_assigned: list[CoveredCallIfAssignedLeg] = Field(default_factory=list)
+    per_leg_breakdown: list[CoveredCallLegBreakdown] = Field(
+        default_factory=list
+    )
+    applicability: COVERED_CALL_APPLICABILITY
+    disclaimer: Optional[str] = None
