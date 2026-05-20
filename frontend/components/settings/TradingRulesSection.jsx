@@ -605,6 +605,102 @@ export default function TradingRulesSection({ onSwitchToTab } = {}) {
             {GROUP_META[group].description}
           </p>
 
+          {/* Position-card-only: the one-time sizing-cap migration banner
+              (#234 §13.5) and the multi-account selector (#234 §7). Both are
+              scoped to where the changed rule lives so an unrelated rule in
+              another group never reads as "all of Trading Rules changed." */}
+          {group === 'position' && migration && !bannerDismissed && (
+            <div
+              data-testid="rules-migration-banner-sizing-cap"
+              role="status"
+              className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-100 rounded-lg px-4 py-3 mb-5 flex items-start gap-3"
+            >
+              <span aria-hidden="true" className="text-blue-500 dark:text-blue-300 text-lg leading-none mt-0.5">
+                ⓘ
+              </span>
+              <div className="flex-1 text-sm">
+                <p>
+                  <span className="font-semibold">
+                    Your &ldquo;Per-position sizing cap&rdquo; rule was updated in this release.
+                  </span>{' '}
+                  The rule is now a percentage of your Schwab account value
+                  instead of an absolute dollar amount.
+                  {migration.previous_sizing_cap_dollars != null ? (
+                    <>
+                      {' '}Your previous value of{' '}
+                      <span className="font-semibold">
+                        {formatDollars(migration.previous_sizing_cap_dollars)}
+                      </span>
+                      {' '}has been replaced with the new default, 25%.
+                    </>
+                  ) : (
+                    <>
+                      {' '}Your previous absolute-dollar value has been replaced
+                      with the new default, 25%.
+                    </>
+                  )}
+                  {' '}Review and Save to confirm.
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="rules-migration-banner-sizing-cap-dismiss"
+                onClick={handleDismissBanner}
+                className="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 text-sm whitespace-nowrap"
+                aria-label="Dismiss migration notice"
+              >
+                Dismiss ×
+              </button>
+            </div>
+          )}
+
+          {/* Multi-account selector (#234 §7). The single-account case shows
+              the masked account label inline on the resolved-context line —
+              no selector chrome is justified for one option. The selector
+              renders only when the backend returned more than one usable
+              account. Native <select>, styled like the General-tab
+              Preferences select; "First account" (the default) is `null`,
+              "Sum" is the explicit deliberate-aggregate choice. */}
+          {group === 'position' &&
+            accountValue?.accounts &&
+            accountValue.accounts.length > 1 && (
+              <div className="mb-5 flex items-center justify-between gap-3 flex-wrap">
+                <label
+                  htmlFor="rules-position-capital-account"
+                  className="text-sm text-slate-700 dark:text-slate-300"
+                >
+                  Capital account
+                </label>
+                <select
+                  id="rules-position-capital-account"
+                  data-testid="rules-position-capital-account"
+                  value={sizingCapAccount ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // `""` is the "First account" sentinel — store as null so
+                    // the persisted shape matches the Pydantic `Optional[str]`.
+                    setSizingCapAccount(v === '' ? null : v);
+                    setSaveError(false);
+                    setSaveSuccess(false);
+                  }}
+                  disabled={saving}
+                  className="px-3 py-2 text-sm border rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 border-slate-300 dark:border-slate-600 outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="">First account</option>
+                  <option value="sum">All accounts (sum)</option>
+                  {accountValue.accounts.map((acct) => (
+                    <option
+                      key={acct.account_id_masked}
+                      value={acct.account_id_masked}
+                    >
+                      {acct.account_id_masked}
+                      {acct.account_type ? ` · ${acct.account_type}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
           <div className="space-y-5">
             {FIELDS[group].map((field) => {
               const id = `${group}.${field.key}`;
