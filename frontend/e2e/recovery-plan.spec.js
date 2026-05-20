@@ -685,3 +685,137 @@ test.describe('Recovery Plan — target yield (issue #207)', () => {
     await expect(breakeven).toContainText('6 mo');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Issue #234 — Sizing-cap percent in the Recovery Plan assumptions panel
+// and the "eligible-with-unenforceable" path treatment.
+//
+// V1.0.7 swaps the sizing cap from absolute dollars to a percent that resolves
+// against the connected Schwab account value. When the account-value lookup
+// fails (disconnected / expired / error) the cap is unenforceable but the
+// average-down path stays eligible per the §6.2 contract; the assumption
+// text surfaces "unenforceable" so the user sees the gap honestly.
+// ---------------------------------------------------------------------------
+
+test.describe('Recovery Plan — sizing-cap percent (issue #234)', () => {
+  /** A populated payload whose okr block carries the v2 fields (sizing_cap_pct,
+   * total_capital, resolved_sizing_cap_dollars, account_id_masked,
+   * capital_status) and whose assumptions panel renders the formatted
+   * "25% (≈ $5,000)" sizing-cap row. */
+  function okPayload() {
+    const base = populatedPayload();
+    base.inputs.okr = {
+      ...base.inputs.okr,
+      sizing_cap_pct: 25.0,
+      total_capital: 20000.0,
+      resolved_sizing_cap_dollars: 5000.0,
+      account_id_masked: '…4471',
+      capital_status: 'ok',
+    };
+    base.assumptions = base.assumptions.map((row) =>
+      row.label === 'Sizing cap (Average down)'
+        ? { ...row, value: '25% (≈ $5,000)' }
+        : row,
+    );
+    return base;
+  }
+
+  /** Payload where the account-value lookup is unavailable but the recovery
+   * engine still emits the eligible average-down path with its
+   * "cap unenforceable" assumption text. The assumption panel reads
+   * "25% — Schwab account value unavailable". */
+  function unavailablePayload() {
+    const base = populatedPayload();
+    base.inputs.okr = {
+      ...base.inputs.okr,
+      sizing_cap_pct: 25.0,
+      total_capital: null,
+      resolved_sizing_cap_dollars: null,
+      account_id_masked: null,
+      capital_status: 'error',
+    };
+    base.assumptions = base.assumptions.map((row) =>
+      row.label === 'Sizing cap (Average down)'
+        ? { ...row, value: '25% — Schwab account value unavailable' }
+        : row,
+    );
+    // The average-down path is eligible (not suppressed) but its inline
+    // assumption row says the cap is unenforceable — the recovery engine
+    // honours the eligible-with-unenforceable contract.
+    // The recovery engine emits the unenforceable lead clause as the primary
+    // signal for an eligible-with-unenforceable average-down path. RecoveryPathCard
+    // surfaces `assumptions[0]` inline, so the engine's "Sizing cap is currently
+    // unenforceable …" text reaches the user on the card itself.
+    const unenforceableAverageDown = {
+      ...eligibleAverageDown(),
+      assumptions: [
+        'Sizing cap is currently unenforceable — Schwab account value unavailable. The recovery path is shown without sizing enforcement; reconnect Schwab to enforce.',
+        'Adds $800 at $8.00/share — new basis $23 per share.',
+        'Breakeven projects 1.5%/month wheel-CC premium on the doubled position against the remaining loss.',
+      ],
+    };
+    base.paths = [...eligiblePaths(), unenforceableAverageDown];
+    base.recommendation = {
+      ...base.recommendation,
+      ranked_paths: [
+        { path_id: 'sell-redeploy', score: 8, rank: 1, suppression_reason: null },
+        { path_id: 'wheel-cc', score: 3, rank: 2, suppression_reason: null },
+        { path_id: 'hold-monitor', score: 3, rank: 3, suppression_reason: null },
+        { path_id: 'average-down', score: 3, rank: 4, suppression_reason: null },
+      ],
+    };
+    return base;
+  }
+
+  test('assumptions panel formats the resolved sizing cap as "25% (≈ $5,000)"', async ({
+    page,
+  }) => {
+    await mockRecoveryPlan(page, okPayload());
+    await openRecoveryPlan(page);
+
+    const panel = page.getByTestId('recovery-assumptions-panel');
+    await expect(panel).toBeVisible();
+    // The formatted value includes both the percent and the resolved dollar.
+    await expect(panel).toContainText('25%');
+    await expect(panel).toContainText('$5,000');
+    // The composed cell shows both joined with the "(≈ …)" syntax — assert
+    // the joined string so we catch a regression that drops the symbol.
+    await expect(panel).toContainText('25% (≈ $5,000)');
+  });
+
+  test('assumptions panel formats the unavailable variant with the unenforceable lead', async ({
+    page,
+  }) => {
+    await mockRecoveryPlan(page, unavailablePayload());
+    await openRecoveryPlan(page);
+
+    const panel = page.getByTestId('recovery-assumptions-panel');
+    await expect(panel).toBeVisible();
+    // The percent is still surfaced even when the dollar ceiling is missing.
+    await expect(panel).toContainText('25%');
+    await expect(panel).toContainText('Schwab account value unavailable');
+  });
+
+  test('recovery path stays eligible when capital_status is error (average-down assumption names unenforceable)', async ({
+    page,
+  }) => {
+    await mockRecoveryPlan(page, unavailablePayload());
+    await openRecoveryPlan(page);
+
+    const card = page.getByTestId('recovery-path-card-average-down');
+    await expect(card).toBeVisible();
+    // Eligible, not suppressed — the engine keeps the path on the table and
+    // names the unenforceable state inline instead.
+    await expect(card).toHaveAttribute('data-eligibility', 'eligible');
+
+    // The card surfaces the path's primary assumption (RecoveryPathCard
+    // renders `assumptions[0]`). When capital_status is error, the engine's
+    // cap-unenforceable clause is the user-visible signal that the cap is not
+    // being applied — surface it on the card so the user sees the gap.
+    const assumption = page.getByTestId(
+      'recovery-path-card-average-down-assumption',
+    );
+    await expect(assumption).toBeVisible();
+    await expect(assumption).toContainText('unenforceable');
+  });
+});
