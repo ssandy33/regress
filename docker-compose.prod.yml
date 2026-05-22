@@ -91,6 +91,8 @@ services:
       - ALLOWED_USERS=${ALLOWED_USERS:-}
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
       - SCHWAB_ENCRYPTION_KEY=${SCHWAB_ENCRYPTION_KEY:-}
+      - AXIOM_API_TOKEN=${AXIOM_API_TOKEN:-}
+      - AXIOM_DATASET=${AXIOM_DATASET:-regression-tool}
     volumes:
       - sqlite_data:/app/data
     logging:
