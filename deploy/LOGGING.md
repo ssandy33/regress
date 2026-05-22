@@ -62,7 +62,7 @@ Any additional `extra={...}` fields passed at the call site (e.g. `logger.info("
 | No events in Axiom | Token unset or dataset name mismatch | Check `.env`, restart the backend container |
 | Stderr `[axiom-logger] ingest failed status=401` | Bad token | Regenerate in Axiom UI (Settings → API Tokens) |
 | Stderr `[axiom-logger] ingest failed status=404` | Dataset doesn't exist | Create it in Axiom UI, restart |
-| Stderr `[axiom-logger] axiom queue full; dropped=...` | Log volume exceeds 1000 events buffered | Investigate the storm; tune `QUEUE_MAX` in `logging_axiom.py` if sustained |
+| Stderr `[axiom-logger] axiom queue full; dropped=...` | Log volume exceeds 1000 events buffered | Investigate the storm first — sustained drops usually mean a runaway logger, not an undersized queue. If genuinely needed, raising `QUEUE_MAX` is a **code change**: edit the constant in `backend/app/logging_axiom.py`, rebuild the backend image, and redeploy. Dropping events during a storm is the intended degradation. |
 | Stderr `[axiom-logger] ingest transport error: ConnectError` | Network blocked / DNS failure | Check egress to `api.axiom.co:443` |
 
 ## Rollback

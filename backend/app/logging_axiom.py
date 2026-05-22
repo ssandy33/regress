@@ -128,13 +128,17 @@ class _AxiomWorker(threading.Thread):
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
-        self._stop = threading.Event()
+        # NOTE: named ``_stop_event`` (not ``_stop``) to avoid colliding with
+        # ``threading.Thread._stop`` — that name has been used internally by
+        # CPython in older versions and shadowing it on the subclass instance
+        # is a footgun even if 3.13 no longer uses it during ``join()``.
+        self._stop_event = threading.Event()
         self._warn_state: dict[str, float] = {}
         self._client = httpx.Client(timeout=HTTP_TIMEOUT_S)
 
     def stop(self) -> None:
         """Signal the worker loop to exit after the next batch flush."""
-        self._stop.set()
+        self._stop_event.set()
 
     def _drain_batch(self) -> list[dict[str, Any]]:
         """Pull up to :data:`BATCH_MAX` events from the queue, blocking briefly for the first.
@@ -188,7 +192,7 @@ class _AxiomWorker(threading.Thread):
 
     def run(self) -> None:
         """Main worker loop — drain and flush until :meth:`stop` is signalled."""
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 batch = self._drain_batch()
                 self._flush(batch)

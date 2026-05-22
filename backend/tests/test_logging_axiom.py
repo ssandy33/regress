@@ -15,6 +15,20 @@ Plus hardening tests:
 - T6 — 4xx HTTP response is logged to stderr (no body), no exception.
 - T7 — Non-serializable ``extra`` fields are coerced via ``repr`` rather than crashing.
 - T8 — Records carry the timestamp from ``LogRecord.created`` (emit-time, not flush-time).
+
+Manual / infrastructure step (not automatable)
+----------------------------------------------
+One acceptance criterion on issue #273 is a manual provisioning step that
+cannot be exercised by an automated test:
+
+- Operator creates an Axiom account at <https://app.axiom.co>, creates a
+  dataset named ``regression-tool`` (or matching ``AXIOM_DATASET``), and
+  generates an API token with **Ingest** permission.
+
+Verification is manual: set ``AXIOM_API_TOKEN`` in ``backend/.env``, restart
+the backend, emit a log line, and confirm it appears in the Axiom dataset
+within ~2 seconds. This is documented as a skipped test below so reviewers
+see it explicitly when reading the suite.
 """
 
 from __future__ import annotations
@@ -219,7 +233,7 @@ class TestNeverRaises:
             _stop_handler(handler)
 
     def test_logger_remains_functional_after_axiom_failure(
-        self, isolated_root_logger, mock_axiom_token, capsys
+        self, isolated_root_logger, mock_axiom_token
     ):
         # Even if the Axiom worker is wedged on errors, stdout logging keeps working.
         with patch.object(logging_axiom, "httpx") as mock_httpx:
@@ -383,7 +397,10 @@ class TestHttpErrorHandling:
             fake_response = MagicMock()
             fake_response.status_code = 403
             # If anyone tries to read the body, fail loudly so the test catches a regression.
-            fake_response.text = property(  # type: ignore[assignment]
+            # Descriptors only run when defined on the *class*, not the instance,
+            # so install the property on type(fake_response) — see CPython data
+            # model docs on descriptor lookup.
+            type(fake_response).text = property(  # type: ignore[assignment]
                 lambda self: pytest.fail("response body must not be read")
             )
 
