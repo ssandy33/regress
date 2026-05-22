@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     cache_ttl_monthly_days: int = 7
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # Axiom centralized logging (optional). When ``axiom_api_token`` is unset
+    # the Axiom handler is not attached and behavior is identical to today.
+    # See ``backend/app/logging_axiom.py`` and ``deploy/LOGGING.md``.
+    axiom_api_token: Optional[str] = None
+    axiom_dataset: str = "regression-tool"
+
     # ``extra="ignore"`` so undeclared keys in ``.env`` (e.g. the
     # frontend-only NextAuth ``GITHUB_ID`` / ``GITHUB_SECRET``) do not trip
     # pydantic-settings v2's default ``extra="forbid"`` — which raises a

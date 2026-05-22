@@ -47,5 +47,15 @@ def setup_logging(json_output: bool = True) -> None:
     handler.setFormatter(formatter)
     root.addHandler(handler)
 
+    # Optional Axiom sink — additive, env-gated, never blocks the request path.
+    # Imported lazily so httpx is not paid for at import time when no token is set.
+    from app.logging_axiom import build_axiom_handler
+
+    axiom_handler = build_axiom_handler()
+    if axiom_handler is not None:
+        axiom_handler.addFilter(RequestIdFilter())
+        # AxiomHandler builds its own JSON payload — no JsonFormatter here.
+        root.addHandler(axiom_handler)
+
     # Suppress uvicorn access logs — our middleware replaces them
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
