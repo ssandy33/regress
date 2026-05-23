@@ -88,6 +88,7 @@ def _seed_trade(client, position_id: str, **overrides) -> str:
 # -- Tests -------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_dashboard_empty_journal(client, monkeypatch):
     """No positions, no sessions, no Schwab/FRED, empty cache."""
     _patch_status(monkeypatch, schwab_configured=False, fred_key="")

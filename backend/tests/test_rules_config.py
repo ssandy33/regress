@@ -67,6 +67,7 @@ def _store(db, value: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_module_constants():
     """The key and schema-version constants match the ADR-002 spec."""
     assert RULES_CONFIG_KEY == "rules_config"
@@ -140,12 +141,14 @@ def test_default_config_carries_schema_version():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_validator_rejects_negative_dte():
     """A negative DTE minimum is rejected."""
     with pytest.raises(ValidationError):
         EntryRules(dte_range=RangeRule(min=-1, max=45))
 
 
+@pytest.mark.unit
 def test_validator_rejects_delta_above_one():
     """A delta above 1.0 is rejected."""
     with pytest.raises(ValidationError):

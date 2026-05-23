@@ -37,6 +37,7 @@ def _insert_cache_entry(db, asset_key, source_name="fred",
 class TestSettingsEndpoints:
     """Tests for core settings CRUD endpoints."""
 
+    @pytest.mark.integration
     def test_get_settings(self, client):
         response = client.get("/api/settings")
         assert response.status_code == 200
@@ -45,6 +46,7 @@ class TestSettingsEndpoints:
         assert "cache_ttl_daily_hours" in data
         assert "theme" in data
 
+    @pytest.mark.integration
     def test_update_setting(self, client):
         response = client.put("/api/settings", json={"key": "theme", "value": "dark"})
         assert response.status_code == 200
