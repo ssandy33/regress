@@ -55,6 +55,7 @@ def cache_service(db_session):
 class TestSetAndGet:
     """AC: test_set_and_get_cache_entry"""
 
+    @pytest.mark.unit
     def test_round_trip_returns_stored_data(self, cache_service):
         """set() followed by get() returns matching data, source, and frequency."""
         data = json.dumps({"prices": [1, 2, 3]})
@@ -76,10 +77,12 @@ class TestSetAndGet:
 class TestCacheMiss:
     """AC: test_get_returns_none_for_missing_key"""
 
+    @pytest.mark.unit
     def test_get_returns_none_for_missing_key(self, cache_service):
         """get() returns None when no entry exists for the key."""
         assert cache_service.get("nonexistent") is None
 
+    @pytest.mark.unit
     def test_get_stale_returns_none_for_missing_key(self, cache_service):
         """get_stale() also returns None when no entry exists."""
         assert cache_service.get_stale("nonexistent") is None
@@ -93,6 +96,7 @@ class TestCacheMiss:
 class TestExpiration:
     """AC: test_expired_entry_returns_none, test_expired_entry_get_stale_still_returns"""
 
+    @pytest.mark.unit
     def test_expired_daily_entry_returns_none(self, cache_service, db_session):
         """get() returns None when a daily entry has exceeded the TTL."""
         cache_service.set("schwab:AAPL", '{"p":1}', "daily", "schwab")
@@ -106,6 +110,7 @@ class TestExpiration:
 
         assert cache_service.get("schwab:AAPL") is None
 
+    @pytest.mark.unit
     def test_expired_entry_get_stale_still_returns(self, cache_service, db_session):
         """get_stale() returns data even when the entry is expired."""
         cache_service.set("schwab:AAPL", '{"p":1}', "daily", "schwab")
@@ -120,11 +125,13 @@ class TestExpiration:
         assert result is not None
         assert result["data"] == '{"p":1}'
 
+    @pytest.mark.unit
     def test_fresh_daily_entry_within_ttl(self, cache_service):
         """get() returns data for a daily entry still within the TTL window."""
         cache_service.set("schwab:AAPL", '{"p":1}', "daily", "schwab")
         assert cache_service.get("schwab:AAPL") is not None
 
+    @pytest.mark.unit
     def test_monthly_entry_uses_monthly_ttl(self, cache_service, db_session):
         """Monthly frequency uses cache_ttl_monthly_days (7d), not the daily TTL."""
         cache_service.set("fred:GDP", '{"v":100}', "monthly", "fred")
@@ -144,6 +151,7 @@ class TestExpiration:
         db_session.commit()
         assert cache_service.get("fred:GDP") is None
 
+    @pytest.mark.unit
     def test_quarterly_entry_uses_monthly_ttl(self, cache_service, db_session):
         """Quarterly frequency falls into the else branch, using monthly TTL."""
         cache_service.set("fred:GDPQ", '{"v":200}', "quarterly", "fred")
@@ -164,6 +172,7 @@ class TestExpiration:
 class TestUpsert:
     """AC: test_set_overwrites_existing_entry"""
 
+    @pytest.mark.unit
     def test_set_overwrites_existing_entry(self, cache_service):
         """Calling set() twice with the same key updates to the latest data."""
         cache_service.set("schwab:AAPL", '{"v":1}', "daily", "schwab")
@@ -173,6 +182,7 @@ class TestUpsert:
         assert result is not None
         assert result["data"] == '{"v":2}'
 
+    @pytest.mark.unit
     def test_set_overwrites_frequency_and_source(self, cache_service):
         """Upsert also updates frequency and source fields."""
         cache_service.set("schwab:AAPL", '{"v":1}', "daily", "schwab")
@@ -191,6 +201,7 @@ class TestUpsert:
 class TestLargePayload:
     """AC: test_cache_with_large_payload"""
 
+    @pytest.mark.unit
     def test_large_payload_round_trips_without_truncation(self, cache_service):
         """A ~500KB JSON payload stores and retrieves without data loss."""
         large_data = json.dumps({"values": list(range(100000))})
@@ -212,6 +223,7 @@ class TestLargePayload:
 class TestSpecialCharacterKeys:
     """AC: test_cache_with_special_characters_in_key"""
 
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "key",
         [
@@ -240,6 +252,7 @@ class TestSequentialWrites:
     """AC: test_concurrent_writes_same_key (sequential — true concurrency not
     meaningful with single-threaded in-memory SQLite)."""
 
+    @pytest.mark.unit
     def test_sequential_writes_no_corruption(self, cache_service):
         """Two rapid sequential set() calls leave the entry in a valid state."""
         cache_service.set("schwab:MSFT", '{"v":1}', "daily", "schwab")
@@ -256,6 +269,7 @@ class TestSequentialWrites:
 
 
 class TestFetchedAtFormat:
+    @pytest.mark.unit
     def test_set_stores_valid_iso_format(self, cache_service, db_session):
         """set() writes fetched_at as a parseable ISO 8601 string."""
         cache_service.set("schwab:AAPL", '{"v":1}', "daily", "schwab")
@@ -271,6 +285,7 @@ class TestFetchedAtFormat:
 
 
 class TestNaiveDatetimeHandling:
+    @pytest.mark.unit
     def test_fetched_at_without_timezone_treated_as_utc(
         self, cache_service, db_session
     ):
@@ -291,6 +306,7 @@ class TestNaiveDatetimeHandling:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 @pytest.mark.skip(
     reason="CacheService has no delete() method — AC not applicable (issue #82)"
 )
@@ -298,6 +314,7 @@ def test_delete_cache_entry():
     """AC: test_delete_cache_entry. CacheService does not implement delete()."""
 
 
+@pytest.mark.unit
 @pytest.mark.skip(
     reason="CacheService has no clear_all() method — AC not applicable (issue #82)"
 )
@@ -305,6 +322,7 @@ def test_clear_all_cache():
     """AC: test_clear_all_cache. CacheService does not implement clear_all()."""
 
 
+@pytest.mark.unit
 @pytest.mark.skip(
     reason="CacheService has no key-listing method — AC not applicable (issue #82)"
 )

@@ -9,6 +9,7 @@ from app.services.regression import (
 
 
 class TestLinearRegression:
+    @pytest.mark.unit
     def test_perfect_linear_trend(self):
         """y = 2t + 1 should give slope ~2, intercept ~1, r_squared ~1."""
         dates = [f"2024-01-{i+1:02d}" for i in range(50)]
@@ -25,6 +26,7 @@ class TestLinearRegression:
         assert len(result["confidence_interval_upper"]) == 50
         assert len(result["confidence_interval_lower"]) == 50
 
+    @pytest.mark.unit
     def test_noisy_linear_trend(self):
         """Noisy data should still find approximate trend."""
         np.random.seed(42)
@@ -38,11 +40,13 @@ class TestLinearRegression:
         assert result["intercept"] == pytest.approx(10.0, abs=5.0)
         assert result["r_squared"] > 0.9
 
+    @pytest.mark.unit
     def test_too_few_points_raises(self):
         """Need at least 3 data points."""
         with pytest.raises(ValueError, match="at least 3"):
             compute_linear_regression(["2024-01-01", "2024-01-02"], [1.0, 2.0])
 
+    @pytest.mark.unit
     def test_confidence_intervals_bracket_predictions(self):
         """Upper CI should be above predicted, lower should be below."""
         dates = [f"2024-01-{i+1:02d}" for i in range(20)]
@@ -56,6 +60,7 @@ class TestLinearRegression:
 
 
 class TestMultiFactorOLS:
+    @pytest.mark.unit
     def test_known_coefficients(self):
         """y = 2*x1 + 3*x2 + 5 should recover coefficients."""
         np.random.seed(42)
@@ -77,6 +82,7 @@ class TestMultiFactorOLS:
         assert len(result["residuals"]) == n
         assert len(result["predicted_values"]) == n
 
+    @pytest.mark.unit
     def test_noisy_coefficients(self):
         """With noise, should still approximately recover coefficients."""
         np.random.seed(42)
@@ -96,6 +102,7 @@ class TestMultiFactorOLS:
         assert result["coefficients"]["x2"] == pytest.approx(3.0, abs=0.5)
         assert result["r_squared"] > 0.9
 
+    @pytest.mark.unit
     def test_insufficient_observations_raises(self):
         """Should raise if fewer observations than factors + 2."""
         with pytest.raises(ValueError, match="observations"):
@@ -107,6 +114,7 @@ class TestMultiFactorOLS:
 
 
 class TestRollingRegression:
+    @pytest.mark.unit
     def test_output_length(self):
         """Output length should be n - window + 1."""
         n = 50
@@ -121,6 +129,7 @@ class TestRollingRegression:
         assert len(result["r_squared_over_time"]) == n - window + 1
         assert len(result["actual_values"]) == n
 
+    @pytest.mark.unit
     def test_constant_slope(self):
         """A perfect linear series should have constant slope across windows."""
         n = 30
@@ -135,6 +144,7 @@ class TestRollingRegression:
         for r_sq in result["r_squared_over_time"]:
             assert r_sq == pytest.approx(1.0, abs=1e-10)
 
+    @pytest.mark.unit
     def test_insufficient_data_raises(self):
         """Should raise if fewer data points than window size."""
         with pytest.raises(ValueError, match="at least"):
@@ -144,6 +154,7 @@ class TestRollingRegression:
                 window_size=5,
             )
 
+    @pytest.mark.unit
     def test_window_too_small_raises(self):
         """Window size must be at least 3."""
         with pytest.raises(ValueError, match="at least 3"):
@@ -157,6 +168,7 @@ class TestRollingRegression:
 class TestStatisticalSafeguards:
     """Tests for Phase 4 statistical safeguards: DW, VIF, ADF, differenced regression."""
 
+    @pytest.mark.unit
     def test_multifactor_returns_durbin_watson(self):
         """Durbin-Watson should be in valid range [0, 4]."""
         np.random.seed(42)
@@ -171,6 +183,7 @@ class TestStatisticalSafeguards:
         assert "durbin_watson" in result
         assert 0 <= result["durbin_watson"] <= 4
 
+    @pytest.mark.unit
     def test_multifactor_returns_vif(self):
         """Uncorrelated variables should have low VIF (< 5)."""
         np.random.seed(42)
@@ -188,6 +201,7 @@ class TestStatisticalSafeguards:
         assert result["vif"]["x1"] < 5
         assert result["vif"]["x2"] < 5
 
+    @pytest.mark.unit
     def test_multifactor_stationarity_on_random_walk(self):
         """Random walk (cumulative sum) should be detected as non-stationary, triggering differenced regression."""
         np.random.seed(42)
@@ -211,6 +225,7 @@ class TestStatisticalSafeguards:
         assert "r_squared" in result["differenced"]
         assert "durbin_watson" in result["differenced"]
 
+    @pytest.mark.unit
     def test_multifactor_stationary_series(self):
         """Stationary white noise should be detected as stationary with no differenced key."""
         np.random.seed(42)
@@ -231,6 +246,7 @@ class TestStatisticalSafeguards:
         # No differenced regression needed
         assert "differenced" not in result
 
+    @pytest.mark.unit
     def test_linear_returns_durbin_watson(self):
         """Linear regression should include Durbin-Watson statistic."""
         np.random.seed(42)
@@ -243,6 +259,7 @@ class TestStatisticalSafeguards:
         assert "durbin_watson" in result
         assert 0 <= result["durbin_watson"] <= 4
 
+    @pytest.mark.unit
     def test_sample_size_returned(self):
         """Both linear and multi-factor should return sample_size matching input length."""
         np.random.seed(42)

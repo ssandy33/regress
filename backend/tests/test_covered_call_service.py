@@ -17,6 +17,7 @@ Covers:
 """
 
 from __future__ import annotations
+import pytest
 
 from app.services.covered_call import (
     _allocate_shares_called,
@@ -60,6 +61,7 @@ F_LEG = {
 
 
 class TestComputeCombinedToday:
+    @pytest.mark.unit
     def test_worked_example_combined_is_plus_17_63(self):
         out = _compute_combined_today(
             shares=F_SHARES,
@@ -71,6 +73,7 @@ class TestComputeCombinedToday:
         assert out["options_pnl"] == 22.84
         assert out["combined_pnl"] == 17.63
 
+    @pytest.mark.unit
     def test_stock_leg_pnl_is_signed_gain(self):
         out = _compute_combined_today(
             shares=100,
@@ -81,6 +84,7 @@ class TestComputeCombinedToday:
         assert out["stock_pnl"] == 500.00
         assert out["combined_pnl"] == 500.00
 
+    @pytest.mark.unit
     def test_stock_leg_pnl_is_signed_loss(self):
         out = _compute_combined_today(
             shares=100,
@@ -91,6 +95,7 @@ class TestComputeCombinedToday:
         assert out["stock_pnl"] == -500.00
         assert out["combined_pnl"] == -500.00
 
+    @pytest.mark.unit
     def test_options_pnl_sums_per_leg_pnl_dollars(self):
         out = _compute_combined_today(
             shares=100,
@@ -105,6 +110,7 @@ class TestComputeCombinedToday:
         # Stock leg is zero (current == basis), so combined == options.
         assert out["combined_pnl"] == 32.84
 
+    @pytest.mark.unit
     def test_no_current_price_degrades_stock_and_combined_to_none(self):
         out = _compute_combined_today(
             shares=100,
@@ -116,6 +122,7 @@ class TestComputeCombinedToday:
         assert out["options_pnl"] == 22.84  # still real
         assert out["combined_pnl"] is None
 
+    @pytest.mark.unit
     def test_no_leg_pnl_dollars_degrades_options_and_combined_to_none(self):
         out = _compute_combined_today(
             shares=100,
@@ -127,6 +134,7 @@ class TestComputeCombinedToday:
         assert out["options_pnl"] is None
         assert out["combined_pnl"] is None
 
+    @pytest.mark.unit
     def test_both_unavailable_combined_is_none(self):
         out = _compute_combined_today(
             shares=100,
@@ -145,17 +153,20 @@ class TestComputeCombinedToday:
 
 
 class TestAllocateSharesCalled:
+    @pytest.mark.unit
     def test_single_leg_claims_all_shares_when_qty_times_100_leq_shares(self):
         legs = [{"id": "L1", "dte": 30, "quantity": 1, "ticker": "F"}]
         out = _allocate_shares_called(legs, shares=100)
         assert out == {"L1": 100}
 
+    @pytest.mark.unit
     def test_single_leg_overflow_is_capped_at_position_shares(self):
         # 100 shares, 2-contract short call → only 100 can be called away.
         legs = [{"id": "L1", "dte": 30, "quantity": 2, "ticker": "F"}]
         out = _allocate_shares_called(legs, shares=100)
         assert out["L1"] == 100
 
+    @pytest.mark.unit
     def test_two_legs_earliest_expiring_claims_first(self):
         # 100 sh, leg A DTE 20 + leg B DTE 40 → A claims 100, B gets 0.
         legs = [
@@ -165,6 +176,7 @@ class TestAllocateSharesCalled:
         out = _allocate_shares_called(legs, shares=100)
         assert out == {"A": 100, "B": 0}
 
+    @pytest.mark.unit
     def test_two_legs_partial_overflow_distributes_remaining(self):
         # 150 sh, leg A DTE 20 (qty 1) gets 100, leg B DTE 40 (qty 1) gets 50.
         legs = [
@@ -174,6 +186,7 @@ class TestAllocateSharesCalled:
         out = _allocate_shares_called(legs, shares=150)
         assert out == {"A": 100, "B": 50}
 
+    @pytest.mark.unit
     def test_three_legs_zero_shares_remaining_after_first(self):
         # 100 sh, leg A (dte 10, qty 1), leg B (dte 30, qty 1), leg C (dte 60, qty 1)
         # A claims 100; B, C get 0.
@@ -185,11 +198,13 @@ class TestAllocateSharesCalled:
         out = _allocate_shares_called(legs, shares=100)
         assert out == {"A": 100, "B": 0, "C": 0}
 
+    @pytest.mark.unit
     def test_zero_shares_returns_zero_allocation(self):
         legs = [{"id": "L1", "dte": 30, "quantity": 1, "ticker": "F"}]
         out = _allocate_shares_called(legs, shares=0)
         assert out == {"L1": 0}
 
+    @pytest.mark.unit
     def test_input_order_does_not_matter(self):
         # Pass legs in reverse-DTE order — earliest-expiring still claims.
         legs = [
@@ -206,6 +221,7 @@ class TestAllocateSharesCalled:
 
 
 class TestBuildIfAssigned:
+    @pytest.mark.unit
     def test_worked_example_if_assigned_is_217_34(self):
         # share_pnl = 100 * (15.00 - 13.21) = 179.00
         # premium_kept = 0.3834 * 100 * 1 = 38.34
@@ -224,6 +240,7 @@ class TestBuildIfAssigned:
         assert entry["premium_kept"] == 38.34
         assert entry["if_assigned_pnl"] == 217.34
 
+    @pytest.mark.unit
     def test_share_pnl_negative_when_strike_below_basis(self):
         # A "rolled-down" CC: strike $12, basis $13.21, shares 100.
         leg = {
@@ -245,6 +262,7 @@ class TestBuildIfAssigned:
         assert out[0]["premium_kept"] == 50.00
         assert out[0]["if_assigned_pnl"] == -71.00
 
+    @pytest.mark.unit
     def test_premium_kept_independent_of_shares_called(self):
         # Leg B in the multi-leg overflow case: shares_called == 0 but the
         # credit booked at open stays with the seller.
@@ -267,6 +285,7 @@ class TestBuildIfAssigned:
         assert out[0]["premium_kept"] == 25.00
         assert out[0]["if_assigned_pnl"] == 25.00
 
+    @pytest.mark.unit
     def test_expired_leg_is_excluded_from_if_assigned(self):
         # An already-expired (dte < 0) leg has no meaningful assignment
         # projection — the array drops it. The per-leg breakdown table
@@ -300,6 +319,7 @@ class TestBuildIfAssigned:
         leg_ids = {entry["leg_id"] for entry in out}
         assert leg_ids == {"live"}
 
+    @pytest.mark.unit
     def test_missing_premium_degrades_to_null_projection(self):
         leg = {
             "id": "L1",
@@ -324,6 +344,7 @@ class TestBuildIfAssigned:
 
 
 class TestClassifyApplicability:
+    @pytest.mark.unit
     def test_csp_only_returns_no_shares(self):
         position = {"shares": 0, "status": "open"}
         # A CSP-only position has no shares — even if it has an open put,
@@ -333,6 +354,7 @@ class TestClassifyApplicability:
             "not_applicable_no_shares"
         )
 
+    @pytest.mark.unit
     def test_holding_with_no_short_call_returns_no_short_call(self):
         position = {"shares": 100, "status": "open"}
         # Position has shares but no open short call — out of scope.
@@ -341,6 +363,7 @@ class TestClassifyApplicability:
             "not_applicable_no_short_call"
         )
 
+    @pytest.mark.unit
     def test_closed_position_returns_closed(self):
         position = {"shares": 100, "status": "closed"}
         legs = [{"id": "L1", "type": "call"}]
@@ -348,11 +371,13 @@ class TestClassifyApplicability:
             "not_applicable_closed"
         )
 
+    @pytest.mark.unit
     def test_covered_call_returns_covered_call(self):
         position = {"shares": 100, "status": "open"}
         legs = [{"id": "L1", "type": "call"}]
         assert _classify_applicability(position, legs) == "covered_call"
 
+    @pytest.mark.unit
     def test_csp_only_with_open_put_still_returns_no_shares(self):
         # A pure-CSP position with an open put: shares==0 wins; the if-assigned
         # screen doesn't apply even though the put is open.

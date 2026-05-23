@@ -52,6 +52,7 @@ def _evaluate(**overrides):
 
 
 class TestTriggeredRulesShape:
+    @pytest.mark.unit
     def test_always_four_rows_in_precedence_order(self):
         _, _, _, rules = _evaluate()
         assert len(rules) == 4
@@ -62,6 +63,7 @@ class TestTriggeredRulesShape:
             "dte_review",
         ]
 
+    @pytest.mark.unit
     def test_precedence_constant_has_four_keys(self):
         assert RULE_PRECEDENCE == (
             "assignment",
@@ -70,6 +72,7 @@ class TestTriggeredRulesShape:
             "dte_review",
         )
 
+    @pytest.mark.unit
     def test_every_row_has_required_keys(self):
         _, _, _, rules = _evaluate()
         for row in rules:
@@ -90,6 +93,7 @@ class TestTriggeredRulesShape:
 
 
 class TestQuietLeg:
+    @pytest.mark.unit
     def test_no_rule_fires_yields_hold(self):
         verdict, label, reasoning, rules = _evaluate(
             dte=40, profit_target_status=_profit_status(0.18)
@@ -99,6 +103,7 @@ class TestQuietLeg:
         assert reasoning == "No management rule has triggered for this leg yet."
         assert all(not r["is_governing"] for r in rules)
 
+    @pytest.mark.unit
     def test_quiet_leg_rows_are_not_triggered(self):
         _, _, _, rules = _evaluate(dte=40, profit_target_status=_profit_status(0.18))
         statuses = {r["rule_id"]: r["status"] for r in rules}
@@ -114,6 +119,7 @@ class TestQuietLeg:
 
 
 class TestProfitTakeRule:
+    @pytest.mark.unit
     def test_fires_above_threshold(self):
         verdict, label, _, _ = _evaluate(
             dte=40, profit_target_status=_profit_status(0.60)
@@ -121,6 +127,7 @@ class TestProfitTakeRule:
         assert verdict == "profit_take_review"
         assert label == "Review · 50%"
 
+    @pytest.mark.unit
     def test_fires_exactly_at_threshold(self):
         verdict, _, _, rules = _evaluate(
             dte=40, profit_target_status=_profit_status(0.50)
@@ -129,6 +136,7 @@ class TestProfitTakeRule:
         profit_row = next(r for r in rules if r["rule_id"] == "profit_review")
         assert profit_row["status"] == "triggered"
 
+    @pytest.mark.unit
     def test_just_below_threshold_not_yet(self):
         verdict, _, _, rules = _evaluate(
             dte=40, profit_target_status=_profit_status(0.49)
@@ -137,6 +145,7 @@ class TestProfitTakeRule:
         profit_row = next(r for r in rules if r["rule_id"] == "profit_review")
         assert profit_row["status"] == "not_yet"
 
+    @pytest.mark.unit
     def test_custom_threshold_interpolated_in_label(self):
         verdict, label, _, rules = _evaluate(
             dte=40,
@@ -155,6 +164,7 @@ class TestProfitTakeRule:
 
 
 class TestDteReviewRule:
+    @pytest.mark.unit
     def test_fires_inside_window(self):
         verdict, label, _, _ = _evaluate(
             dte=20, profit_target_status=_profit_status(0.10)
@@ -162,12 +172,14 @@ class TestDteReviewRule:
         assert verdict == "dte_review"
         assert label == "Review · 21d"
 
+    @pytest.mark.unit
     def test_fires_exactly_at_window_boundary(self):
         verdict, _, _, _ = _evaluate(
             dte=21, profit_target_status=_profit_status(0.10)
         )
         assert verdict == "dte_review"
 
+    @pytest.mark.unit
     def test_one_day_past_window_not_yet(self):
         verdict, _, _, rules = _evaluate(
             dte=22, profit_target_status=_profit_status(0.10)
@@ -176,6 +188,7 @@ class TestDteReviewRule:
         dte_row = next(r for r in rules if r["rule_id"] == "dte_review")
         assert dte_row["status"] == "not_yet"
 
+    @pytest.mark.unit
     def test_custom_dte_window_honored(self):
         verdict, label, _, _ = _evaluate(
             dte=25,
@@ -192,6 +205,7 @@ class TestDteReviewRule:
 
 
 class TestExpirationRule:
+    @pytest.mark.unit
     def test_expiration_fires_otm_inside_warning_window(self):
         verdict, label, _, _ = _evaluate(
             dte=5, moneyness_state="OTM", profit_target_status=_profit_status(0.10)
@@ -199,6 +213,7 @@ class TestExpirationRule:
         assert verdict == "expiration"
         assert label == "Close · exp"
 
+    @pytest.mark.unit
     def test_assignment_fires_itm_inside_warning_window(self):
         verdict, label, _, _ = _evaluate(
             dte=5, moneyness_state="ITM", profit_target_status=_profit_status(0.10)
@@ -206,12 +221,14 @@ class TestExpirationRule:
         assert verdict == "assignment"
         assert label == "Close · ITM"
 
+    @pytest.mark.unit
     def test_expiration_boundary_at_warning_window(self):
         verdict, _, _, _ = _evaluate(
             dte=7, moneyness_state="OTM", profit_target_status=_profit_status(0.10)
         )
         assert verdict == "expiration"
 
+    @pytest.mark.unit
     def test_assignment_row_never_not_yet(self):
         # An OTM leg approaching expiry is an expiration case, never an
         # armed assignment countdown (spec §3.3).
@@ -221,6 +238,7 @@ class TestExpirationRule:
         assignment_row = next(r for r in rules if r["rule_id"] == "assignment_risk")
         assert assignment_row["status"] == "no"
 
+    @pytest.mark.unit
     def test_expired_leg_yields_hold(self):
         verdict, _, _, rules = _evaluate(
             dte=-3, moneyness_state="OTM", profit_target_status=_profit_status(None)
@@ -238,6 +256,7 @@ class TestExpirationRule:
 
 
 class TestPrecedence:
+    @pytest.mark.unit
     def test_profit_take_outranks_dte_review(self):
         # Inside the 21d window AND past 50% capture.
         verdict, _, reasoning, rules = _evaluate(
@@ -254,6 +273,7 @@ class TestPrecedence:
         assert "profit-take rule triggered" in reasoning
         assert "21-day review window" in reasoning
 
+    @pytest.mark.unit
     def test_assignment_outranks_everything(self):
         # 5-DTE ITM leg also past 50% capture: assignment governs.
         verdict, label, _, rules = _evaluate(
@@ -264,6 +284,7 @@ class TestPrecedence:
         assignment_row = next(r for r in rules if r["rule_id"] == "assignment_risk")
         assert assignment_row["is_governing"] is True
 
+    @pytest.mark.unit
     def test_only_governing_rule_carries_reasoning(self):
         _, _, _, rules = _evaluate(
             dte=14, profit_target_status=_profit_status(0.67)
@@ -283,6 +304,7 @@ class TestPrecedence:
 
 
 class TestTriState:
+    @pytest.mark.unit
     def test_far_dte_leg_is_not_yet(self):
         _, _, _, rules = _evaluate(
             dte=38, profit_target_status=_profit_status(0.20)
@@ -291,6 +313,7 @@ class TestTriState:
         assert dte_row["status"] == "not_yet"
         assert dte_row["value_display"] == "38 d"
 
+    @pytest.mark.unit
     def test_otm_leg_assignment_row_is_no(self):
         _, _, _, rules = _evaluate(
             dte=38, moneyness_state="OTM", profit_target_status=_profit_status(0.20)
@@ -310,6 +333,7 @@ class TestAssignmentRiskRowValue:
     not the ITM/ATM/OTM moneyness label (CodeRabbit fix).
     """
 
+    @pytest.mark.unit
     def test_high_risk_row_shows_high_not_moneyness(self):
         _, _, _, rules = _evaluate(
             dte=5,
@@ -321,6 +345,7 @@ class TestAssignmentRiskRowValue:
         assert assignment_row["value_display"] == "High"
         assert assignment_row["value_display"] not in {"ITM", "ATM", "OTM"}
 
+    @pytest.mark.unit
     def test_watch_risk_row_shows_watch(self):
         _, _, _, rules = _evaluate(
             dte=12,
@@ -331,6 +356,7 @@ class TestAssignmentRiskRowValue:
         assignment_row = next(r for r in rules if r["rule_id"] == "assignment_risk")
         assert assignment_row["value_display"] == "Watch"
 
+    @pytest.mark.unit
     def test_low_risk_row_shows_low(self):
         _, _, _, rules = _evaluate(
             dte=38,
@@ -348,6 +374,7 @@ class TestAssignmentRiskRowValue:
 
 
 class TestDegradedNoMid:
+    @pytest.mark.unit
     def test_no_mid_profit_row_is_no_with_dash(self):
         _, _, _, rules = _evaluate(
             dte=12,
@@ -358,6 +385,7 @@ class TestDegradedNoMid:
         assert profit_row["status"] == "no"
         assert profit_row["value_display"] == "—"
 
+    @pytest.mark.unit
     def test_verdict_falls_back_to_dte_rules_without_mid(self):
         # 12-DTE leg, no mid: profit-take unevaluable, DTE-review still fires.
         verdict, _, _, _ = _evaluate(
@@ -367,6 +395,7 @@ class TestDegradedNoMid:
         )
         assert verdict == "dte_review"
 
+    @pytest.mark.unit
     def test_profit_take_never_governs_without_mid(self):
         verdict, _, _, _ = _evaluate(
             dte=40,
@@ -382,6 +411,7 @@ class TestDegradedNoMid:
 
 
 class TestAdviceFraming:
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "kwargs",
         [
@@ -404,6 +434,7 @@ class TestAdviceFraming:
         assert "Your" in reasoning or "your" in reasoning
         assert "rule" in reasoning.lower()
 
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "kwargs",
         [
@@ -421,6 +452,7 @@ class TestAdviceFraming:
         words = lowered.replace(".", " ").replace(",", " ").replace("(", " ").split()
         assert "our" not in words
 
+    @pytest.mark.unit
     def test_profit_take_reasoning_names_dollar_amounts(self):
         _, _, reasoning, _ = _evaluate(
             dte=40, profit_target_status=_profit_status(0.60), premium=38.34
@@ -436,6 +468,7 @@ class TestAdviceFraming:
 
 
 class TestCardReason:
+    @pytest.mark.unit
     def test_profit_take_short_reason(self):
         _, _, _, rules = _evaluate(
             dte=40, profit_target_status=_profit_status(0.60)
@@ -444,6 +477,7 @@ class TestCardReason:
         assert "profit-take rule triggered" in reason
         assert "60%" in reason
 
+    @pytest.mark.unit
     def test_dte_review_short_reason(self):
         _, _, _, rules = _evaluate(
             dte=18, profit_target_status=_profit_status(0.20)
@@ -451,12 +485,14 @@ class TestCardReason:
         reason = card_reason_for(rules, profit_review_pct=50.0, dte_review_days=21)
         assert "18 days to expiration" in reason
 
+    @pytest.mark.unit
     def test_no_governing_rule_yields_empty_reason(self):
         _, _, _, rules = _evaluate(
             dte=40, profit_target_status=_profit_status(0.18)
         )
         assert card_reason_for(rules, profit_review_pct=50.0, dte_review_days=21) == ""
 
+    @pytest.mark.unit
     def test_custom_dte_review_days_in_short_reason(self):
         # A custom 30-day review window must surface in the dte_review card
         # reason — the caller threads rules.management.dte_review_days, never
@@ -471,6 +507,7 @@ class TestCardReason:
         )
         assert "25 days to expiration" in reason
 
+    @pytest.mark.unit
     def test_expiration_warning_days_is_a_threadable_parameter(self):
         # card_reason_for accepts expiration_warning_days so the caller can
         # pass the user's configured window instead of a hardcoded 7.

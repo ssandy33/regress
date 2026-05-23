@@ -19,6 +19,7 @@ from app.services.rejection_messages import HumanizeContext, humanize_reasons
 class TestFails10PctRule:
     """``fails_10pct_rule`` — strike is too close to or below cost basis."""
 
+    @pytest.mark.unit
     def test_with_cost_basis_in_context(self):
         raw = ["fails_10pct_rule: strike 645.7% above basis, requires 10.0%"]
         ctx: HumanizeContext = {"cost_basis": 13.26}
@@ -29,6 +30,7 @@ class TestFails10PctRule:
         assert "$13.26 basis" in sentence
         assert "10.0% rule requires" in sentence
 
+    @pytest.mark.unit
     def test_without_cost_basis_in_context(self):
         raw = ["fails_10pct_rule: strike 5.0% above basis, requires 10.0%"]
         out = humanize_reasons(raw, context=None)
@@ -40,6 +42,7 @@ class TestFails10PctRule:
 class TestItmPut:
     """``itm_put`` — put strike sits above the current price."""
 
+    @pytest.mark.unit
     def test_basic(self):
         raw = ["itm_put: strike $15.00 > price $14.00"]
         out = humanize_reasons(raw, None)
@@ -51,6 +54,7 @@ class TestItmPut:
 class TestDeltaOutOfRange:
     """``delta_out_of_range`` has two distinct sub-cases (too high vs too low)."""
 
+    @pytest.mark.unit
     def test_too_high_explanation(self):
         # |0.42| > max_delta 0.35
         raw = ["delta_out_of_range: |0.42| not in [0.15, 0.35]"]
@@ -62,6 +66,7 @@ class TestDeltaOutOfRange:
         # Sub-case sanity: the "too far OTM" clause must NOT appear here.
         assert "too far out of the money" not in sentence
 
+    @pytest.mark.unit
     def test_too_low_explanation(self):
         # |0.05| < min_delta 0.15
         raw = ["delta_out_of_range: |0.05| not in [0.15, 0.35]"]
@@ -72,6 +77,7 @@ class TestDeltaOutOfRange:
         # Sub-case sanity: the "too close" clause must NOT appear here.
         assert "too close to the money" not in sentence
 
+    @pytest.mark.unit
     def test_negative_delta_for_csp(self):
         # Puts have negative delta; sign should be preserved in the sentence.
         raw = ["delta_out_of_range: |-0.42| not in [0.15, 0.35]"]
@@ -84,6 +90,7 @@ class TestDeltaOutOfRange:
 class TestLowOpenInterest:
     """``low_open_interest`` — strike below the OI threshold."""
 
+    @pytest.mark.unit
     def test_basic(self):
         raw = ["low_open_interest: 12 < 50"]
         out = humanize_reasons(raw, None)
@@ -94,6 +101,7 @@ class TestLowOpenInterest:
 class TestZeroBid:
     """``zero_bid`` — no bid in the market."""
 
+    @pytest.mark.unit
     def test_basic(self):
         out = humanize_reasons(["zero_bid"], None)
         assert "No buyer" in out[0]
@@ -103,6 +111,7 @@ class TestZeroBid:
 class TestReturnBelowTarget:
     """``return_below_target`` — premium yield under user threshold."""
 
+    @pytest.mark.unit
     def test_basic(self):
         raw = ["return_below_target: 0.34% < 1.0%"]
         out = humanize_reasons(raw, None)
@@ -114,6 +123,7 @@ class TestReturnBelowTarget:
 class TestReturnAboveCap:
     """``return_above_cap`` — premium yield above user sanity cap."""
 
+    @pytest.mark.unit
     def test_basic(self):
         raw = ["return_above_cap: 25.50% > 15.0%"]
         out = humanize_reasons(raw, None)
@@ -129,10 +139,12 @@ class TestReturnAboveCap:
 class TestUnknownCodeFallback:
     """Unknown codes pass through unchanged — never crash, never lose info."""
 
+    @pytest.mark.unit
     def test_unknown_code_returns_raw(self):
         out = humanize_reasons(["some_future_rule_we_have_not_mapped"], None)
         assert out == ["some_future_rule_we_have_not_mapped"]
 
+    @pytest.mark.unit
     def test_malformed_known_code_returns_raw(self):
         # The prefix matches but the body doesn't fit the regex — fall through.
         raw_str = "fails_10pct_rule: some garbled message"
@@ -143,9 +155,11 @@ class TestUnknownCodeFallback:
 class TestMapperShape:
     """Length and order invariants — the output list mirrors the input list."""
 
+    @pytest.mark.unit
     def test_empty_input_returns_empty(self):
         assert humanize_reasons([], None) == []
 
+    @pytest.mark.unit
     def test_multiple_reasons_preserve_order(self):
         raw = [
             "fails_10pct_rule: strike 5.0% above basis, requires 10.0%",
@@ -158,6 +172,7 @@ class TestMapperShape:
         assert out[1].startswith("No buyer")
         assert out[2].startswith("Only 12 contracts")
 
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "raw",
         [

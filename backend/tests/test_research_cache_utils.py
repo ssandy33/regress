@@ -14,6 +14,7 @@ research_financials. Test surface focuses on:
 """
 
 from __future__ import annotations
+import pytest
 
 import json
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ def _db_session(client):
     return next(override())
 
 
+@pytest.mark.integration
 def test_roundtrip_read_after_write_returns_payload_and_timestamp(client):
     """Happy path — write then read returns the exact payload + timestamp."""
     db = _db_session(client)
@@ -49,12 +51,14 @@ def test_roundtrip_read_after_write_returns_payload_and_timestamp(client):
     assert persisted_ts == fetched_at
 
 
+@pytest.mark.integration
 def test_read_returns_none_for_missing_key(client):
     """No row for the key → ``None``, no exception."""
     db = _db_session(client)
     assert read_app_setting(db, "yf_business:NOPE") is None
 
 
+@pytest.mark.integration
 def test_read_returns_none_for_malformed_value_no_pipe(client):
     """Value without the ``|`` separator → ``None`` (defensive)."""
     db = _db_session(client)
@@ -64,6 +68,7 @@ def test_read_returns_none_for_malformed_value_no_pipe(client):
     assert read_app_setting(db, "yf_business:BAD") is None
 
 
+@pytest.mark.integration
 def test_read_returns_none_for_non_dict_payload(client):
     """JSON list payload → ``None`` (the contract is dict-only)."""
     db = _db_session(client)
@@ -79,6 +84,7 @@ def test_read_returns_none_for_non_dict_payload(client):
     assert read_app_setting(db, "yf_business:LIST") is None
 
 
+@pytest.mark.integration
 def test_read_returns_none_for_invalid_timestamp(client):
     """Unparseable ISO timestamp → ``None`` (caller falls through to fetch)."""
     db = _db_session(client)
@@ -93,6 +99,7 @@ def test_read_returns_none_for_invalid_timestamp(client):
     assert read_app_setting(db, "yf_business:BADTS") is None
 
 
+@pytest.mark.integration
 def test_write_upserts_existing_key(client):
     """Second write to the same key replaces the row — no duplicate inserts."""
     db = _db_session(client)
@@ -115,6 +122,7 @@ def test_write_upserts_existing_key(client):
     assert persisted_ts == fetched_at_v2
 
 
+@pytest.mark.integration
 def test_write_swallows_typeerror_on_non_serializable_payload(client):
     """Non-JSON-serializable payload (set) raises ``TypeError`` inside
     ``json.dumps`` — helper must catch it per the "never propagate"

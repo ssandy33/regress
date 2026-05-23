@@ -118,16 +118,19 @@ def csp_request():
 
 
 class TestValidation:
+    @pytest.mark.unit
     def test_invalid_strategy(self, scanner):
         req = OptionScanRequest(ticker="X", strategy="butterfly", cost_basis=10.0)
         with pytest.raises(ValueError, match="Invalid strategy"):
             scanner._validate_request(req)
 
+    @pytest.mark.unit
     def test_cc_requires_cost_basis(self, scanner):
         req = OptionScanRequest(ticker="X", strategy="covered_call")
         with pytest.raises(ValueError, match="cost_basis"):
             scanner._validate_request(req)
 
+    @pytest.mark.unit
     def test_csp_requires_capital(self, scanner):
         req = OptionScanRequest(ticker="X", strategy="cash_secured_put")
         with pytest.raises(ValueError, match="capital_available"):
@@ -135,6 +138,7 @@ class TestValidation:
 
 
 class TestRejectionFilters:
+    @pytest.mark.unit
     def test_10pct_rule_rejects_close_strike(self, scanner, cc_request):
         # Strike $16 is only 6.7% above $15 cost basis, needs 10%
         reasons = scanner._check_rejection(
@@ -143,6 +147,7 @@ class TestRejectionFilters:
         )
         assert any("fails_10pct_rule" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_10pct_rule_passes_far_strike(self, scanner, cc_request):
         # Strike $17 is 13.3% above $15 cost basis
         reasons = scanner._check_rejection(
@@ -151,6 +156,7 @@ class TestRejectionFilters:
         )
         assert not any("fails_10pct_rule" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_delta_out_of_range_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
@@ -158,6 +164,7 @@ class TestRejectionFilters:
         )
         assert any("delta_out_of_range" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_delta_in_range_passes(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
@@ -165,6 +172,7 @@ class TestRejectionFilters:
         )
         assert not any("delta_out_of_range" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_missing_delta_not_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
@@ -172,6 +180,7 @@ class TestRejectionFilters:
         )
         assert not any("delta" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_low_oi_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
@@ -179,6 +188,7 @@ class TestRejectionFilters:
         )
         assert any("low_open_interest" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_zero_bid_rejected(self, scanner, cc_request):
         reasons = scanner._check_rejection(
             cc_request, strike=17.0, current_price=14.0,
@@ -186,6 +196,7 @@ class TestRejectionFilters:
         )
         assert any("zero_bid" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_itm_put_rejected(self, scanner, csp_request):
         # Put strike $15 > current price $14
         reasons = scanner._check_rejection(
@@ -194,6 +205,7 @@ class TestRejectionFilters:
         )
         assert any("itm_put" in r for r in reasons)
 
+    @pytest.mark.unit
     def test_otm_put_passes(self, scanner, csp_request):
         # Put strike $13 < current price $14
         reasons = scanner._check_rejection(
@@ -204,6 +216,7 @@ class TestRejectionFilters:
 
 
 class TestMetricCalculations:
+    @pytest.mark.unit
     def test_covered_call_metrics(self, scanner, cc_request):
         metrics = scanner._calculate_metrics(
             cc_request, strike=17.0, current_price=14.0, mid=0.45, dte=34,
@@ -221,6 +234,7 @@ class TestMetricCalculations:
         # 50% target = 135 * 0.5 = 67.5
         assert metrics["fifty_pct_profit_target"] == 67.5
 
+    @pytest.mark.unit
     def test_cash_secured_put_metrics(self, scanner, csp_request):
         metrics = scanner._calculate_metrics(
             csp_request, strike=13.0, current_price=14.0, mid=0.40, dte=30,
@@ -240,6 +254,7 @@ class TestMetricCalculations:
 
 
 class TestRanking:
+    @pytest.mark.unit
     def test_ranking_order(self, scanner):
         """Higher return and distance should rank better."""
         compliance = RuleCompliance(
@@ -275,6 +290,7 @@ class TestRanking:
         assert ranked[0].rank == 1
         assert ranked[1].rank == 2
 
+    @pytest.mark.unit
     def test_single_candidate(self, scanner):
         compliance = RuleCompliance(
             passes_10pct_rule=True, passes_dte_range=True,
@@ -294,21 +310,26 @@ class TestRanking:
         assert len(ranked) == 1
         assert ranked[0].rank == 1
 
+    @pytest.mark.unit
     def test_empty_candidates(self, scanner):
         ranked = scanner._rank_strikes([])
         assert ranked == []
 
 
 class TestNormalization:
+    @pytest.mark.unit
     def test_normalize_normal(self):
         assert _normalize_val(5, [0, 5, 10]) == 0.5
 
+    @pytest.mark.unit
     def test_normalize_min(self):
         assert _normalize_val(0, [0, 5, 10]) == 0.0
 
+    @pytest.mark.unit
     def test_normalize_max(self):
         assert _normalize_val(10, [0, 5, 10]) == 1.0
 
+    @pytest.mark.unit
     def test_normalize_equal_values(self):
         assert _normalize_val(5, [5, 5, 5]) == 0.5
 
@@ -316,6 +337,7 @@ class TestNormalization:
 class TestScanWithSchwabChain:
     """Integration-style tests for scan() using mocked Schwab chain responses."""
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_covered_call_scan_returns_results(self, mock_client_cls, _mock_earnings, scanner, cc_request):
@@ -355,6 +377,7 @@ class TestScanWithSchwabChain:
         assert rec.delta == -0.20
         assert rec.gamma == 0.03
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_csp_scan_returns_results(self, mock_client_cls, _mock_earnings, scanner, csp_request):
@@ -390,6 +413,7 @@ class TestScanWithSchwabChain:
         assert rec.greeks_source == "market"
         assert rec.delta == -0.25
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_scan_no_chains_returns_empty(self, mock_client_cls, _mock_earnings, scanner, cc_request):
@@ -410,6 +434,7 @@ class TestScanWithSchwabChain:
 
         assert result["recommendations"] == []
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_greeks_source_market_when_available(self, mock_client_cls, _mock_earnings, scanner, cc_request):
@@ -440,6 +465,7 @@ class TestScanWithSchwabChain:
             assert rec.greeks_source == "market"
             assert "missing_greeks" not in rec.flags
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_schwab_sentinel_greeks_uses_calculated_fallback(self, mock_client_cls, _mock_earnings, scanner, csp_request):
@@ -482,6 +508,7 @@ class TestScanWithSchwabChain:
             assert rec.theta is not None
             assert rec.vega is not None
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_schwab_error_raises_scanner_error(self, mock_client_cls, scanner, cc_request):
         from app.services.schwab_client import SchwabClientError
@@ -493,6 +520,7 @@ class TestScanWithSchwabChain:
         with pytest.raises(OptionScannerError, match="Failed to fetch option chain"):
             scanner.scan(cc_request)
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_schwab_client_error_does_not_leak_internals(self, mock_client_cls, scanner, cc_request):
         """Transport/HTTP errors must not expose raw details to the user."""
@@ -512,6 +540,7 @@ class TestScanWithSchwabChain:
         assert "schwabapi.com" not in error_msg
         assert "Internal Server Error" not in error_msg
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_schwab_auth_error_returns_sanitized_message(self, mock_client_cls, scanner, cc_request):
         """No token configured error must not leak internal details (issue #41)."""
@@ -534,6 +563,7 @@ class TestScanWithSchwabChain:
 
 
 class TestExpirationFiltering:
+    @pytest.mark.unit
     def test_dte_range_filter(self, scanner):
         today = datetime.now().date()
         exp_date_map = {
@@ -546,6 +576,7 @@ class TestExpirationFiltering:
         valid = scanner._get_valid_expirations(exp_date_map, 25, 50, None, 5)
         assert len(valid) == 2
 
+    @pytest.mark.unit
     def test_earnings_buffer_filter(self, scanner):
         today = datetime.now().date()
         earnings = (today + timedelta(days=35)).strftime("%Y-%m-%d")
@@ -563,6 +594,7 @@ class TestExpirationFiltering:
 class TestHumanReasonsPopulated:
     """Issue #190 — every ``RejectedStrike`` carries a parallel human_reasons list."""
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_rejected_strikes_have_human_reasons(self, mock_client_cls, _earnings, scanner, cc_request):
@@ -615,6 +647,7 @@ class TestHumanReasonsPopulated:
                 assert "fails_10pct_rule" not in sentence
                 assert "low_open_interest" not in sentence
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_return_below_target_rejection_has_human_reason(self, mock_client_cls, _earnings, scanner, cc_request):

@@ -106,6 +106,7 @@ def _patch_schwab(accounts):
 
 
 class TestCacheHit:
+    @pytest.mark.unit
     def test_cache_hit_returns_fresh_value(self, db_session):
         """1. test_cache_hit_returns_fresh_value — within TTL, returns cached."""
         # Pre-populate the hot cache with a fresh ok result.
@@ -132,6 +133,7 @@ class TestCacheHit:
 
 
 class TestCacheMiss:
+    @pytest.mark.unit
     def test_cache_miss_calls_network(self, db_session):
         """2. test_cache_miss_calls_network — stale, calls get_accounts()."""
         with _patch_schwab([_account("12344471", 25000.0, "CASH")]) as mock_get:
@@ -149,6 +151,7 @@ class TestCacheMiss:
 
 
 class TestForceRefresh:
+    @pytest.mark.unit
     def test_force_refresh_bypasses_cache(self, db_session):
         """3. force_refresh=True forces a network call even when the cache is fresh."""
         sav._cache[_cache_key(None)] = AccountValueResult(
@@ -164,6 +167,7 @@ class TestForceRefresh:
         assert result.total_capital == 99999.0
         assert result.account_id_masked == "…4471"
 
+    @pytest.mark.unit
     def test_force_refresh_falls_through_to_fresh_cache_on_failure(
         self, db_session, caplog
     ):
@@ -195,6 +199,7 @@ class TestForceRefresh:
 
 
 class TestAuthStatusMapping:
+    @pytest.mark.unit
     def test_disconnected_status(self, db_session):
         """5. TOKEN_MISSING / NOT_CONFIGURED -> 'disconnected'."""
         for code in (SchwabAuthCode.TOKEN_MISSING, SchwabAuthCode.NOT_CONFIGURED):
@@ -208,6 +213,7 @@ class TestAuthStatusMapping:
             assert "not configured" not in (result.error_detail or "").lower() or \
                 result.error_detail == "Schwab is not connected"
 
+    @pytest.mark.unit
     def test_expired_status(self, db_session):
         """6. TOKEN_EXPIRED / REFRESH_FAILED_401 -> 'expired'."""
         for code in (
@@ -224,6 +230,7 @@ class TestAuthStatusMapping:
 
 
 class TestErrorStatus:
+    @pytest.mark.unit
     def test_error_status_on_transport_failure(self, db_session):
         """7. transport / client error -> 'error'."""
         with _patch_schwab(SchwabClientError("Unable to reach Schwab API")):
@@ -233,6 +240,7 @@ class TestErrorStatus:
         # Per CLAUDE.md, error_detail is generic — never raw exception text.
         assert result.error_detail == "Schwab API error"
 
+    @pytest.mark.unit
     def test_error_status_on_malformed_json(self, db_session):
         """8. non-list payload from get_accounts() -> 'error'."""
         with _patch_schwab({"unexpected": "shape"}):
@@ -240,6 +248,7 @@ class TestErrorStatus:
         assert result.status == "error"
         assert "malformed" in (result.error_detail or "").lower()
 
+    @pytest.mark.unit
     def test_error_status_on_zero_liquidation_value(self, db_session):
         """9. liquidationValue == 0 -> 'error' (account-zero failure cause)."""
         with _patch_schwab([_account("00000000", 0.0)]):
@@ -247,6 +256,7 @@ class TestErrorStatus:
         assert result.status == "error"
         assert "zero" in (result.error_detail or "").lower()
 
+    @pytest.mark.unit
     def test_error_status_on_missing_liquidation_value_field(self, db_session):
         """10. all candidate keys absent -> 'error', no exception."""
         # Build a securitiesAccount with neither liquidationValue nor any
@@ -268,6 +278,7 @@ class TestErrorStatus:
 
 
 class TestMultiAccountSelection:
+    @pytest.mark.unit
     def test_first_account_default_selection(self, db_session):
         """11. sizing_cap_account=None -> picks the first account in the response."""
         accounts = [
@@ -284,6 +295,7 @@ class TestMultiAccountSelection:
         # accounts list still contains both sanitised entries
         assert len(result.accounts or []) == 2
 
+    @pytest.mark.unit
     def test_sum_across_all_accounts(self, db_session):
         """12. sizing_cap_account='sum' -> sum across all sanitised accounts."""
         accounts = [
@@ -299,6 +311,7 @@ class TestMultiAccountSelection:
         assert result.account_id_masked is None
         assert len(result.accounts or []) == 2
 
+    @pytest.mark.unit
     def test_match_by_masked_id(self, db_session):
         """13. sizing_cap_account='...4471' matches that specific account."""
         accounts = [
@@ -320,6 +333,7 @@ class TestMultiAccountSelection:
         assert result2.total_capital == 70000.0
         assert result2.account_id_masked == "…8888"
 
+    @pytest.mark.unit
     def test_match_by_masked_id_not_found(self, db_session):
         """14. masked id not in response -> 'error'."""
         accounts = [_account("11114471", 30000.0, "CASH")]
@@ -332,6 +346,7 @@ class TestMultiAccountSelection:
 
 
 class TestCachedNeverCallsNetwork:
+    @pytest.mark.unit
     def test_get_cached_never_calls_network(self, db_session):
         """15. get_cached_account_value never invokes Schwab even on empty cache."""
         with patch(
@@ -358,6 +373,7 @@ class TestCachedNeverCallsNetwork:
 
 
 class TestDbPersistence:
+    @pytest.mark.unit
     def test_db_persistence_across_in_memory_reset(self, db_session):
         """16. write to DB, clear in-memory, read back from DB."""
         accounts = [_account("33334471", 55000.0, "CASH")]

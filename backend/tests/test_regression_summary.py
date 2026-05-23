@@ -79,6 +79,7 @@ BIOTECH_FACTORS: list[SummaryFactor] = [
 # --- Spec example tests ----------------------------------------------------
 
 
+@pytest.mark.unit
 def test_spec_example_sofi_rate_sensitive_financial() -> None:
     """SOFI: dominant market, secondary rate exposure (negative)."""
     out = build_regression_summary(
@@ -93,6 +94,7 @@ def test_spec_example_sofi_rate_sensitive_financial() -> None:
     )
 
 
+@pytest.mark.unit
 def test_spec_example_aapl_low_rates_tech_heavy() -> None:
     """AAPL: dominant market, secondary sector adds positively."""
     out = build_regression_summary(
@@ -107,6 +109,7 @@ def test_spec_example_aapl_low_rates_tech_heavy() -> None:
     )
 
 
+@pytest.mark.unit
 def test_spec_example_tlt_rate_tracker() -> None:
     """TLT: dominant rates, market exposure is minor (non-meaningful fallback)."""
     out = build_regression_summary(
@@ -121,6 +124,7 @@ def test_spec_example_tlt_rate_tracker() -> None:
     )
 
 
+@pytest.mark.unit
 def test_spec_example_idiosyncratic_biotech() -> None:
     """Biotech: idiosyncratic-dominant special form."""
     out = build_regression_summary(
@@ -138,6 +142,7 @@ def test_spec_example_idiosyncratic_biotech() -> None:
 # --- Rule branch coverage --------------------------------------------------
 
 
+@pytest.mark.unit
 def test_rule_2_primarily_when_dominant_between_30_and_50_pct() -> None:
     """Rule 2: ``Primarily`` label kicks in for 0.30 < dominant <= 0.50."""
     factors = [
@@ -152,6 +157,7 @@ def test_rule_2_primarily_when_dominant_between_30_and_50_pct() -> None:
     assert out.startswith("Primarily market-driven")
 
 
+@pytest.mark.unit
 def test_rule_2_diversified_when_no_factor_above_30_pct() -> None:
     """Rule 2: ``Diversified driver mix`` when no factor dominates.
 
@@ -170,6 +176,7 @@ def test_rule_2_diversified_when_no_factor_above_30_pct() -> None:
     assert out.startswith("Diversified driver mix")
 
 
+@pytest.mark.unit
 def test_rule_3_positive_beta_on_rates_renders_meaningful_and_positive() -> None:
     """Sign-aware: positive rate beta produces ``...and positive``."""
     factors = [
@@ -183,6 +190,7 @@ def test_rule_3_positive_beta_on_rates_renders_meaningful_and_positive() -> None
     assert "rate exposure is meaningful and positive" in out
 
 
+@pytest.mark.unit
 def test_rule_3_negative_beta_on_sector_renders_detracts() -> None:
     """Sign-aware: negative sector beta produces ``sector exposure detracts``."""
     factors = [
@@ -196,6 +204,7 @@ def test_rule_3_negative_beta_on_sector_renders_detracts() -> None:
     assert "sector exposure detracts" in out
 
 
+@pytest.mark.unit
 def test_rule_3_non_meaningful_factor_is_excluded() -> None:
     """A factor with p>0.05 is dropped from the meaningful list."""
     factors = [
@@ -218,6 +227,7 @@ def test_rule_3_non_meaningful_factor_is_excluded() -> None:
 # --- Sector-omitted branch -------------------------------------------------
 
 
+@pytest.mark.unit
 def test_sector_omitted_skips_sector_clause() -> None:
     """When the sector factor is omitted, the rules skip any sector clause."""
     factors = [
@@ -235,6 +245,7 @@ def test_sector_omitted_skips_sector_clause() -> None:
     assert "rate exposure is meaningful and negative" in out
 
 
+@pytest.mark.unit
 def test_sector_omitted_idiosyncratic_uses_two_factor_basket_phrase() -> None:
     """Idiosyncratic-dominant + sector-omitted lists market/rates only."""
     factors = [
@@ -255,6 +266,7 @@ def test_sector_omitted_idiosyncratic_uses_two_factor_basket_phrase() -> None:
 # --- Format / cap coverage -------------------------------------------------
 
 
+@pytest.mark.unit
 def test_r_squared_is_two_decimals() -> None:
     """R² renders with two decimals (matches spec examples)."""
     factors = [
@@ -265,6 +277,7 @@ def test_r_squared_is_two_decimals() -> None:
     assert "R²=0.12 over 200 trading days" in out
 
 
+@pytest.mark.unit
 def test_summary_is_at_most_120_characters_under_normal_conditions() -> None:
     """All four spec examples + the rule-branch tests stay under 120 chars."""
     cases = [SOFI_FACTORS, AAPL_FACTORS, TLT_FACTORS, BIOTECH_FACTORS]
@@ -273,6 +286,7 @@ def test_summary_is_at_most_120_characters_under_normal_conditions() -> None:
         assert len(out) <= 120, f"summary exceeds 120 chars: {out!r}"
 
 
+@pytest.mark.unit
 def test_empty_factors_returns_safe_fallback() -> None:
     """Defensive: empty factor list still returns a deterministic string."""
     out = build_regression_summary(
@@ -282,6 +296,7 @@ def test_empty_factors_returns_safe_fallback() -> None:
     assert "R²=0.00 over 0 trading days" in out
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "p_value, abs_beta, contribution, expected_meaningful",
     [

@@ -41,6 +41,7 @@ def _make_mgr_needing_refresh():
 
 
 class TestRefreshTokenErrorSanitization:
+    @pytest.mark.unit
     def test_non_401_http_error_does_not_leak_url(self):
         """Non-401 HTTP errors must not expose internal URLs."""
         mgr, mock_db = _make_mgr_needing_refresh()
@@ -66,6 +67,7 @@ class TestRefreshTokenErrorSanitization:
         assert "re-authorize" in msg.lower() or "schwab-auth" in msg.lower()
         assert exc_info.value.code == SchwabAuthCode.REFRESH_FAILED
 
+    @pytest.mark.unit
     def test_request_error_does_not_leak_url(self):
         """Network-level errors must not expose raw exception text."""
         mgr, mock_db = _make_mgr_needing_refresh()
@@ -86,6 +88,7 @@ class TestRefreshTokenErrorSanitization:
         assert "try again" in msg.lower()
         assert exc_info.value.code == SchwabAuthCode.NETWORK_ERROR
 
+    @pytest.mark.unit
     def test_401_still_mentions_reauth(self):
         """401 errors should still tell the user to re-authorize."""
         mgr, mock_db = _make_mgr_needing_refresh()

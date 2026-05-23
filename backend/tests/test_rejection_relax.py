@@ -16,6 +16,7 @@ Test plan (~12 cases):
 """
 
 from __future__ import annotations
+import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +43,7 @@ def _post(client, body: dict):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_relax_delta_widens_band_and_recovers(client):
     """``delta_out_of_range`` — band widens ±0.05; |0.38| is now inside
     [0.15, 0.40], so the strike recovers.
@@ -76,6 +78,7 @@ def test_relax_delta_widens_band_and_recovers(client):
     ]
 
 
+@pytest.mark.integration
 def test_relax_low_oi_halves_floor_and_recovers(client):
     """``low_open_interest`` — floor ÷ 2; OI=25 vs min=50 recovers when
     new floor = 25.
@@ -103,6 +106,7 @@ def test_relax_low_oi_halves_floor_and_recovers(client):
     assert data["recovered_strikes"][0]["strike"] == 14.0
 
 
+@pytest.mark.integration
 def test_relax_wide_spread_caps_x_1_5_and_recovers(client):
     """``wide_bid_ask_spread`` — cap × 1.5; 12% vs cap=10% recovers when
     new cap=15%.
@@ -130,6 +134,7 @@ def test_relax_wide_spread_caps_x_1_5_and_recovers(client):
     assert data["recovered_strikes"][0]["strike"] == 5.0
 
 
+@pytest.mark.integration
 def test_relax_fails_10pct_drops_required_by_5pp_and_recovers(client):
     """``fails_10pct_rule`` — required distance − 5pp; strike at 6%
     above basis vs 10% rule → new threshold 5% → 6 >= 5 → recovers.
@@ -161,6 +166,7 @@ def test_relax_fails_10pct_drops_required_by_5pp_and_recovers(client):
     assert data["recovered_strikes"][0]["strike"] == 14.0
 
 
+@pytest.mark.integration
 def test_relax_below_cost_basis_drops_floor_and_recovers(client):
     """``below_cost_basis`` — floor − 5pp (≈ floor × 0.95 at the default
     0% baseline); strike $12.80 vs $13.21 floor → relaxed floor ≈ $12.55
@@ -188,6 +194,7 @@ def test_relax_below_cost_basis_drops_floor_and_recovers(client):
     assert data["recovered_strikes"][0]["strike"] == 12.80
 
 
+@pytest.mark.integration
 def test_relax_return_below_drops_target_by_1pp_and_recovers(client):
     """``return_below_target`` — target − 1pp; 1.5% vs 2% target →
     relaxed 1% → 1.5 >= 1 → recovers.
@@ -214,6 +221,7 @@ def test_relax_return_below_drops_target_by_1pp_and_recovers(client):
     assert data["recovered_strikes"][0]["strike"] == 14.0
 
 
+@pytest.mark.integration
 def test_relax_return_above_lifts_cap_by_50pp_and_recovers(client):
     """``return_above_cap`` — cap + 50pp; 120% vs 100% cap → relaxed 150%
     → 120 <= 150 → recovers. Threshold text reads the cap inline (no
@@ -250,6 +258,7 @@ def test_relax_return_above_lifts_cap_by_50pp_and_recovers(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_relax_itm_put_is_not_relaxable_400(client):
     """``itm_put`` is binary — endpoint returns 400 with the generic detail."""
     rejected = [
@@ -265,6 +274,7 @@ def test_relax_itm_put_is_not_relaxable_400(client):
     assert res.json()["detail"] == "rule not relaxable"
 
 
+@pytest.mark.integration
 def test_relax_zero_bid_is_not_relaxable_400(client):
     """``zero_bid`` is binary — endpoint returns 400 with the generic detail."""
     rejected = [
@@ -280,6 +290,7 @@ def test_relax_zero_bid_is_not_relaxable_400(client):
     assert res.json()["detail"] == "rule not relaxable"
 
 
+@pytest.mark.integration
 def test_relax_unknown_rule_is_not_relaxable_400(client):
     """An unknown rule family is treated the same as a binary rule.
 
@@ -296,6 +307,7 @@ def test_relax_unknown_rule_is_not_relaxable_400(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_relax_empty_rejected_returns_zero_count(client):
     """An empty ``rejected`` payload still validates and returns a 200
     with ``recovered_count: 0`` and an empty strike list.
@@ -311,6 +323,7 @@ def test_relax_empty_rejected_returns_zero_count(client):
     assert data["relaxed_threshold_text"] != ""
 
 
+@pytest.mark.integration
 def test_relax_multi_reason_strike_does_not_recover(client):
     """A strike failing TWO rules — including the relaxed one — does NOT
     recover. Relaxing one rule does not free a strike still failing the
@@ -347,6 +360,7 @@ def test_relax_multi_reason_strike_does_not_recover(client):
     ]
 
 
+@pytest.mark.integration
 def test_relax_single_reason_still_failing_does_not_recover(client):
     """A strike whose ONLY rejection is the relaxed rule but whose value
     is still below the relaxed threshold does NOT recover.
@@ -374,6 +388,7 @@ def test_relax_single_reason_still_failing_does_not_recover(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_relax_low_oi_threshold_text_uses_rules_config(client):
     """``current_threshold_text`` reads from the persisted rules_config;
     the default ``min_open_interest`` is 500 → relaxed = 250.

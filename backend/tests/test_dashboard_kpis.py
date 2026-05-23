@@ -105,6 +105,7 @@ def _open_position_with_trades(
 
 
 class TestComputeLargestRisk:
+    @pytest.mark.unit
     def test_picks_worst_negative_pl(self):
         rows = [
             _row(position_id="p-a", ticker="AAA", unrealized_pl=-100.0, pl_pct=-0.01),
@@ -117,6 +118,7 @@ class TestComputeLargestRisk:
         assert result["unrealized_pl"] == -1500.0
         assert result["unrealized_pl_pct"] == pytest.approx(-0.10)
 
+    @pytest.mark.unit
     def test_returns_none_when_no_losers(self):
         rows = [
             _row(position_id="p-a", ticker="AAA", unrealized_pl=100.0, pl_pct=0.01),
@@ -124,9 +126,11 @@ class TestComputeLargestRisk:
         ]
         assert _compute_largest_risk(rows) is None
 
+    @pytest.mark.unit
     def test_returns_none_when_empty(self):
         assert _compute_largest_risk([]) is None
 
+    @pytest.mark.unit
     def test_skips_rows_without_pl(self):
         # Rows with unrealized_pl=None (quote failed) are excluded.
         rows = [
@@ -135,6 +139,7 @@ class TestComputeLargestRisk:
         ]
         assert _compute_largest_risk(rows)["ticker"] == "BBB"
 
+    @pytest.mark.unit
     def test_breaks_ties_alphabetically(self):
         # Equal-loss positions should sort alphabetically — deterministic
         # output is part of the contract.
@@ -146,6 +151,7 @@ class TestComputeLargestRisk:
 
 
 class TestSumPremiumForPositions:
+    @pytest.mark.unit
     def test_sums_total_premiums(self):
         positions = [
             _open_position_with_trades(
@@ -163,6 +169,7 @@ class TestSumPremiumForPositions:
         assert total == pytest.approx(150.0 + 225.0 + 300.0)
         assert count == 2  # only AAPL has trade rows
 
+    @pytest.mark.unit
     def test_zero_when_no_positions(self):
         total, count = _sum_premium_for_positions([])
         assert total == 0.0
@@ -170,6 +177,7 @@ class TestSumPremiumForPositions:
 
 
 class TestSumPremiumYtd:
+    @pytest.mark.unit
     def test_only_current_year_trades_count(self):
         positions = [
             _open_position_with_trades(
@@ -185,6 +193,7 @@ class TestSumPremiumYtd:
         ytd = _sum_premium_ytd(positions, today=date(2026, 5, 1))
         assert ytd == pytest.approx(200.0)
 
+    @pytest.mark.unit
     def test_uses_closed_at_when_present(self):
         positions = [
             _open_position_with_trades(
@@ -202,6 +211,7 @@ class TestSumPremiumYtd:
 
 
 class TestComputeRealizedPl:
+    @pytest.mark.unit
     def test_sums_total_premiums_for_closed_positions(self):
         closed = [
             _closed_position(ticker="A", total_premiums=500.0, broker_cost_basis=10000.0),
@@ -211,11 +221,13 @@ class TestComputeRealizedPl:
         assert realized == pytest.approx(300.0)
         assert pct == pytest.approx(300.0 / 15000.0)
 
+    @pytest.mark.unit
     def test_returns_zero_and_none_when_empty(self):
         realized, pct = _compute_realized_pl([])
         assert realized == 0.0
         assert pct is None
 
+    @pytest.mark.unit
     def test_returns_none_pct_when_basis_zero(self):
         closed = [_closed_position(total_premiums=200.0, broker_cost_basis=0.0)]
         realized, pct = _compute_realized_pl(closed)
@@ -224,6 +236,7 @@ class TestComputeRealizedPl:
 
 
 class TestComputeLargestLoser:
+    @pytest.mark.unit
     def test_picks_worst_realized_loser(self):
         closed = [
             _closed_position(ticker="A", total_premiums=200.0, broker_cost_basis=10000.0),
@@ -236,10 +249,12 @@ class TestComputeLargestLoser:
         assert result["realized_pl"] == -500.0
         assert result["realized_pl_pct"] == pytest.approx(-0.05)
 
+    @pytest.mark.unit
     def test_returns_none_when_no_losers(self):
         closed = [_closed_position(ticker="A", total_premiums=100.0)]
         assert _compute_largest_loser(closed) is None
 
+    @pytest.mark.unit
     def test_returns_none_when_no_closed_positions(self):
         assert _compute_largest_loser([]) is None
 
@@ -247,6 +262,7 @@ class TestComputeLargestLoser:
 class TestBuildKpis:
     """Integration-level test on _build_kpis to assert the full payload shape."""
 
+    @pytest.mark.unit
     def test_includes_new_kpi_fields(self):
         rows = [
             _row(position_id="p-1", ticker="AAPL", unrealized_pl=-200.0, pl_pct=-0.02),
@@ -287,6 +303,7 @@ class TestBuildKpis:
         # Premium trade count: 1 open trade.
         assert kpis["premium_collected_trades"] == 1
 
+    @pytest.mark.unit
     def test_null_safety_when_empty(self):
         kpis = _build_kpis(
             [], [], [], closed_positions=[], today=date(2026, 5, 11)
@@ -303,6 +320,7 @@ class TestBuildKpis:
 class TestAttachNextSuggestedActions:
     """The post-engine pass that stamps each position row with its action label."""
 
+    @pytest.mark.unit
     def test_position_with_no_matching_action_stays_hold(self):
         from app.services.dashboard import _attach_next_suggested_actions
 
@@ -310,6 +328,7 @@ class TestAttachNextSuggestedActions:
         _attach_next_suggested_actions(rows, next_actions=[], open_legs=[])
         assert rows[0]["next_suggested_action"] == "hold"
 
+    @pytest.mark.unit
     def test_large_loser_label_attaches_by_position_id(self):
         from app.services.dashboard import _attach_next_suggested_actions
 
@@ -328,6 +347,7 @@ class TestAttachNextSuggestedActions:
         _attach_next_suggested_actions(rows, next_actions=next_actions, open_legs=[])
         assert rows[0]["next_suggested_action"] == "Review"
 
+    @pytest.mark.unit
     def test_itm_short_dte_label_attaches_via_leg_lookup(self):
         from app.services.dashboard import _attach_next_suggested_actions
 
@@ -349,6 +369,7 @@ class TestAttachNextSuggestedActions:
         _attach_next_suggested_actions(rows, next_actions=next_actions, open_legs=open_legs)
         assert rows[0]["next_suggested_action"] == "Roll"
 
+    @pytest.mark.unit
     def test_cc_candidate_label_attaches_by_ticker(self):
         from app.services.dashboard import _attach_next_suggested_actions
 
@@ -367,6 +388,7 @@ class TestAttachNextSuggestedActions:
         _attach_next_suggested_actions(rows, next_actions=next_actions, open_legs=[])
         assert rows[0]["next_suggested_action"] == "Cover"
 
+    @pytest.mark.unit
     def test_highest_priority_action_wins(self):
         """When two actions target the same position, the first one (highest
         priority, since next_actions is pre-sorted) wins."""

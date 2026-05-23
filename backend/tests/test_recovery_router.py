@@ -106,6 +106,7 @@ def _quote(last_price: float) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_recovery_plan_returns_404_when_position_missing(client):
     resp = client.post("/api/positions/nope-id/recovery-plan")
     assert resp.status_code == 404
@@ -117,6 +118,7 @@ def test_recovery_plan_returns_404_when_position_missing(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_recovery_plan_not_applicable_for_zero_shares(client):
     _seed_position(client, shares=0)
     with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
@@ -128,6 +130,7 @@ def test_recovery_plan_not_applicable_for_zero_shares(client):
     assert payload["recommendation"] is None
 
 
+@pytest.mark.integration
 def test_recovery_plan_not_applicable_for_closed_position(client):
     _seed_position(client, status="closed", shares=100)
     with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
@@ -136,6 +139,7 @@ def test_recovery_plan_not_applicable_for_closed_position(client):
     assert resp.json()["state"] == "not-applicable"
 
 
+@pytest.mark.integration
 def test_recovery_plan_not_applicable_for_zero_basis(client):
     _seed_position(client, broker_cost_basis=0.0)
     with patch.object(SchwabClient, "get_quote", return_value=_quote(8.0)):
@@ -144,6 +148,7 @@ def test_recovery_plan_not_applicable_for_zero_basis(client):
     assert resp.json()["state"] == "not-applicable"
 
 
+@pytest.mark.integration
 def test_recovery_plan_not_flagged_above_threshold(client):
     # Position with $3800 basis at $40 current price → $4000 notional, +$200
     # gain → does not breach either threshold.
@@ -163,6 +168,7 @@ def test_recovery_plan_not_flagged_above_threshold(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_recovery_flag_gate_uses_configured_loss_review_threshold(client):
     """The flag gate resolves its loss-review percentage from ``rules_config``.
 
@@ -182,6 +188,7 @@ def test_recovery_flag_gate_uses_configured_loss_review_threshold(client):
     assert resp.json()["state"] == "populated"
 
 
+@pytest.mark.integration
 def test_recovery_flag_gate_not_flagged_when_rule_stricter_than_loss(client):
     """A −8% loser is ``not-flagged`` when the stored rule is −15%."""
     _seed_position(client, broker_cost_basis=3800.0, shares=100)
@@ -192,6 +199,7 @@ def test_recovery_flag_gate_not_flagged_when_rule_stricter_than_loss(client):
     assert resp.json()["state"] == "not-flagged"
 
 
+@pytest.mark.integration
 def test_recovery_default_rules_not_flagged_between_5_and_15_pct(client):
     """With no ``rules_config`` row the default −15% rule applies.
 
@@ -206,6 +214,7 @@ def test_recovery_default_rules_not_flagged_between_5_and_15_pct(client):
     assert resp.json()["state"] == "not-flagged"
 
 
+@pytest.mark.integration
 def test_recovery_default_rules_flagged_below_15_pct(client):
     """A −39% loser flags under the default −15% rule (conversion check).
 
@@ -220,6 +229,7 @@ def test_recovery_default_rules_flagged_below_15_pct(client):
     assert resp.json()["state"] == "populated"
 
 
+@pytest.mark.integration
 def test_recovery_dollar_secondary_trigger_still_fires(client):
     """The −$1,000 absolute trigger flags a shallow-percent large position.
 
@@ -234,6 +244,7 @@ def test_recovery_dollar_secondary_trigger_still_fires(client):
     assert resp.json()["state"] == "populated"
 
 
+@pytest.mark.integration
 def test_recovery_assumptions_sizing_cap_source_is_trading_rules(client):
     """The Sizing-cap assumption row is attributed to Settings → Trading Rules.
 
@@ -262,6 +273,7 @@ def test_recovery_assumptions_sizing_cap_source_is_trading_rules(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_recovery_plan_populated_for_flagged_position(client):
     _seed_position(client, broker_cost_basis=3800.0, shares=100)
     _seed_setting(client, "okr_target_yield", "0.18")
@@ -296,6 +308,7 @@ def test_recovery_plan_populated_for_flagged_position(client):
     assert "fit recommendation" in payload["disclaimer"]
 
 
+@pytest.mark.integration
 def test_recovery_plan_uses_okr_target_yield_from_settings(client):
     _seed_position(client, broker_cost_basis=3800.0)
     _seed_setting(client, "okr_target_yield", "0.20")
@@ -308,6 +321,7 @@ def test_recovery_plan_uses_okr_target_yield_from_settings(client):
     assert sell["eligibility"] == "eligible"
 
 
+@pytest.mark.integration
 def test_recovery_plan_suppresses_sell_redeploy_when_target_yield_unset(client):
     _seed_position(client, broker_cost_basis=3800.0)
     # No target_yield seeded → defaults to None.
@@ -319,6 +333,7 @@ def test_recovery_plan_suppresses_sell_redeploy_when_target_yield_unset(client):
     assert sell["suppression_reason"] == "Target yield not configured"
 
 
+@pytest.mark.integration
 def test_recovery_plan_uses_default_sizing_cap_when_unset(client):
     _seed_position(client, broker_cost_basis=3800.0)
     _seed_setting(client, "okr_target_yield", "0.18")
@@ -330,6 +345,7 @@ def test_recovery_plan_uses_default_sizing_cap_when_unset(client):
     assert payload["inputs"]["okr"]["resolved_sizing_cap_dollars"] == pytest.approx(5000.0)
 
 
+@pytest.mark.integration
 def test_recovery_plan_sell_redeploy_populated_after_target_yield_set(client):
     """Issue #207 AC3 — once a target yield is set, the Sell & redeploy path
     is eligible and its metrics compute (capital tied up + months to
@@ -362,6 +378,7 @@ def test_recovery_plan_sell_redeploy_populated_after_target_yield_set(client):
 _UNIQUE_LEAK_NEEDLE = "ZZZ-do-not-leak-this-needle-ZZZ"
 
 
+@pytest.mark.integration
 def test_recovery_plan_quote_failure_returns_generic_500(client):
     _seed_position(client, broker_cost_basis=3800.0)
 
@@ -379,6 +396,7 @@ def test_recovery_plan_quote_failure_returns_generic_500(client):
     assert _UNIQUE_LEAK_NEEDLE not in resp.text
 
 
+@pytest.mark.integration
 def test_recovery_plan_treats_missing_last_price_as_quote_failure(client):
     _seed_position(client, broker_cost_basis=3800.0)
     with patch.object(SchwabClient, "get_quote", return_value={}):
@@ -394,6 +412,7 @@ def test_recovery_plan_treats_missing_last_price_as_quote_failure(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_recovery_plan_response_matches_schema(client):
     _seed_position(client, broker_cost_basis=3800.0)
     _seed_setting(client, "okr_target_yield", "0.18")
@@ -435,6 +454,7 @@ def _patch_account_cache(monkeypatch, result):
     )
 
 
+@pytest.mark.integration
 def test_okr_inputs_shape_ok_when_schwab_cache_populated(client, monkeypatch):
     """A fresh ok-status cache entry flows into the populated OKR inputs.
 
@@ -469,6 +489,7 @@ def test_okr_inputs_shape_ok_when_schwab_cache_populated(client, monkeypatch):
     assert okr["capital_status"] == "ok"
 
 
+@pytest.mark.integration
 def test_okr_inputs_shape_when_capital_status_error_returns_null_total_capital(
     client, monkeypatch
 ):
@@ -505,6 +526,7 @@ def test_okr_inputs_shape_when_capital_status_error_returns_null_total_capital(
     assert okr["sizing_cap_pct"] == pytest.approx(25.0)
 
 
+@pytest.mark.integration
 def test_assumptions_panel_formats_resolved_dollars_when_ok(client, monkeypatch):
     """Happy path — the Sizing-cap assumption value renders the percent
     plus the resolved dollar ceiling: ``"25% (≈ $5,000)"``.
@@ -534,6 +556,7 @@ def test_assumptions_panel_formats_resolved_dollars_when_ok(client, monkeypatch)
     assert "≈ $5,000" in cap_row["value"]
 
 
+@pytest.mark.integration
 def test_assumptions_panel_formats_unavailable_when_capital_status_error(
     client, monkeypatch
 ):

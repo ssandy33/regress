@@ -7,6 +7,7 @@ settings endpoints — and the CLAUDE.md boundary-validation discipline.
 Uses the in-memory SQLite ``client`` fixture from ``conftest.py``.
 """
 
+import pytest
 from app.models.database import AppSetting, get_db
 
 
@@ -30,12 +31,14 @@ def _stored_target_yield(client) -> object:
 class TestTargetYieldRead:
     """GET /api/settings carries okr_target_yield (AC1)."""
 
+    @pytest.mark.integration
     def test_get_settings_target_yield_none_when_unseeded(self, client):
         """No stored row → okr_target_yield is null."""
         response = client.get("/api/settings")
         assert response.status_code == 200
         assert response.json()["okr_target_yield"] is None
 
+    @pytest.mark.integration
     def test_put_then_get_round_trips_fraction(self, client):
         """PUT a fraction, then GET returns the same fraction (AC1)."""
         put_resp = client.put(
@@ -49,6 +52,7 @@ class TestTargetYieldRead:
         assert get_resp.status_code == 200
         assert get_resp.json()["okr_target_yield"] == 0.12
 
+    @pytest.mark.integration
     def test_get_settings_target_yield_none_when_row_malformed(self, client):
         """A non-numeric stored row degrades to None — never breaks the read."""
         client.put(
@@ -75,6 +79,7 @@ class TestTargetYieldRead:
 class TestTargetYieldValidation:
     """PUT /api/settings boundary validation for okr_target_yield (AC1)."""
 
+    @pytest.mark.integration
     def test_put_above_upper_bound_rejected(self, client):
         """A fraction > 1.0 is rejected with a generic 422."""
         response = client.put(
@@ -87,6 +92,7 @@ class TestTargetYieldValidation:
         # No row written on a rejected value.
         assert _stored_target_yield(client) is None
 
+    @pytest.mark.integration
     def test_put_at_or_below_zero_rejected(self, client):
         """A non-positive fraction is rejected (0% is meaningless / out of bounds)."""
         for bad in ("-0.1", "0", "0.0"):
@@ -101,6 +107,7 @@ class TestTargetYieldValidation:
             )
         assert _stored_target_yield(client) is None
 
+    @pytest.mark.integration
     def test_put_non_numeric_rejected_without_leaking_exception(self, client):
         """A non-numeric value is rejected; the raw parse exception never leaks."""
         response = client.put(
@@ -115,6 +122,7 @@ class TestTargetYieldValidation:
         assert "float" not in detail
         assert _stored_target_yield(client) is None
 
+    @pytest.mark.integration
     def test_put_nan_and_inf_rejected(self, client):
         """NaN / inf parse as floats but are out of bounds — rejected."""
         for bad in ("nan", "inf", "-inf"):
@@ -125,6 +133,7 @@ class TestTargetYieldValidation:
             assert response.status_code == 422, bad
         assert _stored_target_yield(client) is None
 
+    @pytest.mark.integration
     def test_put_at_bounds_accepted(self, client):
         """The inclusive upper bound (1.0) and small positive values are accepted."""
         for good in ("1.0", "0.0001"):
@@ -134,6 +143,7 @@ class TestTargetYieldValidation:
             )
             assert response.status_code == 200, good
 
+    @pytest.mark.integration
     def test_other_keys_pass_through_unchanged(self, client):
         """The boundary check only gates okr_target_yield — other keys are blind upserts."""
         response = client.put(

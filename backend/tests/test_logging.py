@@ -85,6 +85,7 @@ def app_client():
 class TestJsonLogging:
     """Tests for JSON log output format."""
 
+    @pytest.mark.integration
     def test_json_output_contains_required_keys(self, json_log_capture):
         logger = logging.getLogger("test.required_keys")
         logger.info("test message")
@@ -98,6 +99,7 @@ class TestJsonLogging:
         assert "message" in record
         assert "request_id" in record
 
+    @pytest.mark.integration
     def test_timestamp_is_iso8601(self, json_log_capture):
         logger = logging.getLogger("test.iso8601")
         logger.info("timestamp check")
@@ -108,6 +110,7 @@ class TestJsonLogging:
         # Should parse without error as ISO 8601
         datetime.fromisoformat(record["timestamp"])
 
+    @pytest.mark.integration
     def test_request_id_propagates_from_context_var(self, json_log_capture):
         token = request_id_ctx.set("test-req-123")
         try:
@@ -120,6 +123,7 @@ class TestJsonLogging:
         finally:
             request_id_ctx.reset(token)
 
+    @pytest.mark.integration
     def test_existing_logger_calls_produce_valid_json(self, json_log_capture):
         logger = logging.getLogger("test.existing")
         logger.info("value is %s and count is %d", "foo", 42)
@@ -128,6 +132,7 @@ class TestJsonLogging:
         record = json.loads(output)
         assert "value is foo and count is 42" in record["message"]
 
+    @pytest.mark.integration
     def test_extra_fields_included_in_json(self, json_log_capture):
         logger = logging.getLogger("test.extras")
         logger.info("with extras", extra={"custom_field": "custom_value"})
@@ -140,6 +145,7 @@ class TestJsonLogging:
 class TestPlainTextLogging:
     """Tests for plain text (non-JSON) logging mode."""
 
+    @pytest.mark.integration
     def test_plain_text_output_is_not_json(self):
         stream = StringIO()
         root = logging.getLogger()
@@ -172,6 +178,7 @@ class TestPlainTextLogging:
 class TestRequestLoggingMiddleware:
     """Tests for the request logging middleware."""
 
+    @pytest.mark.integration
     def test_middleware_logs_request_fields(self, app_client, json_log_capture):
         app_client.get("/api/health")
 
@@ -196,6 +203,7 @@ class TestRequestLoggingMiddleware:
         assert isinstance(middleware_line["duration_ms"], (int, float))
         assert "client_ip" in middleware_line
 
+    @pytest.mark.integration
     def test_custom_request_id_accepted_and_echoed(self, app_client):
         response = app_client.get(
             "/api/health", headers={"X-Request-ID": "custom-id-abc"}
@@ -203,6 +211,7 @@ class TestRequestLoggingMiddleware:
         assert response.status_code == 200
         assert response.headers["X-Request-ID"] == "custom-id-abc"
 
+    @pytest.mark.integration
     def test_generated_request_id_in_response(self, app_client):
         response = app_client.get("/api/health")
         assert response.status_code == 200
@@ -211,6 +220,7 @@ class TestRequestLoggingMiddleware:
         assert len(request_id) > 0
         assert request_id != "-"
 
+    @pytest.mark.integration
     def test_malicious_request_id_is_rejected(self, app_client):
         response = app_client.get(
             "/api/health",
@@ -222,6 +232,7 @@ class TestRequestLoggingMiddleware:
         assert "\n" not in echoed
         assert "evil" not in echoed
 
+    @pytest.mark.integration
     def test_oversized_request_id_is_rejected(self, app_client):
         response = app_client.get(
             "/api/health",
@@ -231,6 +242,7 @@ class TestRequestLoggingMiddleware:
         echoed = response.headers["X-Request-ID"]
         assert len(echoed) <= 128
 
+    @pytest.mark.integration
     def test_custom_request_id_propagates_to_logs(
         self, app_client, json_log_capture
     ):

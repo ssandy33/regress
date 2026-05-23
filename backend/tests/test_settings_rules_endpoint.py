@@ -8,6 +8,7 @@ Settings page uses to edit the ``rules_config`` keystone (#156). The generic
 ``app_settings`` key/value persistence — no new table, no migration.
 """
 
+import pytest
 import json
 
 from app.models.database import AppSetting, get_db
@@ -34,6 +35,7 @@ def _read_rules_row(client) -> str | None:
 class TestGetRulesConfig:
     """GET /api/settings/rules — read the Trading Rules config."""
 
+    @pytest.mark.integration
     def test_returns_defaults_when_unset(self, client):
         """With no stored row, the endpoint returns the catalog defaults.
 
@@ -55,6 +57,7 @@ class TestGetRulesConfig:
         assert data["risk"]["loss_review_threshold_pct"] == -15.0
         assert data["management"]["assignment_risk_review"] == "High"
 
+    @pytest.mark.integration
     def test_optional_fields_default_to_null(self, client):
         """The four Optional/unset rules come back as null, not 0."""
         data = client.get("/api/settings/rules").json()
@@ -63,6 +66,7 @@ class TestGetRulesConfig:
         assert data["risk"]["hard_max_loss_pct"] is None
         assert data["risk"]["max_consecutive_rolls"] is None
 
+    @pytest.mark.integration
     def test_returns_stored_config(self, client):
         """A stored row is merged over defaults and returned."""
         stored = DEFAULT_RULES_CONFIG.model_dump()
@@ -83,6 +87,7 @@ class TestGetRulesConfig:
 class TestPutRulesConfig:
     """PUT /api/settings/rules — persist the Trading Rules config."""
 
+    @pytest.mark.integration
     def test_persists_and_round_trips(self, client):
         """A valid PUT is stored and the next GET reflects it."""
         config = DEFAULT_RULES_CONFIG.model_dump()
@@ -97,6 +102,7 @@ class TestPutRulesConfig:
         assert got["entry"]["dte_range"] == {"min": 14, "max": 35}
         assert got["position"]["max_open_positions"] == 8
 
+    @pytest.mark.integration
     def test_optional_field_persists_as_null(self, client):
         """An Optional field sent as null is stored as null — never invented."""
         config = DEFAULT_RULES_CONFIG.model_dump()
@@ -110,6 +116,7 @@ class TestPutRulesConfig:
         assert raw is not None
         assert json.loads(raw)["risk"]["hard_max_loss_pct"] is None
 
+    @pytest.mark.integration
     def test_schema_version_is_restamped(self, client):
         """A stale schema_version in the body is overwritten on save."""
         config = DEFAULT_RULES_CONFIG.model_dump()
@@ -119,6 +126,7 @@ class TestPutRulesConfig:
         assert put.status_code == 200
         assert put.json()["schema_version"] == RULES_CONFIG_SCHEMA_VERSION
 
+    @pytest.mark.integration
     def test_inverted_range_rejected(self, client):
         """A range with min >= max is rejected with 422 (Pydantic validator)."""
         config = DEFAULT_RULES_CONFIG.model_dump()
@@ -127,6 +135,7 @@ class TestPutRulesConfig:
         response = client.put("/api/settings/rules", json=config)
         assert response.status_code == 422
 
+    @pytest.mark.integration
     def test_out_of_range_delta_rejected(self, client):
         """A delta bound outside [0, 1] is rejected with 422."""
         config = DEFAULT_RULES_CONFIG.model_dump()
@@ -135,6 +144,7 @@ class TestPutRulesConfig:
         response = client.put("/api/settings/rules", json=config)
         assert response.status_code == 422
 
+    @pytest.mark.integration
     def test_positive_loss_threshold_rejected(self, client):
         """A loss threshold must be <= 0 — a positive value is rejected."""
         config = DEFAULT_RULES_CONFIG.model_dump()
@@ -143,6 +153,7 @@ class TestPutRulesConfig:
         response = client.put("/api/settings/rules", json=config)
         assert response.status_code == 422
 
+    @pytest.mark.integration
     def test_invalid_save_does_not_persist(self, client):
         """A rejected PUT writes nothing — the next GET is still defaults."""
         config = DEFAULT_RULES_CONFIG.model_dump()
@@ -157,6 +168,7 @@ class TestPutRulesConfig:
         assert got.pop("migration") == {"sizing_cap": None}
         assert got == DEFAULT_RULES_CONFIG.model_dump()
 
+    @pytest.mark.integration
     def test_overwrites_existing_row(self, client):
         """A second PUT overwrites the first stored config."""
         first = DEFAULT_RULES_CONFIG.model_dump()

@@ -46,6 +46,7 @@ def _make_txn(instruction, put_call, ticker="AAPL", strike=150.0,
 # --- Mapping tests ---
 
 class TestMapSchwabTransaction:
+    @pytest.mark.unit
     def test_sell_to_open_put(self):
         txn = _make_txn("SELL_TO_OPEN", "PUT", net_amount=300.0)
         result = map_schwab_transaction(txn)
@@ -57,34 +58,40 @@ class TestMapSchwabTransaction:
         assert result["premium"] == 3.0  # 300 / (1 * 100)
         assert result["quantity"] == 1
 
+    @pytest.mark.unit
     def test_sell_to_open_call(self):
         txn = _make_txn("SELL_TO_OPEN", "CALL", net_amount=500.0)
         result = map_schwab_transaction(txn)
         assert result["trade_type"] == "sell_call"
         assert result["premium"] == 5.0
 
+    @pytest.mark.unit
     def test_buy_to_close_put(self):
         txn = _make_txn("BUY_TO_CLOSE", "PUT", net_amount=-150.0)
         result = map_schwab_transaction(txn)
         assert result["trade_type"] == "buy_put_close"
         assert result["premium"] == -1.5  # negative for buys
 
+    @pytest.mark.unit
     def test_buy_to_close_call(self):
         txn = _make_txn("BUY_TO_CLOSE", "CALL", net_amount=-200.0)
         result = map_schwab_transaction(txn)
         assert result["trade_type"] == "buy_call_close"
         assert result["premium"] == -2.0
 
+    @pytest.mark.unit
     def test_receive_deliver_put_assignment(self):
         txn = _make_txn("RECEIVE_DELIVER", "PUT", net_amount=0)
         result = map_schwab_transaction(txn)
         assert result["trade_type"] == "assignment"
 
+    @pytest.mark.unit
     def test_receive_deliver_call_called_away(self):
         txn = _make_txn("RECEIVE_DELIVER", "CALL", net_amount=0)
         result = map_schwab_transaction(txn)
         assert result["trade_type"] == "called_away"
 
+    @pytest.mark.unit
     def test_non_option_returns_none(self):
         txn = {
             "transactionDate": "2025-03-01T10:00:00Z",
@@ -102,31 +109,37 @@ class TestMapSchwabTransaction:
         }
         assert map_schwab_transaction(txn) is None
 
+    @pytest.mark.unit
     def test_unknown_instruction_returns_none(self):
         txn = _make_txn("BUY_TO_OPEN", "PUT")
         assert map_schwab_transaction(txn) is None
 
+    @pytest.mark.unit
     def test_no_transfer_items_returns_none(self):
         txn = {"transactionDate": "2025-03-01", "netAmount": 0, "transferItems": []}
         assert map_schwab_transaction(txn) is None
 
+    @pytest.mark.unit
     def test_premium_calculation_multiple_contracts(self):
         txn = _make_txn("SELL_TO_OPEN", "PUT", net_amount=600.0, amount=2)
         result = map_schwab_transaction(txn)
         assert result["premium"] == 3.0  # 600 / (2 * 100)
         assert result["quantity"] == 2
 
+    @pytest.mark.unit
     def test_fee_extraction(self):
         fees = {"commission": 0.65, "secFee": 0.02, "optRegFee": 0.04, "rFee": 0, "cdscFee": 0, "otherCharges": 0}
         txn = _make_txn("SELL_TO_OPEN", "PUT", net_amount=300.0, fees=fees)
         result = map_schwab_transaction(txn)
         assert result["fees"] == 0.71
 
+    @pytest.mark.unit
     def test_fee_extraction_no_fees(self):
         txn = _make_txn("SELL_TO_OPEN", "PUT", net_amount=300.0)
         result = map_schwab_transaction(txn)
         assert result["fees"] == 0.0
 
+    @pytest.mark.unit
     def test_premium_grossed_up_when_netamount_excludes_fees(self):
         """Sell-put net=$29.34 + $0.66 fees + qty=1 → gross premium $0.30, not $0.29.
 
@@ -156,6 +169,7 @@ class TestMapSchwabTransaction:
         assert result["premium"] == pytest.approx(0.30, abs=1e-4)
         assert result["premium"] != pytest.approx(0.2934, abs=1e-4)
 
+    @pytest.mark.unit
     def test_buy_to_close_premium_grossed_down_when_netamount_includes_fees(self):
         """Buy-to-close: |netAmount| = gross + fees, so subtract fees to recover gross.
 
@@ -184,6 +198,7 @@ class TestMapSchwabTransaction:
         assert result is not None
         assert result["premium"] == pytest.approx(-0.30, abs=1e-4)
 
+    @pytest.mark.unit
     def test_receive_deliver_with_fees_emits_zero_premium(self):
         """Assignment / called-away rows are not premium-bearing trades.
 
@@ -215,6 +230,7 @@ class TestMapSchwabTransaction:
         assert result["premium"] == 0.0
         assert result["fees"] == pytest.approx(0.10)
 
+    @pytest.mark.unit
     def test_premium_prefers_transferitem_price_when_present(self):
         """If Schwab exposes ``transferItem.price`` use it directly as gross.
 
@@ -235,6 +251,7 @@ class TestMapSchwabTransaction:
         result = map_schwab_transaction(txn)
         assert result["premium"] == pytest.approx(0.30, abs=1e-4)
 
+    @pytest.mark.unit
     def test_premium_preserves_subpenny_precision(self):
         """Gross-up math preserves sub-penny precision (e.g. $0.295).
 
@@ -277,9 +294,11 @@ def db_session():
 
 
 class TestIsDuplicate:
+    @pytest.mark.unit
     def test_no_match_returns_false(self, db_session):
         assert is_duplicate(db_session, "AAPL", 150.0, "2025-03-21", "sell_put", "2025-03-01T10:00:00Z") is False
 
+    @pytest.mark.unit
     def test_exact_match_returns_true(self, db_session):
         pos = Position(id="p1", ticker="AAPL", shares=100, broker_cost_basis=15000, status="open", strategy="wheel", opened_at="2025-01-01")
         db_session.add(pos)
@@ -290,6 +309,7 @@ class TestIsDuplicate:
 
         assert is_duplicate(db_session, "AAPL", 150.0, "2025-03-21", "sell_put", "2025-03-01T10:00:00Z") is True
 
+    @pytest.mark.unit
     def test_different_strike_returns_false(self, db_session):
         pos = Position(id="p1", ticker="AAPL", shares=100, broker_cost_basis=15000, status="open", strategy="wheel", opened_at="2025-01-01")
         db_session.add(pos)
@@ -310,6 +330,7 @@ class TestPreviewImportReceiveAndDeliver:
     when the Schwab response includes RECEIVE_AND_DELIVER transactions.
     """
 
+    @pytest.mark.unit
     @patch("app.services.schwab_import.SchwabClient")
     def test_assignment_and_called_away_appear_in_preview(self, mock_client_cls, db_session):
         """RECEIVE_DELIVER PUT and CALL transactions map to assignment + called_away."""
@@ -409,6 +430,7 @@ class TestPositionLifecycleOnImport:
     import finalizer.
     """
 
+    @pytest.mark.unit
     def test_ac1_called_away_closes_position(self, db_session):
         """AC #1: full wheel cycle ending in called_away → status=closed."""
         mapped = [
@@ -428,6 +450,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 0
         assert position.closed_at == "2026-03-20"
 
+    @pytest.mark.unit
     def test_ac1_expired_closes_position(self, db_session):
         """AC #1: sell_put → expired → status=closed (no shares acquired)."""
         mapped = [
@@ -444,6 +467,7 @@ class TestPositionLifecycleOnImport:
         assert position.broker_cost_basis == 0.0
         assert position.closed_at == "2026-04-17"
 
+    @pytest.mark.unit
     def test_ac2_assignment_sets_broker_cost_basis(self, db_session):
         """AC #2: after assignment, broker_cost_basis = strike * shares."""
         mapped = [
@@ -458,6 +482,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 100
         assert position.broker_cost_basis == pytest.approx(13.50 * 100)
 
+    @pytest.mark.unit
     def test_ac3_double_assignment_aggregates_shares_and_basis(self, db_session):
         """AC #3: a second assignment increments shares (no silent no-op)."""
         mapped = [
@@ -475,6 +500,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 200
         assert position.broker_cost_basis == pytest.approx(2800.0 + 3000.0)
 
+    @pytest.mark.unit
     def test_ac4_buy_to_close_closes_position(self, db_session):
         """AC #4: sell_put → buy_to_close (no reopen) → status=closed."""
         mapped = [
@@ -489,6 +515,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 0
         assert position.closed_at == "2026-03-25"
 
+    @pytest.mark.unit
     def test_reopen_after_close_creates_new_position(
         self, db_session, monkeypatch
     ):
@@ -526,6 +553,7 @@ class TestPositionLifecycleOnImport:
         assert positions[0].status == "closed"
         assert positions[1].status == "open"
 
+    @pytest.mark.unit
     def test_ghost_open_positions_no_longer_appear_after_called_away(self, db_session):
         """Regression for the real-world repro in issue #127 (Schwab ****885).
 

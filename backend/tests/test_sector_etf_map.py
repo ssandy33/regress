@@ -43,15 +43,18 @@ _EXPECTED: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_sector_etf_map_has_eleven_entries():
     assert len(SECTOR_ETF_MAP) == 11
 
 
+@pytest.mark.unit
 def test_sector_etf_map_matches_frozen_contract():
     """Every plan-§3.3 entry maps to the frozen ticker. No extra entries."""
     assert SECTOR_ETF_MAP == _EXPECTED
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(("sector", "etf"), list(_EXPECTED.items()))
 def test_resolve_sector_etf_returns_etf_for_each_known_sector(
     sector: str, etf: str
@@ -59,17 +62,20 @@ def test_resolve_sector_etf_returns_etf_for_each_known_sector(
     assert resolve_sector_etf(sector) == etf
 
 
+@pytest.mark.unit
 def test_resolve_sector_etf_returns_none_for_unmapped_sector():
     """Unknown GICS sector → None so the regression service drops the factor."""
     assert resolve_sector_etf("Magical Cryptocurrencies") is None
 
 
+@pytest.mark.unit
 def test_resolve_sector_etf_returns_none_for_missing_sector():
     """yfinance sometimes omits ``info.sector`` entirely → None propagates."""
     assert resolve_sector_etf(None) is None
     assert resolve_sector_etf("") is None
 
 
+@pytest.mark.unit
 def test_resolve_sector_etf_is_case_sensitive():
     """Casing drift should NOT silently misclassify — caller falls back instead."""
     assert resolve_sector_etf("financial services") is None
@@ -81,6 +87,7 @@ def test_resolve_sector_etf_is_case_sensitive():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("sector", "expected_etf"),
     [
@@ -102,45 +109,53 @@ def test_all_eleven_gics_sectors_map_to_spdr_etfs(sector: str, expected_etf: str
     assert lookup_sector_etf(sector) == expected_etf
 
 
+@pytest.mark.unit
 def test_map_has_exactly_eleven_entries() -> None:
     """The map covers all 11 GICS sectors — no extras, no omissions."""
     assert len(SECTOR_ETF_MAP) == 11
 
 
+@pytest.mark.unit
 def test_unknown_sector_returns_none() -> None:
     """An unmapped sector string returns ``None`` (sector-omitted branch)."""
     assert lookup_sector_etf("Telecommunications") is None
     assert lookup_sector_etf("Crypto") is None
 
 
+@pytest.mark.unit
 def test_none_returns_none() -> None:
     """``None`` input (missing sector) returns ``None``."""
     assert lookup_sector_etf(None) is None
 
 
+@pytest.mark.unit
 def test_empty_string_returns_none() -> None:
     """Empty / whitespace-only sector strings return ``None``."""
     assert lookup_sector_etf("") is None
     assert lookup_sector_etf("   ") is None
 
 
+@pytest.mark.unit
 def test_lookup_is_case_sensitive() -> None:
     """yfinance returns canonical-cased strings; we don't lower-case lookups."""
     assert lookup_sector_etf("financial services") is None
     assert lookup_sector_etf("FINANCIAL SERVICES") is None
 
 
+@pytest.mark.unit
 def test_surrounding_whitespace_is_tolerated() -> None:
     """Defensive: a stray space around a known sector still resolves."""
     assert lookup_sector_etf("  Technology  ") == "XLK"
 
 
+@pytest.mark.unit
 def test_non_string_input_returns_none() -> None:
     """Non-string inputs (e.g. a yfinance None-coerced int) return None."""
     assert lookup_sector_etf(123) is None  # type: ignore[arg-type]
     assert lookup_sector_etf(["Technology"]) is None  # type: ignore[arg-type]
 
 
+@pytest.mark.unit
 def test_all_etf_values_are_xl_prefixed() -> None:
     """All values follow the SPDR ``XL*`` naming convention."""
     for etf in SECTOR_ETF_MAP.values():

@@ -62,6 +62,7 @@ def _seed_position(session, position_id: str | None = None) -> str:
 # --- Migration up: table appears via create_all ---
 
 
+@pytest.mark.unit
 def test_create_all_creates_position_notes_table():
     """``Base.metadata.create_all`` materializes the new table."""
     engine = _make_engine()
@@ -70,6 +71,7 @@ def test_create_all_creates_position_notes_table():
     assert "position_notes" in inspector.get_table_names()
 
 
+@pytest.mark.unit
 def test_position_notes_columns_match_plan():
     """Frozen column set per plan §3.2 / §4.3."""
     engine = _make_engine()
@@ -89,6 +91,7 @@ def test_position_notes_columns_match_plan():
     assert "body" in cols
 
 
+@pytest.mark.unit
 def test_position_notes_position_id_indexed():
     """``position_id`` is indexed (frequent lookup column)."""
     engine = _make_engine()
@@ -102,6 +105,7 @@ def test_position_notes_position_id_indexed():
 # --- Migration down: explicit DROP TABLE cleans up ---
 
 
+@pytest.mark.unit
 def test_drop_table_removes_position_notes_without_touching_positions():
     """The documented manual rollback path removes only the new table."""
     engine = _make_engine()
@@ -119,6 +123,7 @@ def test_drop_table_removes_position_notes_without_touching_positions():
     assert "positions" in inspector.get_table_names()
 
 
+@pytest.mark.unit
 def test_create_all_is_idempotent():
     """Calling ``create_all`` twice on an existing DB is a no-op."""
     engine = _make_engine()
@@ -132,6 +137,7 @@ def test_create_all_is_idempotent():
 # --- Constraint enforcement ---
 
 
+@pytest.mark.unit
 def test_unique_constraint_on_position_id():
     """A single position can hold only one note row."""
     engine = _make_engine()
@@ -168,6 +174,7 @@ def test_unique_constraint_on_position_id():
         session.close()
 
 
+@pytest.mark.unit
 def test_fk_rejects_orphan_position_id():
     """A note pointing at a non-existent position is rejected."""
     engine = _make_engine()
@@ -191,6 +198,7 @@ def test_fk_rejects_orphan_position_id():
         session.close()
 
 
+@pytest.mark.unit
 def test_body_roundtrips_unchanged():
     """``body`` is the column name and the text survives a round-trip."""
     engine = _make_engine()

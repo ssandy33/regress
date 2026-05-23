@@ -52,6 +52,7 @@ def db_with_tokens(client):
 
 
 class TestSchwabTokenManager:
+    @pytest.mark.integration
     def test_is_configured_false_no_tokens(self, client):
         """is_configured returns False with empty test DB."""
         from app.models.database import get_db
@@ -68,6 +69,7 @@ class TestSchwabTokenManager:
         assert not result
         mock_session_local.assert_called_once()
 
+    @pytest.mark.integration
     def test_get_access_token_returns_cached(self):
         """get_access_token returns cached token when valid."""
         mgr = SchwabTokenManager()
@@ -78,6 +80,7 @@ class TestSchwabTokenManager:
         token = mgr.get_access_token()
         assert token == "cached_token"
 
+    @pytest.mark.integration
     def test_get_access_token_refreshes_when_expired(self):
         """Auto-refresh when access token is within 2 min of expiry."""
         mgr = SchwabTokenManager()
@@ -127,6 +130,7 @@ class TestSchwabTokenManager:
             assert token == "new_access"
             assert mgr._cached_access_token == "new_access"
 
+    @pytest.mark.integration
     def test_schwab_auth_error_on_expired_refresh(self):
         """SchwabAuthError raised when refresh token is expired."""
         mgr = SchwabTokenManager()
@@ -160,6 +164,7 @@ class TestSchwabTokenManager:
                 mgr.get_access_token()
             assert exc_info.value.code == SchwabAuthCode.TOKEN_EXPIRED
 
+    @pytest.mark.integration
     def test_thread_safety(self):
         """Concurrent access doesn't create multiple instances."""
         instances = []
@@ -177,6 +182,7 @@ class TestSchwabTokenManager:
 
 
 class TestSchwabHealthEndpoint:
+    @pytest.mark.integration
     def test_schwab_health_not_configured(self, client):
         """GET /api/settings/health/schwab returns configured=False when not set up."""
         with patch.object(SchwabTokenManager, "is_configured", return_value=False):
@@ -186,6 +192,7 @@ class TestSchwabHealthEndpoint:
         assert data["configured"] is False
         assert data["valid"] is False
 
+    @pytest.mark.integration
     def test_schwab_health_configured_valid(self, client):
         """GET /api/settings/health/schwab returns valid=True when token works."""
         mock_httpx_resp = MagicMock()
@@ -201,6 +208,7 @@ class TestSchwabHealthEndpoint:
         assert data["configured"] is True
         assert data["valid"] is True
 
+    @pytest.mark.integration
     def test_schwab_health_configured_invalid(self, client):
         """GET /api/settings/health/schwab returns valid=False on API error."""
         with patch.object(SchwabTokenManager, "is_configured", return_value=True), \
@@ -213,6 +221,7 @@ class TestSchwabHealthEndpoint:
 
 
 class TestSourceHealthIncludesSchwab:
+    @pytest.mark.integration
     def test_sources_includes_schwab(self, client):
         """GET /api/health/sources includes schwab key."""
         with patch("app.routers.health._check_schwab", return_value={"available": False, "error": "Not configured"}), \
@@ -227,6 +236,7 @@ class TestSourceHealthIncludesSchwab:
 
 
 class TestSettingsIncludesSchwab:
+    @pytest.mark.integration
     def test_settings_has_schwab_fields(self, client):
         """GET /api/settings includes schwab_configured and schwab_token_expires."""
         with patch.object(SchwabTokenManager, "is_configured", return_value=False), \
@@ -240,6 +250,7 @@ class TestSettingsIncludesSchwab:
 
 
 class TestSchwabAuthErrorHandler:
+    @pytest.mark.integration
     def test_401_on_schwab_auth_error(self, client):
         """SchwabAuthError returns 401 response."""
         from app.services.schwab_auth import SchwabAuthError

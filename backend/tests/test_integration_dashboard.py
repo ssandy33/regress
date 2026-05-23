@@ -117,6 +117,7 @@ def test_dashboard_empty_journal(client, monkeypatch):
     assert data["data_meta"]["sources_unavailable"] == []
 
 
+@pytest.mark.integration
 def test_dashboard_populated(client, monkeypatch):
     """Two positions, several open legs incl. one ITM ≤ 7 DTE, Schwab connected."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
@@ -245,6 +246,7 @@ def test_dashboard_populated(client, monkeypatch):
     assert data["data_meta"]["is_stale"] is False
 
 
+@pytest.mark.integration
 def test_dashboard_schwab_disconnected(client, monkeypatch):
     """Positions exist but Schwab is not configured."""
     _patch_status(monkeypatch, schwab_configured=False, fred_key="")
@@ -276,6 +278,7 @@ def test_dashboard_schwab_disconnected(client, monkeypatch):
     assert data["open_legs"][0]["moneyness"] is None
 
 
+@pytest.mark.integration
 def test_dashboard_schwab_quote_failure(client, monkeypatch):
     """When Schwab is configured but a quote call raises, mark sources_unavailable."""
     from app.services.schwab_client import SchwabClientError
@@ -305,6 +308,7 @@ def test_dashboard_schwab_quote_failure(client, monkeypatch):
     assert data["data_meta"]["is_stale"] is True
 
 
+@pytest.mark.integration
 def test_dashboard_unexpected_quote_exception_does_not_500(client, monkeypatch):
     """A non-Schwab exception escaping a per-ticker quote call must not 500.
 
@@ -360,6 +364,7 @@ def test_dashboard_unexpected_quote_exception_does_not_500(client, monkeypatch):
     assert data["data_meta"]["is_stale"] is True
 
 
+@pytest.mark.integration
 def test_dashboard_option_chain_failure_degrades_gracefully(client, monkeypatch):
     """A failed option-chain fetch flags `schwab` and degrades % CAPT to unknown.
 
@@ -408,6 +413,7 @@ def test_dashboard_option_chain_failure_degrades_gracefully(client, monkeypatch)
     }
 
 
+@pytest.mark.integration
 def test_dashboard_unexpected_chain_exception_does_not_500(client, monkeypatch):
     """A non-Schwab exception escaping a per-ticker chain call must not 500.
 
@@ -448,6 +454,7 @@ def test_dashboard_unexpected_chain_exception_does_not_500(client, monkeypatch):
     assert data["open_legs"][0]["profit_target_status"]["state"] == "unknown"
 
 
+@pytest.mark.integration
 def test_dashboard_stale_cache(client, monkeypatch):
     """Cache contains entries >30 days old → flagged stale."""
     _patch_status(monkeypatch, schwab_configured=False, fred_key="")
@@ -485,6 +492,7 @@ def test_dashboard_stale_cache(client, monkeypatch):
     assert data["data_meta"]["is_stale"] is True
 
 
+@pytest.mark.integration
 def test_dashboard_500_does_not_leak_exception(client, monkeypatch):
     """CLAUDE.md: API responses must not include raw exception messages."""
     _patch_status(monkeypatch, schwab_configured=False, fred_key="")
@@ -510,6 +518,7 @@ def test_dashboard_500_does_not_leak_exception(client, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_dashboard_payload_schema_v05_keys(client, monkeypatch):
     """Snapshot test: assert every V0.5 top-level + nested key is present."""
     _patch_status(monkeypatch, schwab_configured=False, fred_key="")
@@ -552,6 +561,7 @@ def test_dashboard_payload_schema_v05_keys(client, monkeypatch):
     assert isinstance(data["next_actions"], list)
 
 
+@pytest.mark.integration
 def test_dashboard_scanner_card_when_no_open_legs(client, monkeypatch):
     """`journal.no_open_legs` emits even when there are zero positions."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
@@ -563,6 +573,7 @@ def test_dashboard_scanner_card_when_no_open_legs(client, monkeypatch):
     assert "journal.no_open_legs" in ids
 
 
+@pytest.mark.integration
 def test_dashboard_schwab_disconnected_action(client, monkeypatch):
     """`data.schwab_disconnected` fires when Schwab is not configured."""
     _patch_status(monkeypatch, schwab_configured=False, fred_key="")
@@ -574,6 +585,7 @@ def test_dashboard_schwab_disconnected_action(client, monkeypatch):
     assert "data.schwab_disconnected" in ids
 
 
+@pytest.mark.integration
 def test_dashboard_itm_short_dte_action(client, monkeypatch):
     """An ITM ≤ 7 DTE leg triggers the per-leg expiration card."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
@@ -606,6 +618,7 @@ def test_dashboard_itm_short_dte_action(client, monkeypatch):
     assert "expiration.itm_short_dte" in ids
 
 
+@pytest.mark.integration
 def test_dashboard_per_leg_signals_present(client, monkeypatch):
     """Every open leg carries the V0.5 signal fields (issue #146 §14.5)."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
@@ -652,6 +665,7 @@ def test_dashboard_per_leg_signals_present(client, monkeypatch):
     assert leg["earnings_in_window"] is False  # no AV cache hit in tests
 
 
+@pytest.mark.integration
 def test_dashboard_position_rows_have_v05_signals(client, monkeypatch):
     """Position rows include `wheel_status`, `next_suggested_action`, and `pl_pct`."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
@@ -683,6 +697,7 @@ def test_dashboard_position_rows_have_v05_signals(client, monkeypatch):
     assert row["broker_cost_basis"] == 17000.0
 
 
+@pytest.mark.integration
 def test_dashboard_rule_monitor_verdict_layer_present(client, monkeypatch):
     """Every open leg carries the §R6 verdict layer fields (issue #240)."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
@@ -717,6 +732,7 @@ def test_dashboard_rule_monitor_verdict_layer_present(client, monkeypatch):
     assert len(leg["triggered_rules"]) == 4
 
 
+@pytest.mark.integration
 def test_dashboard_profit_take_card_matches_leg_verdict(client, monkeypatch):
     """A leg past the profit-take threshold yields the verdict AND the card."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
@@ -770,6 +786,7 @@ def test_dashboard_profit_take_card_matches_leg_verdict(client, monkeypatch):
 # ``_fetch_option_chains_parallel``. These tests pin the new contract.
 
 
+@pytest.mark.integration
 def test_schwab_pill_downgrades_to_invalid_when_quotes_fail(client, monkeypatch):
     """When the live quote fan returns ``schwab_failed=True`` the dashboard
     must downgrade ``status.schwab.valid`` to ``False`` and surface the
@@ -805,6 +822,7 @@ def test_schwab_pill_downgrades_to_invalid_when_quotes_fail(client, monkeypatch)
     assert schwab["error"] == "Schwab API calls failing this load"
 
 
+@pytest.mark.integration
 def test_schwab_pill_stays_valid_on_success(client, monkeypatch):
     """Happy path: live calls succeed, ``status.schwab`` stays
     ``{valid: True, error: None}`` (issue #277 regression guard).
@@ -845,6 +863,7 @@ def test_schwab_pill_stays_valid_on_success(client, monkeypatch):
     assert schwab["error"] is None
 
 
+@pytest.mark.integration
 def test_schwab_pill_downgrades_when_chains_fail_but_quotes_succeed(
     client, monkeypatch
 ):
@@ -891,6 +910,7 @@ def test_schwab_pill_downgrades_when_chains_fail_but_quotes_succeed(
     assert data["data_meta"]["is_stale"] is True
 
 
+@pytest.mark.integration
 def test_schwab_pill_error_field_absent_when_schwab_not_configured(
     client, monkeypatch
 ):

@@ -13,6 +13,7 @@ is not re-tested here. The full endpoint flow is covered by
 """
 
 from __future__ import annotations
+import pytest
 
 from app.services.btc_detail import (
     _build_economics,
@@ -22,6 +23,7 @@ from app.services.btc_detail import (
 
 
 class TestBuildEconomics:
+    @pytest.mark.unit
     def test_per_share_premium_scales_to_whole_position_credit(self):
         # A 1-contract $0.3834 per-share premium → $38.34 credit (×1×100).
         leg = {
@@ -35,6 +37,7 @@ class TestBuildEconomics:
         assert econ["cost_to_close"] == 15.72
         assert econ["pricing_source"] == "live"
 
+    @pytest.mark.unit
     def test_credit_scales_by_contract_count(self):
         leg = {
             "premium": 2.25,
@@ -46,6 +49,7 @@ class TestBuildEconomics:
         assert econ["credit_received"] == 675.0  # 2.25 × 3 × 100
         assert econ["cost_to_close"] == 270.0  # 0.90 × 3 × 100
 
+    @pytest.mark.unit
     def test_est_pl_is_signed_credit_minus_cost(self):
         leg = {
             "premium": 2.25,
@@ -57,6 +61,7 @@ class TestBuildEconomics:
         # 225 credit - 90 cost = +135 gain.
         assert econ["est_pl_if_closed"] == 135.0
 
+    @pytest.mark.unit
     def test_est_pl_is_negative_when_cost_exceeds_credit(self):
         leg = {
             "premium": 1.00,
@@ -68,6 +73,7 @@ class TestBuildEconomics:
         # 100 credit - 250 cost = -150 loss.
         assert econ["est_pl_if_closed"] == -150.0
 
+    @pytest.mark.unit
     def test_captured_pct_is_lifted_not_recomputed(self):
         # The economics block lifts captured_pct verbatim from the % CAPT
         # signal so it agrees with the dashboard column by construction.
@@ -80,6 +86,7 @@ class TestBuildEconomics:
         econ = _build_economics(leg)
         assert econ["captured_pct"] == 0.6042
 
+    @pytest.mark.unit
     def test_no_mid_propagates_null_pricing_fields(self):
         # No live mark → cost/captured/est_pl/as_of all None, source unavailable.
         leg = {
@@ -98,6 +105,7 @@ class TestBuildEconomics:
         # credit_received is static — always real even with no live pricing.
         assert econ["credit_received"] == 225.0
 
+    @pytest.mark.unit
     def test_pricing_as_of_is_set_when_mid_available(self):
         leg = {
             "premium": 2.25,
@@ -111,27 +119,33 @@ class TestBuildEconomics:
 
 
 class TestPositionLabel:
+    @pytest.mark.unit
     def test_covered_call_label(self):
         assert _position_label({"ticker": "F", "strategy": "cc"}) == "F covered call"
 
+    @pytest.mark.unit
     def test_cash_secured_put_label(self):
         assert (
             _position_label({"ticker": "SOFI", "strategy": "csp"})
             == "SOFI cash-secured put"
         )
 
+    @pytest.mark.unit
     def test_wheel_label(self):
         assert _position_label({"ticker": "F", "strategy": "wheel"}) == "F wheel"
 
+    @pytest.mark.unit
     def test_unknown_strategy_falls_back_to_position(self):
         assert _position_label({"ticker": "F", "strategy": "mystery"}) == "F position"
 
 
 class TestMoneynessLabel:
+    @pytest.mark.unit
     def test_reports_state_when_present(self):
         assert _moneyness_label({"moneyness": {"state": "ITM"}}) == "ITM"
         assert _moneyness_label({"moneyness": {"state": "OTM"}}) == "OTM"
 
+    @pytest.mark.unit
     def test_unknown_when_no_moneyness(self):
         assert _moneyness_label({"moneyness": None}) == "Unknown"
         assert _moneyness_label({}) == "Unknown"

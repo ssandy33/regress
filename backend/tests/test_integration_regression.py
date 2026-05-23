@@ -1,7 +1,9 @@
+import pytest
 from unittest.mock import patch
 
 
 class TestLinearRegression:
+    @pytest.mark.integration
     def test_linear_success(self, client, mock_fetcher):
         with patch("app.services.alpha_vantage_client.get_next_earnings_date", return_value=None):
             response = client.post("/api/regression/linear", json={
@@ -18,6 +20,7 @@ class TestLinearRegression:
 
 
 class TestMultiFactorRegression:
+    @pytest.mark.integration
     def test_multi_factor_success(self, client, multi_asset_fetcher):
         response = client.post("/api/regression/multi-factor", json={
             "dependent": "CSUSHPINSA",
@@ -33,6 +36,7 @@ class TestMultiFactorRegression:
 
 
 class TestRollingRegression:
+    @pytest.mark.integration
     def test_rolling_success(self, client, mock_fetcher):
         response = client.post("/api/regression/rolling", json={
             "asset": "AAPL",
@@ -48,6 +52,7 @@ class TestRollingRegression:
 
 
 class TestCompareRegression:
+    @pytest.mark.integration
     def test_compare_success(self, client, multi_asset_fetcher):
         response = client.post("/api/regression/compare", json={
             "assets": ["AAPL", "^GSPC"],
@@ -61,6 +66,7 @@ class TestCompareRegression:
         assert "^GSPC" in data["series"]
         assert "stats" in data
 
+    @pytest.mark.integration
     def test_compare_too_few_assets(self, client):
         response = client.post("/api/regression/compare", json={
             "assets": ["AAPL"],

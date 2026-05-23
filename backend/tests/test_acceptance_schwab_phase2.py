@@ -56,6 +56,7 @@ def _mock_cache(has_fresh=False, has_stale=False):
 class TestAC1_RegressionChartsLoadViaSchwab:
     """AC: Regression charts load correctly using Schwab price history."""
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_fetch_routes_stock_through_schwab(self, mock_schwab):
         """DataFetcher.fetch() calls _fetch_schwab for stock tickers."""
@@ -70,6 +71,7 @@ class TestAC1_RegressionChartsLoadViaSchwab:
         assert not meta.is_stale
         assert len(df) == 30
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_fetch_routes_index_through_schwab(self, mock_schwab):
         """Index tickers (^GSPC) also route through Schwab."""
@@ -82,6 +84,7 @@ class TestAC1_RegressionChartsLoadViaSchwab:
         mock_schwab.assert_called_once_with("^GSPC", "2024-01-01", "2024-01-30")
         assert meta.source == "schwab"
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_fetch_routes_commodity_through_schwab(self, mock_schwab):
         """Commodity tickers (GC=F) also route through Schwab."""
@@ -94,6 +97,7 @@ class TestAC1_RegressionChartsLoadViaSchwab:
         mock_schwab.assert_called_once_with("GC=F", "2024-01-01", "2024-01-30")
         assert meta.source == "schwab"
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_returned_dataframe_has_correct_shape(self, mock_schwab):
         """Returned DataFrame has date index and value column (chart-ready)."""
@@ -109,12 +113,14 @@ class TestAC1_RegressionChartsLoadViaSchwab:
         assert meta.date_range.start == df.index[0].strftime("%Y-%m-%d")
         assert meta.date_range.end == df.index[-1].strftime("%Y-%m-%d")
 
+    @pytest.mark.unit
     def test_fred_still_routes_to_fred(self):
         """FRED series must NOT route through Schwab."""
         assert detect_source("FEDFUNDS") == "fred"
         assert detect_source("DGS10") == "fred"
         assert detect_source("UNRATE") == "fred"
 
+    @pytest.mark.unit
     def test_zillow_still_routes_to_zillow(self):
         """Zillow ZIP codes must NOT route through Schwab."""
         assert detect_source("ZIP:10001") == "zillow"
@@ -128,6 +134,7 @@ class TestAC2_CurrentPriceViaSchwab:
     response lacks a price.
     """
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_get_current_price_uses_schwab(self, mock_client_cls):
         """_get_current_price_fallback uses Schwab get_quote."""
@@ -141,6 +148,7 @@ class TestAC2_CurrentPriceViaSchwab:
         assert price == 185.50
         mock_client.get_quote.assert_called_once_with("AAPL")
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_get_current_price_falls_back_to_error(self, mock_client_cls):
         """When Schwab fails, raises OptionScannerError (no yfinance fallback for price)."""
@@ -152,6 +160,7 @@ class TestAC2_CurrentPriceViaSchwab:
         with pytest.raises(OptionScannerError, match="Cannot get current price"):
             scanner._get_current_price_fallback(mock_client, "AAPL")
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_get_current_price_falls_back_on_auth_error(self, mock_client_cls):
         """SchwabAuthError also raises OptionScannerError."""
@@ -171,6 +180,7 @@ class TestAC3_VixDisplaysCorrectly:
     from the chain response underlying quote, not a separate _get_market_context call.
     """
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_vix_from_schwab_quote(self, mock_client_cls):
         """VIX is fetched via Schwab get_quote('^VIX') mapped to $VIX.X."""
@@ -183,6 +193,7 @@ class TestAC3_VixDisplaysCorrectly:
 
         assert vix == 22.35
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.SchwabClient")
     def test_vix_fallback_returns_none(self, mock_client_cls):
         """When Schwab VIX fails, returns None."""
@@ -195,6 +206,7 @@ class TestAC3_VixDisplaysCorrectly:
 
         assert vix is None
 
+    @pytest.mark.unit
     def test_52week_data_from_chain_underlying(self):
         """52-week high/low comes from Schwab chain response underlying quote."""
         # In Phase 3, the scan() method extracts 52-week data from the chain
@@ -221,6 +233,7 @@ class TestAC3_VixDisplaysCorrectly:
 class TestAC4_CacheBehaviorUnchanged:
     """AC: Cache behavior unchanged (TTL rules still apply)."""
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_fresh_cache_prevents_schwab_call(self, mock_schwab):
         """Fresh cache entry should prevent any Schwab API call."""
@@ -233,6 +246,7 @@ class TestAC4_CacheBehaviorUnchanged:
         assert not meta.is_stale
         cache.get.assert_called_once_with("schwab:AAPL")
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_cache_key_uses_schwab_prefix(self, mock_schwab):
         """Cache key for stock tickers is 'schwab:<ticker>'."""
@@ -250,6 +264,7 @@ class TestAC4_CacheBehaviorUnchanged:
         assert args[0][0] == "schwab:AAPL"  # key
         assert args[0][3] == "schwab"  # source
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_stale_cache_fallback_on_schwab_failure(self, mock_schwab):
         """SchwabClientError triggers stale cache fallback."""
@@ -261,6 +276,7 @@ class TestAC4_CacheBehaviorUnchanged:
 
         assert meta.is_stale
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_stale_cache_fallback_on_auth_error(self, mock_schwab):
         """SchwabAuthError also triggers stale cache fallback."""
@@ -272,6 +288,7 @@ class TestAC4_CacheBehaviorUnchanged:
 
         assert meta.is_stale
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_no_cache_no_fallback_raises(self, mock_schwab):
         """When Schwab fails and no cache exists, error propagates."""
@@ -282,6 +299,7 @@ class TestAC4_CacheBehaviorUnchanged:
         with pytest.raises(SchwabClientError):
             fetcher.fetch("AAPL", "2024-01-01", "2024-01-30")
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_index_cache_key_uses_schwab_prefix(self, mock_schwab):
         """Index tickers also use schwab: prefix in cache keys."""
@@ -297,6 +315,7 @@ class TestAC4_CacheBehaviorUnchanged:
 class TestAC5_NoYfinanceInDataFetcher:
     """AC: No remaining yfinance calls in data_fetcher.py."""
 
+    @pytest.mark.unit
     def test_no_yfinance_import(self):
         """data_fetcher.py must not import yfinance."""
         import app.services.data_fetcher as mod
@@ -309,6 +328,7 @@ class TestAC5_NoYfinanceInDataFetcher:
             if isinstance(node, ast.ImportFrom):
                 assert node.module != "yfinance", "data_fetcher.py still imports from yfinance"
 
+    @pytest.mark.unit
     def test_no_yf_references_in_source(self):
         """data_fetcher.py AST must not contain yf or yfinance name/attribute nodes."""
         import app.services.data_fetcher as mod
@@ -321,6 +341,7 @@ class TestAC5_NoYfinanceInDataFetcher:
             if isinstance(node, ast.Attribute):
                 assert node.attr != "yfinance", "data_fetcher.py has 'yfinance' attribute reference"
 
+    @pytest.mark.unit
     def test_detect_source_returns_schwab_not_yfinance(self):
         """detect_source() must return 'schwab' for all non-FRED, non-Zillow tickers."""
         stock_tickers = ["AAPL", "MSFT", "TSLA", "GOOGL"]
@@ -330,6 +351,7 @@ class TestAC5_NoYfinanceInDataFetcher:
         for ticker in stock_tickers + index_tickers + commodity_tickers:
             assert detect_source(ticker) == "schwab", f"detect_source('{ticker}') != 'schwab'"
 
+    @pytest.mark.unit
     def test_asset_registry_uses_schwab_not_yfinance(self):
         """All non-FRED entries in ASSET_REGISTRY must use source='schwab'."""
         for entry in ASSET_REGISTRY:
@@ -343,6 +365,7 @@ class TestAC5_NoYfinanceInDataFetcher:
 class TestAC6_ExistingTestsUpdated:
     """AC: Existing data fetcher tests updated for Schwab response fixtures."""
 
+    @pytest.mark.unit
     def test_mock_cache_uses_schwab_source_name(self):
         """Test fixtures must use 'schwab' as source_name, not 'yfinance'."""
         from tests.test_data_fetcher import _make_mock_cache

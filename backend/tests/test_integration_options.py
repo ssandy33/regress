@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -37,6 +38,7 @@ def _mock_scan_result():
 
 
 class TestScanEndpoint:
+    @pytest.mark.integration
     def test_scan_covered_call_success(self, client):
         with patch.object(OptionScanner, "scan", return_value=_mock_scan_result()):
             response = client.post("/api/options/scan", json={
@@ -52,6 +54,7 @@ class TestScanEndpoint:
         assert len(data["recommendations"]) == 1
         assert data["recommendations"][0]["rank"] == 1
 
+    @pytest.mark.integration
     def test_scan_csp_success(self, client):
         result = _mock_scan_result()
         result["strategy"] = "cash_secured_put"
@@ -64,6 +67,7 @@ class TestScanEndpoint:
         assert response.status_code == 200
         assert response.json()["strategy"] == "cash_secured_put"
 
+    @pytest.mark.integration
     def test_scan_no_options_404(self, client):
         with patch.object(
             OptionScanner, "scan",
@@ -77,6 +81,7 @@ class TestScanEndpoint:
         assert response.status_code == 404
         assert "No options" in response.json()["detail"]
 
+    @pytest.mark.integration
     def test_scan_invalid_strategy_400(self, client):
         with patch.object(
             OptionScanner, "scan",
@@ -89,6 +94,7 @@ class TestScanEndpoint:
         assert response.status_code == 400
 
 
+    @pytest.mark.integration
     def test_scan_schwab_auth_error_returns_sanitized_message(self, client):
         """Schwab auth errors must not leak internal details (issue #41)."""
         with patch.object(
@@ -109,6 +115,7 @@ class TestScanEndpoint:
         assert "refresh token" not in detail
         assert "python -m app.cli" not in detail
 
+    @pytest.mark.integration
     def test_schwab_auth_error_global_handler_sanitized(self, client):
         """Global SchwabAuthError handler must not leak internal details (issue #41)."""
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
@@ -133,6 +140,7 @@ class TestScanEndpoint:
 
 
 class TestEarningsEndpoint:
+    @pytest.mark.integration
     def test_get_earnings(self, client):
         with patch("app.services.alpha_vantage_client.get_next_earnings_date", return_value="2026-05-05"):
             response = client.get("/api/options/earnings/SOFI")
