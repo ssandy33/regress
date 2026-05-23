@@ -169,7 +169,7 @@ test.describe('KPI row (V0.5 — 7 tiles)', () => {
     await expect(tile).toContainText('Position with the largest unrealized loss.');
   });
 
-  test('empty Realized P/L renders $0 / 0% (not em-dash per spec §14.3)', async ({ page }) => {
+  test('empty Realized P/L renders $0 / 0% (zero-guard, not +$0.00, per spec §14.3)', async ({ page }) => {
     await mockDashboard(page, {
       ...BASE_PAYLOAD,
       status: { ...BASE_PAYLOAD.status, journal: { positions_count: 0 } },
@@ -179,11 +179,12 @@ test.describe('KPI row (V0.5 — 7 tiles)', () => {
     await page.waitForLoadState('networkidle');
 
     const tile = page.getByTestId('kpi-realized-pl');
-    await expect(tile).toContainText('+$0.00');
+    await expect(tile).toContainText('$0');
+    await expect(tile).not.toContainText('+$0.00');
     await expect(tile).toContainText('0% lifetime');
   });
 
-  test('empty Premium renders $0 / 0 trades', async ({ page }) => {
+  test('empty Premium renders $0 / 0 trades (zero-guard, not +$0.00, per spec §14.3)', async ({ page }) => {
     await mockDashboard(page, {
       ...BASE_PAYLOAD,
       status: { ...BASE_PAYLOAD.status, journal: { positions_count: 0 } },
@@ -193,7 +194,8 @@ test.describe('KPI row (V0.5 — 7 tiles)', () => {
     await page.waitForLoadState('networkidle');
 
     const tile = page.getByTestId('kpi-premium-lifetime');
-    await expect(tile).toContainText('+$0.00');
+    await expect(tile).toContainText('$0');
+    await expect(tile).not.toContainText('+$0.00');
     await expect(tile).toContainText('0 trades');
   });
 
@@ -244,4 +246,36 @@ test.describe('KPI row (V0.5 — 7 tiles)', () => {
     const wrapperClass = await wrapperHandle.evaluate((el) => el.className);
     expect(wrapperClass).toContain('col-span-2');
   });
+  test('signedCurrency zero-guard is symmetric: realized + premium use $0, unrealized stays +$0.00', async ({ page }) => {
+    // Issue #172 spec §14.3 zero-guard applies to aggregate tiles only
+    // (realized P/L + premium collected). Unrealized P/L is a current-state
+    // pointer, not an aggregate, and intentionally retains the +$0.00 format
+    // when value === 0. Guards against an accidental over-bleed of the fix.
+    const zeroKpis = {
+      ...EMPTY_KPIS,
+      unrealized_pl: 0,
+      unrealized_pl_pct: 0,
+    };
+    await mockDashboard(page, {
+      ...BASE_PAYLOAD,
+      status: { ...BASE_PAYLOAD.status, journal: { positions_count: 0 } },
+      kpis: zeroKpis,
+    });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    // Aggregate tiles: zero-guarded
+    const realized = page.getByTestId('kpi-realized-pl');
+    await expect(realized).toContainText('$0');
+    await expect(realized).not.toContainText('+$0.00');
+
+    const premium = page.getByTestId('kpi-premium-lifetime');
+    await expect(premium).toContainText('$0');
+    await expect(premium).not.toContainText('+$0.00');
+
+    // Pointer tile: unchanged (+$0.00 is fine for unrealized at zero)
+    const unrealized = page.getByTestId('kpi-unrealized-pl');
+    await expect(unrealized).toContainText('+$0.00');
+  });
+
 });

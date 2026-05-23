@@ -34,9 +34,14 @@ function plColor(value) {
   return undefined;
 }
 
+/**
+ * Format a currency value with a signed prefix, special-casing zero per
+ * spec §14.3: zero-state aggregate tiles render `$0` (no `+`, no decimals).
+ */
 function signedCurrency(value) {
   if (value == null) return '—';
-  return `${value >= 0 ? '+' : ''}${formatCurrency(value)}`;
+  if (value === 0) return '$0';
+  return `${value > 0 ? '+' : ''}${formatCurrency(value)}`;
 }
 
 export default function KpiRow({ kpis }) {
@@ -86,7 +91,7 @@ export default function KpiRow({ kpis }) {
 
   // Premium collected (lifetime) — aggregate; empty state is $0 / 0 trades.
   const premiumTotal = kpis.premium_collected_total ?? 0;
-  const premiumValue = `${premiumTotal >= 0 ? '+' : ''}${formatCurrency(premiumTotal)}`;
+  const premiumValue = signedCurrency(premiumTotal);
   const premiumTradesCount = kpis.premium_collected_trades ?? 0;
   const premiumSubtext = `${premiumTradesCount} trades`;
 
