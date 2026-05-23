@@ -605,3 +605,63 @@ test.describe('Section E · unknown factor bucket (#285)', () => {
     ).toBeTruthy();
   });
 });
+
+// --- Issue #288: per-section failure copy ----------------------------------
+
+test.describe('Stock Research page — Section A throttling copy (#288)', () => {
+  test('Section A renders throttling copy when API returns rate-limit detail', async ({
+    page,
+  }) => {
+    await mockPosition(page, positionPayload());
+    await mockResearchEndpoint(
+      page,
+      'business',
+      { detail: 'Yahoo Finance is throttling us — try again in a few minutes.' },
+      502,
+    );
+    await mockResearchEndpoint(page, 'price-history', priceHistoryPayload());
+    await mockResearchEndpoint(page, 'financials', financialsPayload());
+    await mockResearchEndpoint(page, 'regression', regressionPayload());
+    await mockResearchEndpoint(page, 'thesis', thesisPayload());
+    await openResearchPage(page);
+
+    const errorTile = page.getByTestId('research-a-error');
+    await expect(errorTile).toBeVisible();
+    await expect(errorTile).toContainText(
+      'Yahoo Finance is throttling us — try again in a few minutes.',
+    );
+    // The "Source unavailable: yfinance" subline must be suppressed.
+    await expect(errorTile).not.toContainText('Source unavailable');
+  });
+});
+
+test.describe('Stock Research page — Section D both-empty copy (#288)', () => {
+  test('Section D renders verbatim no-data copy when both sources empty', async ({
+    page,
+  }) => {
+    await mockPosition(page, positionPayload());
+    await mockResearchEndpoint(page, 'business', businessPayload());
+    await mockResearchEndpoint(page, 'price-history', priceHistoryPayload());
+    await mockResearchEndpoint(
+      page,
+      'financials',
+      {
+        detail:
+          'No financial data available for SOFI. Both Alpha Vantage and Yahoo Finance returned empty for this symbol.',
+      },
+      502,
+    );
+    await mockResearchEndpoint(page, 'regression', regressionPayload());
+    await mockResearchEndpoint(page, 'thesis', thesisPayload());
+    await openResearchPage(page);
+
+    const errorTile = page.getByTestId('research-d-error');
+    await expect(errorTile).toBeVisible();
+    await expect(errorTile).toContainText('No financial data available for SOFI.');
+    await expect(errorTile).toContainText(
+      'Both Alpha Vantage and Yahoo Finance returned empty for this symbol.',
+    );
+    // The generic "Source unavailable: alphavantage" subline must be suppressed.
+    await expect(errorTile).not.toContainText('Source unavailable');
+  });
+});

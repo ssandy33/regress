@@ -48,16 +48,19 @@ the (slower, less rate-limited but still costly) yfinance call.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.services import alpha_vantage_client, research_cache, yfinance_client
 from app.services.research_business import ResearchSourceUnavailable
+from app.services.research_cache_utils import (
+    read_app_setting,
+    write_app_setting,
+)
+from app.services.yfinance_client import YFinanceRateLimitedError
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +72,6 @@ QUARTERS = 8
 _AV_MEMORY_KEY = "av_financials:{ticker}"
 _YF_MEMORY_KEY = "yf_financials:{ticker}"
 _YF_APP_SETTING_KEY = "yf_financials:{ticker}"
-
-_SOURCE_UNAVAILABLE_DETAIL = "Financials source unavailable"
 
 # Hook types for test injection — production code uses the defaults.
 _AVFetcher = Callable[[str, int], Optional[list[dict]]]
@@ -158,57 +159,6 @@ def _project_yf_quarter(raw: dict) -> dict[str, Any]:
     }
 
 
-def _read_app_setting(
-    db: Session, key: str
-) -> Optional[tuple[dict, datetime]]:
-    """Return ``(payload, fetched_at)`` from ``app_settings`` or ``None``."""
-    try:
-        from app.models.database import AppSetting
-
-        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if entry is None:
-            return None
-        ts_part, _, json_part = entry.value.partition("|")
-        if not ts_part or not json_part:
-            return None
-        fetched_at = datetime.fromisoformat(ts_part)
-        payload = json.loads(json_part)
-        if not isinstance(payload, dict):
-            return None
-        return payload, fetched_at
-    except (SQLAlchemyError, ValueError) as exc:
-        logger.debug(
-            "Failed to read app_setting",
-            extra={"app_setting_key": key, "error": str(exc)},
-        )
-        return None
-
-
-def _write_app_setting(
-    db: Session, key: str, payload: dict, fetched_at: datetime
-) -> None:
-    """Upsert ``payload`` into ``app_settings`` under ``key``."""
-    try:
-        from app.models.database import AppSetting
-
-        value = f"{fetched_at.isoformat()}|{json.dumps(payload)}"
-        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if entry is None:
-            db.add(AppSetting(key=key, value=value))
-        else:
-            entry.value = value
-        db.commit()
-    except (SQLAlchemyError, ValueError) as exc:
-        logger.debug(
-            "Failed to write app_setting",
-            extra={"app_setting_key": key, "error": str(exc)},
-        )
-        try:
-            db.rollback()
-        except SQLAlchemyError:
-            pass
-
-
 def build_financials_payload(
     db: Session,
     ticker: str,
@@ -259,7 +209,7 @@ def build_financials_payload(
     # Fall back to yfinance
     # First check the durable yf cache so a server restart with AV down
     # still serves a fresh-enough payload.
-    yf_db_hit = _read_app_setting(db, yf_app_key)
+    yf_db_hit = read_app_setting(db, yf_app_key)
     if yf_db_hit is not None:
         payload, fetched_at = yf_db_hit
         if datetime.now(timezone.utc) - fetched_at < FINANCIALS_CACHE_TTL:
@@ -267,13 +217,25 @@ def build_financials_payload(
             return payload
 
     yf_impl = yf_fetcher or yfinance_client.fetch_quarterly_income_stmt
-    yf_raw = yf_impl(ticker_norm, QUARTERS)
+    try:
+        yf_raw = yf_impl(ticker_norm, QUARTERS)
+    except YFinanceRateLimitedError as exc:
+        logger.warning(
+            "Yahoo Finance rate-limited financials fallback",
+            extra={"ticker": ticker_norm, "source": "yfinance"},
+        )
+        raise ResearchSourceUnavailable(
+            "Yahoo Finance is throttling us — try again in a few minutes."
+        ) from exc
     if yf_raw is None:
         logger.warning(
             "Both AV and yfinance returned no income statement",
             extra={"ticker": ticker_norm, "source": "alphavantage+yfinance"},
         )
-        raise ResearchSourceUnavailable(_SOURCE_UNAVAILABLE_DETAIL)
+        raise ResearchSourceUnavailable(
+            f"No financial data available for {ticker_norm}. "
+            "Both Alpha Vantage and Yahoo Finance returned empty for this symbol."
+        )
 
     quarters = [_project_yf_quarter(q) for q in yf_raw[:QUARTERS]]
     fetched_at = datetime.now(timezone.utc)
@@ -284,5 +246,5 @@ def build_financials_payload(
         "fetched_at": fetched_at.isoformat().replace("+00:00", "Z"),
     }
     research_cache.set(yf_memory_key, payload)
-    _write_app_setting(db, yf_app_key, payload, fetched_at)
+    write_app_setting(db, yf_app_key, payload, fetched_at)
     return payload
