@@ -5,21 +5,27 @@ Covers:
 - #287: CookieCache directory configuration at module import time, env
   var override path, default ``/tmp/yfinance-cache``, and the
   ``set_tz_cache_location`` invocation.
-- #288 (appended in a later commit): the rate-limit classifier and the
-  narrowed-except behavior on the two fetcher functions.
+- #288: the rate-limit classifier (``_classify_yfinance_error``) and
+  the narrowed-except behavior on the two fetcher functions.
 
 The yfinance library is never actually called over the network — tests
 pass ``env_override`` to :func:`_configure_yfinance_cache_dir` so the
 side effect (``makedirs`` + ``set_tz_cache_location``) is observed
-without ``importlib.reload`` magic.
+without ``importlib.reload`` magic. The fetcher tests patch
+``yfinance.Ticker`` to raise the documented HTML-as-JSON rate-limit
+signature.
 """
 
 from __future__ import annotations
 
+import json
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.services import yfinance_client
+from app.services.yfinance_client import YFinanceRateLimitedError
 
 
 def test_cache_dir_is_configured_on_module_import():
@@ -62,3 +68,77 @@ def test_explicit_env_override_arg_bypasses_environ(tmp_path):
     assert result == str(target)
     assert target.is_dir()
     set_loc.assert_called_once_with(str(target))
+
+
+# ---------------------------------------------------------------------------
+# Issue #288 — rate-limit classification + narrowed except
+# ---------------------------------------------------------------------------
+
+
+def test_json_decode_error_expecting_value_classified_as_rate_limit():
+    """The Yahoo HTML-as-JSON signature → YFinanceRateLimitedError."""
+    exc = json.JSONDecodeError(
+        "Expecting value: line 1 column 1 (char 0)", "<!DOCTYPE html>", 0
+    )
+    result = yfinance_client._classify_yfinance_error(exc)
+    assert isinstance(result, YFinanceRateLimitedError)
+
+
+def test_other_json_decode_error_propagated_unchanged():
+    """Different JSONDecodeError messages pass through unchanged."""
+    exc = json.JSONDecodeError(
+        "Extra data: line 2 column 1 (char 5)", "x", 5
+    )
+    result = yfinance_client._classify_yfinance_error(exc)
+    assert result is exc
+
+
+def test_non_json_decode_error_propagated_unchanged():
+    """Any non-JSONDecodeError exception passes through unchanged."""
+    exc = ValueError("nope")
+    result = yfinance_client._classify_yfinance_error(exc)
+    assert result is exc
+
+
+def test_fetch_business_info_raises_rate_limit_on_html_429():
+    """fetch_business_info re-raises YFinanceRateLimitedError on the 429 signature."""
+    fake_ticker = MagicMock()
+    type(fake_ticker).info = property(
+        lambda self: (_ for _ in ()).throw(
+            json.JSONDecodeError(
+                "Expecting value: line 1 column 1 (char 0)",
+                "<!DOCTYPE html>",
+                0,
+            )
+        )
+    )
+    with patch("yfinance.Ticker", return_value=fake_ticker):
+        with pytest.raises(YFinanceRateLimitedError):
+            yfinance_client.fetch_business_info("SOFI")
+
+
+def test_fetch_quarterly_income_stmt_raises_rate_limit_on_html_429():
+    """fetch_quarterly_income_stmt re-raises YFinanceRateLimitedError on the 429 signature."""
+    fake_ticker = MagicMock()
+    type(fake_ticker).quarterly_income_stmt = property(
+        lambda self: (_ for _ in ()).throw(
+            json.JSONDecodeError(
+                "Expecting value: line 1 column 1 (char 0)",
+                "<!DOCTYPE html>",
+                0,
+            )
+        )
+    )
+    with patch("yfinance.Ticker", return_value=fake_ticker):
+        with pytest.raises(YFinanceRateLimitedError):
+            yfinance_client.fetch_quarterly_income_stmt("SOFI", 8)
+
+
+def test_fetch_business_info_returns_none_on_other_failure():
+    """Non-classified failure still returns None (existing contract)."""
+    fake_ticker = MagicMock()
+    type(fake_ticker).info = property(
+        lambda self: (_ for _ in ()).throw(RuntimeError("transient"))
+    )
+    with patch("yfinance.Ticker", return_value=fake_ticker):
+        assert yfinance_client.fetch_business_info("SOFI") is None

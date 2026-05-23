@@ -91,6 +91,45 @@ def _configure_yfinance_cache_dir(
 YFINANCE_CACHE_DIR: str = _configure_yfinance_cache_dir()
 
 
+# --- Rate-limit classification (issue #288) --------------------------------
+#
+# yfinance's HTML-as-JSON failure mode: when Yahoo returns a 429 HTML
+# page, yfinance calls ``json.loads`` on it and raises
+# ``JSONDecodeError("Expecting value: line 1 column 1 (char 0)")``. We
+# classify that signature and re-raise as ``YFinanceRateLimitedError`` so
+# callers can surface a "try again in a few minutes" message instead of
+# the generic "Source unavailable".
+
+
+class YFinanceRateLimitedError(Exception):
+    """Raised when Yahoo Finance is throttling yfinance requests.
+
+    The classifier maps the well-known
+    ``JSONDecodeError("Expecting value: line 1 column 1 (char 0)")``
+    signature (Yahoo serving an HTML 429 page that yfinance fails to
+    parse as JSON) to this exception. All other exceptions pass through
+    the classifier unchanged.
+    """
+
+
+def _classify_yfinance_error(exc: Exception) -> Exception:
+    """Map known yfinance failure signatures to specific exceptions.
+
+    Currently the only classified case is the Yahoo HTML-as-JSON
+    rate-limit signature. Any other exception is returned unchanged so
+    the caller propagates / swallows it as before.
+    """
+    import json as _json  # local import to keep module init lean
+
+    if isinstance(exc, _json.JSONDecodeError) and str(exc).startswith(
+        "Expecting value: line 1 column 1 (char 0)"
+    ):
+        return YFinanceRateLimitedError(
+            "Yahoo Finance rate-limited the request"
+        )
+    return exc
+
+
 def _coerce_optional_str(value: Any) -> str | None:
     """Return a non-empty string or ``None``.
 
@@ -142,6 +181,9 @@ def fetch_business_info(ticker: str) -> dict[str, Any] | None:
     try:
         info = yfinance.Ticker(ticker).info or {}
     except Exception as exc:  # noqa: BLE001 — defensive per plan §4.11
+        classified = _classify_yfinance_error(exc)
+        if isinstance(classified, YFinanceRateLimitedError):
+            raise classified from exc
         logger.warning("yfinance Ticker.info failed for %s: %s", ticker, exc)
         return None
 
@@ -198,6 +240,9 @@ def fetch_quarterly_income_stmt(
         ticker_obj = yfinance.Ticker(ticker)
         statement = ticker_obj.quarterly_income_stmt
     except Exception as exc:  # noqa: BLE001 — defensive per plan §4.11
+        classified = _classify_yfinance_error(exc)
+        if isinstance(classified, YFinanceRateLimitedError):
+            raise classified from exc
         logger.warning(
             "yfinance quarterly_income_stmt failed for %s: %s", ticker, exc
         )

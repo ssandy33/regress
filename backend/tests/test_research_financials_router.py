@@ -139,7 +139,12 @@ def test_get_financials_200_falls_back_to_yfinance(client):
 
 
 def test_get_financials_502_when_both_sources_unavailable(client):
-    """AV ``None`` + yfinance ``None`` → 502 with sanitized detail."""
+    """AV ``None`` + yfinance ``None`` → 502 with sanitized detail.
+
+    Per issue #288 the Section D both-empty detail names the ticker and
+    both upstreams explicitly so the user-facing tile can render the
+    ``"No financial data available for {ticker}. ..."`` copy verbatim.
+    """
     pid = _create_position(client)
 
     with (
@@ -151,7 +156,12 @@ def test_get_financials_502_when_both_sources_unavailable(client):
         resp = client.get(f"/api/positions/{pid}/research/financials")
 
     assert resp.status_code == 502
-    assert resp.json() == {"detail": "Financials source unavailable"}
+    assert resp.json() == {
+        "detail": (
+            "No financial data available for SOFI. "
+            "Both Alpha Vantage and Yahoo Finance returned empty for this symbol."
+        )
+    }
 
 
 def test_get_financials_500_on_unexpected_exception(client):

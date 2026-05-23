@@ -51,6 +51,7 @@ from app.services.research_cache_utils import (
     read_app_setting,
     write_app_setting,
 )
+from app.services.yfinance_client import YFinanceRateLimitedError
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,16 @@ def build_business_payload(
 
     # Cache miss / stale — go upstream
     fetch_impl = fetcher or yfinance_client.fetch_business_info
-    info = fetch_impl(ticker_norm)
+    try:
+        info = fetch_impl(ticker_norm)
+    except YFinanceRateLimitedError as exc:
+        logger.warning(
+            "Yahoo Finance rate-limited business snapshot",
+            extra={"ticker": ticker_norm, "source": "yfinance"},
+        )
+        raise ResearchSourceUnavailable(
+            "Yahoo Finance is throttling us — try again in a few minutes."
+        ) from exc
     if info is None:
         logger.warning(
             "Business snapshot upstream returned no data",

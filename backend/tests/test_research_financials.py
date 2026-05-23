@@ -238,7 +238,11 @@ def test_yfinance_fallback_payload_is_persisted_to_app_settings(client):
 
 
 def test_both_sources_fail_raises_sanitized_error(client):
-    """AV None + yfinance None → ResearchSourceUnavailable; no str(e) leak."""
+    """AV None + yfinance None → ResearchSourceUnavailable; no str(e) leak.
+
+    Per issue #288 the Section D both-empty detail names the ticker
+    and both upstreams explicitly so the user can act on it.
+    """
     db = _db_session(client)
     av_fetcher = MagicMock(return_value=None)
     yf_fetcher = MagicMock(return_value=None)
@@ -248,8 +252,11 @@ def test_both_sources_fail_raises_sanitized_error(client):
             db, "SOFI", av_fetcher=av_fetcher, yf_fetcher=yf_fetcher
         )
 
-    # CLAUDE.md: sanitized, generic; specific to the financials path
-    assert exc.value.detail == "Financials source unavailable"
+    # CLAUDE.md: sanitized, generic detail; #288 locks the verbatim copy
+    assert exc.value.detail == (
+        "No financial data available for SOFI. "
+        "Both Alpha Vantage and Yahoo Finance returned empty for this symbol."
+    )
     assert "Exception" not in str(exc.value)
 
 
@@ -329,3 +336,45 @@ def test_durable_yf_cache_serves_after_in_memory_eviction(client):
 )
 def test_position_not_found_returns_404_via_router():
     """See routers/research.py + test_research_router.py (Worker W)."""
+
+
+# ---------------------------------------------------------------------------
+# Issue #288 — Section D copy: both-empty names the ticker; throttled YF
+# ---------------------------------------------------------------------------
+
+
+def test_section_d_both_sources_empty_includes_ticker_in_detail(client):
+    """AV None + yfinance None → detail names the ticker + both sources verbatim."""
+    db = _db_session(client)
+    av_fetcher = MagicMock(return_value=None)
+    yf_fetcher = MagicMock(return_value=None)
+
+    with pytest.raises(ResearchSourceUnavailable) as exc:
+        research_financials.build_financials_payload(
+            db, "SOFI", av_fetcher=av_fetcher, yf_fetcher=yf_fetcher
+        )
+
+    assert exc.value.detail == (
+        "No financial data available for SOFI. "
+        "Both Alpha Vantage and Yahoo Finance returned empty for this symbol."
+    )
+
+
+def test_section_d_av_empty_then_yfinance_throttled_raises_throttling(client):
+    """AV None + yfinance throttled → ResearchSourceUnavailable with throttling copy."""
+    from app.services.yfinance_client import YFinanceRateLimitedError
+
+    db = _db_session(client)
+    av_fetcher = MagicMock(return_value=None)
+
+    def _raise_throttle(_ticker, _n):
+        raise YFinanceRateLimitedError("Yahoo Finance rate-limited the request")
+
+    with pytest.raises(ResearchSourceUnavailable) as exc:
+        research_financials.build_financials_payload(
+            db, "SOFI", av_fetcher=av_fetcher, yf_fetcher=_raise_throttle
+        )
+
+    assert exc.value.detail == (
+        "Yahoo Finance is throttling us — try again in a few minutes."
+    )

@@ -60,6 +60,7 @@ from app.services.research_cache_utils import (
     read_app_setting,
     write_app_setting,
 )
+from app.services.yfinance_client import YFinanceRateLimitedError
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,6 @@ QUARTERS = 8
 _AV_MEMORY_KEY = "av_financials:{ticker}"
 _YF_MEMORY_KEY = "yf_financials:{ticker}"
 _YF_APP_SETTING_KEY = "yf_financials:{ticker}"
-
-_SOURCE_UNAVAILABLE_DETAIL = "Financials source unavailable"
 
 # Hook types for test injection — production code uses the defaults.
 _AVFetcher = Callable[[str, int], Optional[list[dict]]]
@@ -218,13 +217,25 @@ def build_financials_payload(
             return payload
 
     yf_impl = yf_fetcher or yfinance_client.fetch_quarterly_income_stmt
-    yf_raw = yf_impl(ticker_norm, QUARTERS)
+    try:
+        yf_raw = yf_impl(ticker_norm, QUARTERS)
+    except YFinanceRateLimitedError as exc:
+        logger.warning(
+            "Yahoo Finance rate-limited financials fallback",
+            extra={"ticker": ticker_norm, "source": "yfinance"},
+        )
+        raise ResearchSourceUnavailable(
+            "Yahoo Finance is throttling us — try again in a few minutes."
+        ) from exc
     if yf_raw is None:
         logger.warning(
             "Both AV and yfinance returned no income statement",
             extra={"ticker": ticker_norm, "source": "alphavantage+yfinance"},
         )
-        raise ResearchSourceUnavailable(_SOURCE_UNAVAILABLE_DETAIL)
+        raise ResearchSourceUnavailable(
+            f"No financial data available for {ticker_norm}. "
+            "Both Alpha Vantage and Yahoo Finance returned empty for this symbol."
+        )
 
     quarters = [_project_yf_quarter(q) for q in yf_raw[:QUARTERS]]
     fetched_at = datetime.now(timezone.utc)

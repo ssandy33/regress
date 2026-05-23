@@ -13,15 +13,35 @@
  *     `opacity-60` with "Not reported" copy.
  */
 
-function FailureTile({ source, onRetry }) {
+function FailureTile({ source, error, onRetry }) {
+  // Issue #288: branch on the backend detail string.
+  //  - "...throttling..."          → Yahoo throttled headline
+  //  - "No financial data..."      → render the backend detail verbatim
+  //                                  (already names the ticker + both sources)
+  //  - everything else             → generic "couldn't load" copy
+  const isThrottled =
+    typeof error === 'string' && error.includes('throttling');
+  const isNoData =
+    typeof error === 'string' &&
+    error.startsWith('No financial data available');
+  let headline;
+  if (isThrottled) {
+    headline = 'Yahoo Finance is throttling us — try again in a few minutes.';
+  } else if (isNoData) {
+    headline = error;
+  } else {
+    headline = "We couldn't load this — retry";
+  }
   return (
     <div data-testid="research-d-error" className="text-sm">
       <p className="text-amber-600 dark:text-amber-400">
-        <span aria-hidden="true">⚠</span> We couldn&apos;t load this — retry
+        <span aria-hidden="true">⚠</span> {headline}
       </p>
-      <p className="text-slate-500 dark:text-slate-400 mt-1">
-        Source unavailable: {source || 'financials'}
-      </p>
+      {!isThrottled && !isNoData && (
+        <p className="text-slate-500 dark:text-slate-400 mt-1">
+          Source unavailable: {source || 'financials'}
+        </p>
+      )}
       <button
         type="button"
         onClick={onRetry}
@@ -214,7 +234,7 @@ export default function FinancialScorecard({ data, loading, error, onRetry }) {
   if (loading && !data) {
     body = <Skeleton />;
   } else if (error && !data) {
-    body = <FailureTile source="alphavantage" onRetry={onRetry} />;
+    body = <FailureTile source="alphavantage" error={error} onRetry={onRetry} />;
   } else if (data) {
     // The backend ships newest-first; sparklines want oldest-first.
     const quarters = [...(data.quarters || [])].reverse();

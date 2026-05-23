@@ -267,3 +267,30 @@ def test_stale_app_setting_falls_through_to_yfinance(client):
     # Fresh fetcher value is surfaced, not the stale app_settings row
     assert payload["name"] == "FRESH"
     assert payload["name"] != "STALE"
+
+
+# ---------------------------------------------------------------------------
+# Issue #288 — yfinance rate-limit surfaces the throttling copy
+# ---------------------------------------------------------------------------
+
+
+def test_rate_limited_yfinance_raises_throttling_research_source_unavailable(
+    client,
+):
+    """YFinanceRateLimitedError from yfinance → ResearchSourceUnavailable with throttling copy."""
+    from app.services.yfinance_client import YFinanceRateLimitedError
+
+    _seed_position(client)
+    db = _db_session(client)
+
+    def _raise_throttle(_ticker):
+        raise YFinanceRateLimitedError("Yahoo Finance rate-limited the request")
+
+    with pytest.raises(research_business.ResearchSourceUnavailable) as exc:
+        research_business.build_business_payload(
+            db, "SOFI", fetcher=_raise_throttle
+        )
+
+    assert exc.value.detail == (
+        "Yahoo Finance is throttling us — try again in a few minutes."
+    )
