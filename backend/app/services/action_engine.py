@@ -290,10 +290,14 @@ def _largest_loser_action(
     amount_dollars = _format_dollar(worst["unrealized_pl"])
     pct = worst.get("pl_pct")
     amount_pct = _format_signed_pct(pct) if pct is not None else ""
+    # Issue #164: single space between ticker and dollar amount.
+    # The earlier ``f"{ticker}  {amount_dollars}"`` rendered as
+    # ``AAPL  -$1,234`` in the UI; the frontend prints the string verbatim
+    # so the double space was a visible cosmetic defect.
     amount = (
-        f"{ticker}  {amount_dollars} ({amount_pct})"
+        f"{ticker} {amount_dollars} ({amount_pct})"
         if amount_pct
-        else f"{ticker}  {amount_dollars}"
+        else f"{ticker} {amount_dollars}"
     )
     return {
         "id": f"position.large_loser.{worst['id']}",
