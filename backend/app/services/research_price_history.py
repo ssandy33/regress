@@ -28,14 +28,14 @@ in SQLite. See CTO plan §3.5.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session as DBSession
 
-from app.services import journal
+from app.services import journal, research_cache
 from app.services.alpha_vantage_client import get_historical_earnings
 from app.services.cache import CacheService
 from app.services.data_fetcher import DataFetcher
@@ -71,12 +71,11 @@ _TRADE_TYPE_NORMALIZE: dict[str, str] = {
 
 # 15-minute in-memory cache for the composed payload (CTO plan §3.5).
 #
-# Implemented inline rather than via ``research_cache.py`` (Worker A's file)
-# so this PR is fully independent. When Worker A's ``research_cache`` module
-# lands, this module's cache helpers can be replaced one-for-one without
-# touching the public functions. See worker report for the deviation note.
+# Backed by the shared :mod:`app.services.research_cache` helper now that
+# Worker A's module has landed on the integration branch. Earlier worker
+# isolation required this to be inlined; the dedup happened in the
+# v1.1.0 cleanup pass (Phase 5 should-fix S1).
 _CACHE_TTL = timedelta(minutes=15)
-_payload_cache: dict[str, tuple[dict[str, Any], datetime]] = {}
 
 
 # --- Pydantic response models ----------------------------------------------
@@ -170,25 +169,25 @@ class PriceSourceUnavailableError(RuntimeError):
 
 def _cache_get(key: str) -> dict[str, Any] | None:
     """Read the 15-min in-memory payload cache; ``None`` on miss or expiry."""
-    entry = _payload_cache.get(key)
-    if entry is None:
-        return None
-    value, fetched_at = entry
-    if datetime.now(timezone.utc) - fetched_at < _CACHE_TTL:
-        return value
-    # Lazily evict on access — keeps the dict small without a sweeper task.
-    _payload_cache.pop(key, None)
+    hit = research_cache.get(key, _CACHE_TTL)
+    if isinstance(hit, dict):
+        return hit
     return None
 
 
 def _cache_set(key: str, value: dict[str, Any]) -> None:
     """Write to the 15-min in-memory payload cache."""
-    _payload_cache[key] = (value, datetime.now(timezone.utc))
+    research_cache.set(key, value)
 
 
 def clear_cache() -> None:
-    """Clear the price-history payload cache (testing hook)."""
-    _payload_cache.clear()
+    """Clear the price-history payload cache (testing hook).
+
+    Routes through the shared :mod:`research_cache` ``clear()`` so all
+    research caches drop together — the price-history cache used to be a
+    private dict; tests that imported this helper still work unchanged.
+    """
+    research_cache.clear()
 
 
 # --- Composition pieces ---------------------------------------------------
@@ -216,10 +215,12 @@ def _fetch_prices(
         df, _meta = fetcher.fetch(ticker, start, end)
     except Exception as exc:  # noqa: BLE001 — sanitized at the boundary
         logger.warning(
-            "Price-history fetch failed for %s window=%s: %s",
-            ticker,
-            window,
-            exc,
+            "Price-history fetch failed",
+            extra={
+                "ticker": ticker,
+                "window": window,
+                "error": exc.__class__.__name__,
+            },
         )
         raise PriceSourceUnavailableError(
             "Price source unavailable"
@@ -261,9 +262,11 @@ def _trade_events_from_position(position: dict[str, Any]) -> list[TradeEvent]:
         normalized = _TRADE_TYPE_NORMALIZE.get(raw_type)
         if normalized is None:
             logger.debug(
-                "Skipping trade with unknown trade_type=%s on position=%s",
-                raw_type,
-                position.get("id"),
+                "Skipping trade with unknown trade_type",
+                extra={
+                    "trade_type": raw_type,
+                    "position_id": position.get("id"),
+                },
             )
             continue
         opened = trade.get("opened_at")
@@ -300,10 +303,12 @@ def _earnings_events_for_window(
         raw_dates = get_historical_earnings(ticker, since=start)
     except Exception as exc:  # noqa: BLE001 — degrade to []
         logger.warning(
-            "Historical earnings fetch failed for %s; "
-            "returning empty earnings_events: %s",
-            ticker,
-            exc,
+            "Historical earnings fetch failed; returning empty earnings_events",
+            extra={
+                "ticker": ticker,
+                "source": "alphavantage",
+                "error": exc.__class__.__name__,
+            },
         )
         return []
     return [EarningsEvent(date=d, label="Earnings") for d in raw_dates]

@@ -177,7 +177,10 @@ def _read_app_setting(
             return None
         return payload, fetched_at
     except (SQLAlchemyError, ValueError) as exc:
-        logger.debug("Failed to read %s from app_settings: %s", key, exc)
+        logger.debug(
+            "Failed to read app_setting",
+            extra={"app_setting_key": key, "error": str(exc)},
+        )
         return None
 
 
@@ -196,7 +199,10 @@ def _write_app_setting(
             entry.value = value
         db.commit()
     except (SQLAlchemyError, ValueError) as exc:
-        logger.debug("Failed to write %s to app_settings: %s", key, exc)
+        logger.debug(
+            "Failed to write app_setting",
+            extra={"app_setting_key": key, "error": str(exc)},
+        )
         try:
             db.rollback()
         except SQLAlchemyError:
@@ -264,8 +270,8 @@ def build_financials_payload(
     yf_raw = yf_impl(ticker_norm, QUARTERS)
     if yf_raw is None:
         logger.warning(
-            "Both AV and yfinance returned no income statement for %s",
-            ticker_norm,
+            "Both AV and yfinance returned no income statement",
+            extra={"ticker": ticker_norm, "source": "alphavantage+yfinance"},
         )
         raise ResearchSourceUnavailable(_SOURCE_UNAVAILABLE_DETAIL)
 

@@ -50,12 +50,30 @@ logger = logging.getLogger(__name__)
 # --- Public errors ---------------------------------------------------------
 
 
+# Sanitized 502 detail string — never include user-visible ticker / position
+# identifiers per CLAUDE.md (CR #4). Mirrors the
+# ``ResearchSourceUnavailable`` pattern in ``research_business.py``.
+_REGRESSION_SOURCE_UNAVAILABLE_DETAIL = "Source unavailable for regression"
+
+
 class InsufficientRegressionDataError(Exception):
     """Raised when fewer than ``MIN_OBSERVATIONS`` aligned trading days exist."""
 
 
 class RegressionSourceUnavailableError(Exception):
-    """Raised when an upstream data source (Schwab / FRED / sector ETF) fails."""
+    """Raised when an upstream data source (Schwab / FRED / sector ETF) fails.
+
+    Carries a pre-sanitized ``detail`` attribute so the router can map
+    directly to a 502 ``{"detail": ...}`` body without further sanitization
+    (CR #4). The default detail string is the same generic message used by
+    every research 502 — callers MUST NOT pass raw identifiers in.
+    """
+
+    def __init__(
+        self, detail: str = _REGRESSION_SOURCE_UNAVAILABLE_DETAIL
+    ) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 # --- Pydantic response models (frozen per plan §4.2) ----------------------
@@ -159,7 +177,10 @@ def _resolve_sector_for_ticker(ticker: str) -> str | None:
     try:
         info = yfinance_client.fetch_business_info(ticker)  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001 — defensive: any yfinance error
-        logger.warning("yfinance lookup failed for %s; omitting sector", ticker)
+        logger.warning(
+            "yfinance lookup failed; omitting sector",
+            extra={"ticker": ticker, "source": "yfinance"},
+        )
         return None
     if not info:
         return None
@@ -309,15 +330,22 @@ def compose_regression_response(
         except (InvalidTickerError, DataFetchError, Exception) as exc:
             # Sanitize: never propagate str(e) to the client. Logged for ops.
             logger.warning(
-                "Regression fetch failed for %s: %s", ident, exc.__class__.__name__
+                "Regression fetch failed",
+                extra={
+                    "ticker": ident,
+                    "error": exc.__class__.__name__,
+                },
             )
-            raise RegressionSourceUnavailableError(
-                f"Source unavailable for {ident}"
-            ) from exc
+            # Sanitized message — never include {ident} in the detail because
+            # tickers are user-visible internal data (CR #4). The log above
+            # captures the precise ticker for ops.
+            raise RegressionSourceUnavailableError() from exc
         if "value" not in df.columns or len(df) == 0:
-            raise RegressionSourceUnavailableError(
-                f"Source returned empty data for {ident}"
+            logger.warning(
+                "Regression source returned empty data",
+                extra={"ticker": ident},
             )
+            raise RegressionSourceUnavailableError()
         series_by_ticker[ident] = df["value"]
 
     # Compute log returns for prices (ticker + ETFs). DGS10 is a yield in
@@ -341,7 +369,13 @@ def compose_regression_response(
     try:
         aligned, _ = align_datasets(datasets)
     except Exception as exc:  # noqa: BLE001 — wrap into a typed error
-        logger.warning("Alignment failed for position %s: %s", position_id, exc)
+        logger.warning(
+            "Alignment failed",
+            extra={
+                "position_id": position_id,
+                "error": exc.__class__.__name__,
+            },
+        )
         raise InsufficientRegressionDataError(
             "Insufficient data for regression"
         ) from exc
@@ -357,9 +391,11 @@ def compose_regression_response(
         result = compute_multifactor_ols(dates, y, x_df_dict)
     except Exception as exc:  # noqa: BLE001 — near-singular factor matrix, etc.
         logger.warning(
-            "Regression engine failed for position %s: %s",
-            position_id,
-            exc.__class__.__name__,
+            "Regression engine failed",
+            extra={
+                "position_id": position_id,
+                "error": exc.__class__.__name__,
+            },
         )
         raise InsufficientRegressionDataError(
             "Regression failed: factor matrix could not be fit"

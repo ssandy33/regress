@@ -69,7 +69,19 @@ def test_get_financials_404_for_missing_position(client):
 def test_get_financials_200_returns_av_payload(client):
     """AV primary returns data → 200 with ``source=alphavantage``."""
     pid = _create_position(client)
-    av_quarters = [_av_quarter(f"2025-0{i + 1}-30") for i in range(8)]
+    # Use real quarter-end dates so the fixture does not contain invalid
+    # calendar dates (CR #7 — 2025-02-30 was producing impossible dates).
+    quarter_ends = [
+        "2025-03-31",
+        "2024-12-31",
+        "2024-09-30",
+        "2024-06-30",
+        "2024-03-31",
+        "2023-12-31",
+        "2023-09-30",
+        "2023-06-30",
+    ]
+    av_quarters = [_av_quarter(d) for d in quarter_ends]
 
     with patch.object(
         alpha_vantage_client, "get_income_statement", return_value=av_quarters

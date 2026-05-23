@@ -93,7 +93,10 @@ def _read_app_setting(db: Session, key: str) -> Optional[tuple[dict, datetime]]:
             return None
         return payload, fetched_at
     except (SQLAlchemyError, ValueError) as exc:
-        logger.debug("Failed to read %s from app_settings: %s", key, exc)
+        logger.debug(
+            "Failed to read app_setting",
+            extra={"app_setting_key": key, "error": str(exc)},
+        )
         return None
 
 
@@ -112,7 +115,10 @@ def _write_app_setting(
             entry.value = value
         db.commit()
     except (SQLAlchemyError, ValueError) as exc:
-        logger.debug("Failed to write %s to app_settings: %s", key, exc)
+        logger.debug(
+            "Failed to write app_setting",
+            extra={"app_setting_key": key, "error": str(exc)},
+        )
         try:
             db.rollback()
         except SQLAlchemyError:
@@ -161,7 +167,10 @@ def build_business_payload(
     fetch_impl = fetcher or yfinance_client.fetch_business_info
     info = fetch_impl(ticker_norm)
     if info is None:
-        logger.warning("Business snapshot upstream returned no data for %s", ticker_norm)
+        logger.warning(
+            "Business snapshot upstream returned no data",
+            extra={"ticker": ticker_norm, "source": "yfinance"},
+        )
         raise ResearchSourceUnavailable(_SOURCE_UNAVAILABLE_DETAIL)
 
     fetched_at = datetime.now(timezone.utc)

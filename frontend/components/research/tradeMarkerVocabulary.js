@@ -23,9 +23,11 @@ export const TRADE_MARKER_VOCAB = {
 };
 
 /**
- * Resolve a marker descriptor for a trade type, falling back to a
- * conservative "unknown" pill so the chart never crashes on a new
- * `trade_type` string the backend introduces in a future release.
+ * Resolve a marker descriptor for a trade type. Returns `null` when the
+ * type is missing or not in `TRADE_MARKER_VOCAB`. Callers MUST handle
+ * `null` defensively (skip the marker, or render a generic glyph) so the
+ * chart does not crash on a new `trade_type` string the backend
+ * introduces in a future release.
  */
 export function resolveTradeMarker(type) {
   if (!type) return null;

@@ -135,11 +135,15 @@ def put_thesis(db: Session, position_id: str, body: str) -> ThesisResponse:
         db.commit()
     except Exception:
         db.rollback()
-        logger.exception("Failed to upsert thesis for position %s", position_id)
+        logger.exception(
+            "Failed to upsert thesis",
+            extra={"position_id": position_id},
+        )
         raise
 
     db.refresh(note)
     logger.info(
-        "Upserted thesis for position %s (version=%d)", position_id, note.version
+        "Upserted thesis",
+        extra={"position_id": position_id, "version": note.version},
     )
     return _row_to_response(note)

@@ -52,7 +52,7 @@ def test_sector_etf_map_matches_frozen_contract():
     assert SECTOR_ETF_MAP == _EXPECTED
 
 
-@pytest.mark.parametrize("sector,etf", list(_EXPECTED.items()))
+@pytest.mark.parametrize(("sector", "etf"), list(_EXPECTED.items()))
 def test_resolve_sector_etf_returns_etf_for_each_known_sector(
     sector: str, etf: str
 ):
@@ -82,7 +82,7 @@ def test_resolve_sector_etf_is_case_sensitive():
 
 
 @pytest.mark.parametrize(
-    "sector, expected_etf",
+    ("sector", "expected_etf"),
     [
         ("Financial Services", "XLF"),
         ("Technology", "XLK"),

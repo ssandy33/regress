@@ -86,6 +86,9 @@ export default function ThesisNoteEditor({
   // render" pattern — preferred over useEffect+setState for hydration.
   const [hydratedFrom, setHydratedFrom] = useState(null);
   const debounceTimer = useRef(null);
+  // Last-saved body snapshot — used by handleBlur (CR #10) to skip the
+  // redundant PUT when the user clicks away without editing.
+  const lastSavedBodyRef = useRef('');
 
   // Render-phase hydration from the GET payload. Runs exactly once per
   // distinct server payload identity (object reference comparison) —
@@ -98,6 +101,15 @@ export default function ThesisNoteEditor({
     setExpectedVersion(data.version ?? 0);
   }
 
+  // Mirror the hydrated body into the last-saved snapshot. Done in an
+  // effect (not render-phase) so the react-hooks/refs linter is happy
+  // — refs must not be written during render.
+  useEffect(() => {
+    if (data && hydratedFrom === data) {
+      lastSavedBodyRef.current = data.thesis || '';
+    }
+  }, [data, hydratedFrom]);
+
   const flush = useCallback(
     async (current) => {
       const trimmed = (current ?? '').slice(0, THESIS_MAX);
@@ -107,6 +119,9 @@ export default function ThesisNoteEditor({
       const result = await saveThesis(trimmed);
       if (result?.ok) {
         setLastSavedAt(result.updatedAt || new Date().toISOString());
+        // Remember what we just persisted so the next blur can skip a
+        // redundant PUT (CR #10).
+        lastSavedBodyRef.current = trimmed;
         // If the server jumped more than +1 version since our last write,
         // another tab beat us — flag the conflict per spec §4 Section F.
         if (
@@ -163,8 +178,15 @@ export default function ThesisNoteEditor({
       window.clearTimeout(debounceTimer.current);
       debounceTimer.current = null;
     }
-    // Only flush if there's pending input vs the last-saved server state.
-    if (status === STATUS_SAVING || status === STATUS_IDLE) {
+    // Only flush when we have pending input the server doesn't already
+    // have (CR #10). A debounce cancel is fine — the next render will
+    // re-queue if needed.
+    if (status === STATUS_SAVING) {
+      // An in-flight debounce was already cleared above; force the flush.
+      flush(body);
+      return;
+    }
+    if (status === STATUS_IDLE && body !== lastSavedBodyRef.current) {
       flush(body);
     }
   };

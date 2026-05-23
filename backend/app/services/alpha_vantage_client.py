@@ -309,19 +309,21 @@ def get_income_statement(symbol: str, n: int = 8) -> Optional[list[dict]]:
     """
     now = datetime.now(timezone.utc)
 
-    # Tier 1: in-memory hot cache
+    # Tier 1: in-memory hot cache. We cache the FULL upstream payload (not
+    # the [:n] slice) and re-slice on read so a prior small-n call never
+    # poisons a later larger-n call (CR #2).
     if symbol in _income_cache:
         cached, fetched_at = _income_cache[symbol]
         if now - fetched_at < _CACHE_TTL:
-            return cached
+            return cached[:n] if cached is not None else None
 
-    # Tier 2: SQLite durable cache
+    # Tier 2: SQLite durable cache (also stores the full payload).
     db_entry = _read_income_db_cache(symbol)
     if db_entry:
         cached, fetched_at = db_entry
         if now - fetched_at < _CACHE_TTL:
             _income_cache[symbol] = (cached, fetched_at)
-            return cached
+            return cached[:n] if cached is not None else None
 
     api_key = get_alpha_vantage_api_key()
     if not api_key:
@@ -376,14 +378,12 @@ def get_income_statement(symbol: str, n: int = 8) -> Optional[list[dict]]:
             )
             return None
 
-        # AV returns quarters newest-first; trust the order but slice
-        # defensively to ``n``.
-        result = quarterly[:n]
-
-        # Cache successful result in both tiers
-        _income_cache[symbol] = (result, now)
-        _write_income_db_cache(symbol, result, now)
-        return result
+        # AV returns quarters newest-first. Cache the FULL list (not the
+        # [:n] slice) so a later request with a larger ``n`` can still
+        # satisfy from cache without re-fetching (CR #2).
+        _income_cache[symbol] = (quarterly, now)
+        _write_income_db_cache(symbol, quarterly, now)
+        return quarterly[:n]
 
     except Exception as e:  # noqa: BLE001
         logger.warning(

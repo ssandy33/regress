@@ -265,3 +265,74 @@ class TestGetCachedNextEarningsDate:
                 result = get_cached_next_earnings_date("AAPL")
         assert result == "2026-07-01"
         mock_get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Regression: cache by-symbol must store the full payload so a small-``n``
+# request never poisons a later larger-``n`` request (CR #2, PR #283).
+# Appended per the v1.1.0 worker convention — does not modify existing tests.
+# ---------------------------------------------------------------------------
+
+
+class TestGetIncomeStatementCacheNPoisoning:
+    """The in-memory and DB caches must not cap entries to the first n quarters.
+
+    Repro: first caller asks for ``n=2``; later caller asks for ``n=8`` and
+    needs the same symbol — before CR #2 the cache stored the 2-element
+    slice and the second caller got only 2 quarters back instead of 8.
+    """
+
+    def _make_quarterly_body(self, k: int) -> dict:
+        """Build an AV ``INCOME_STATEMENT`` JSON body with ``k`` quarters."""
+        return {
+            "symbol": "SOFI",
+            "quarterlyReports": [
+                {
+                    "fiscalDateEnding": f"2024-{(12 - i):02d}-31",
+                    "totalRevenue": str(645000000 + i * 1000000),
+                    "reportedEPS": "0.02",
+                    "grossProfit": "277350000",
+                    "operatingIncome": "25800000",
+                }
+                for i in range(k)
+            ],
+        }
+
+    @patch(
+        "app.services.alpha_vantage_client._write_income_db_cache",
+        new=MagicMock(),
+    )
+    @patch(
+        "app.services.alpha_vantage_client._read_income_db_cache",
+        new=MagicMock(return_value=None),
+    )
+    @patch("app.services.alpha_vantage_client.get_alpha_vantage_api_key")
+    @patch("app.services.alpha_vantage_client.requests.get")
+    def test_small_n_then_large_n_returns_full_payload(self, mock_get, mock_key):
+        from app.services.alpha_vantage_client import (
+            get_income_statement,
+            clear_income_cache,
+        )
+
+        clear_income_cache()
+        mock_key.return_value = "test_key"
+
+        body = self._make_quarterly_body(8)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = body
+        resp.raise_for_status = MagicMock()
+        mock_get.return_value = resp
+
+        # First call asks for 2; before CR #2 the cache kept only 2.
+        first = get_income_statement("SOFI", n=2)
+        assert first is not None
+        assert len(first) == 2
+
+        # Second call asks for 8 — must NOT re-fetch, must return 8 from cache.
+        second = get_income_statement("SOFI", n=8)
+        assert second is not None
+        assert len(second) == 8
+        # Exactly one upstream request — the second call was a cache hit.
+        assert mock_get.call_count == 1
+        clear_income_cache()

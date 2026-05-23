@@ -137,13 +137,12 @@ def get_price_history(
             status_code=502,
             content={"detail": "Price source unavailable"},
         )
-    except Exception as exc:  # noqa: BLE001 — generic 500 per CLAUDE.md
-        logger.error(
-            "Research price-history composition failed for position=%s "
-            "window=%s: %s",
-            position_id,
-            window,
-            exc,
+    except Exception:  # noqa: BLE001 — generic 500 per CLAUDE.md
+        # logger.exception preserves the traceback (CR #1); extra={} feeds
+        # Axiom indexed fields per NFR-6 (Phase 5 S2).
+        logger.exception(
+            "Research price-history composition failed",
+            extra={"position_id": position_id, "window": window},
         )
         return JSONResponse(
             status_code=500,
@@ -185,7 +184,10 @@ def read_thesis(
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Unexpected error reading thesis for %s", position_id)
+        logger.exception(
+            "Unexpected error reading thesis",
+            extra={"position_id": position_id},
+        )
         raise HTTPException(status_code=500, detail=_GENERIC_500_DETAIL)
 
 
@@ -219,7 +221,10 @@ def write_thesis(
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Unexpected error writing thesis for %s", position_id)
+        logger.exception(
+            "Unexpected error writing thesis",
+            extra={"position_id": position_id},
+        )
         raise HTTPException(status_code=500, detail=_GENERIC_500_DETAIL)
 
 
@@ -284,14 +289,17 @@ def research_regression(
             status_code=422,
             content={"detail": "Insufficient data for regression"},
         )
-    except RegressionSourceUnavailableError:
+    except RegressionSourceUnavailableError as exc:
+        # exc.detail is pre-sanitized at the service layer — no
+        # str(original_exc) leaks here per CLAUDE.md (CR #4).
         return JSONResponse(
             status_code=502,
-            content={"detail": "Source unavailable for regression"},
+            content={"detail": exc.detail},
         )
     except Exception:  # noqa: BLE001 — generic 500 per CLAUDE.md
         logger.exception(
-            "Unexpected error composing regression for position %s", position_id
+            "Unexpected error composing regression",
+            extra={"position_id": position_id, "window": window},
         )
         return JSONResponse(
             status_code=500,
@@ -348,8 +356,11 @@ def get_business(
         )
     except Exception:  # noqa: BLE001 — generic 500 per CLAUDE.md
         logger.exception(
-            "Unexpected error composing business snapshot for position %s",
-            position_id,
+            "Unexpected error composing business snapshot",
+            extra={
+                "position_id": position_id,
+                "ticker": position.get("ticker"),
+            },
         )
         return JSONResponse(
             status_code=500,
@@ -400,8 +411,11 @@ def get_financials(
         )
     except Exception:  # noqa: BLE001 — generic 500 per CLAUDE.md
         logger.exception(
-            "Unexpected error composing financials for position %s",
-            position_id,
+            "Unexpected error composing financials",
+            extra={
+                "position_id": position_id,
+                "ticker": position.get("ticker"),
+            },
         )
         return JSONResponse(
             status_code=500,

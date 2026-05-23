@@ -153,35 +153,21 @@ def test_rule_2_primarily_when_dominant_between_30_and_50_pct() -> None:
 
 
 def test_rule_2_diversified_when_no_factor_above_30_pct() -> None:
-    """Rule 2: ``Diversified driver mix`` when no factor dominates."""
+    """Rule 2: ``Diversified driver mix`` when no factor dominates.
+
+    Boundary case: dominant contribution at exactly 0.30 should still
+    produce the diversified label (>0.30 is required to escape it).
+    """
     factors = [
-        _factor("market", beta=0.4, p_value=0.10, contribution=0.25),
-        _factor("sector", beta=0.3, p_value=0.10, contribution=0.25),
-        _factor("rates", beta=-0.2, p_value=0.10, contribution=0.20),
-        _factor("idiosyncratic", beta=None, p_value=None, contribution=0.30),
-    ]
-    out = build_regression_summary(
-        factors=factors, r_squared=0.70, sample_size=252
-    )
-    # Idiosyncratic is dominant here at 0.30 — wait, that ties rule 2 too.
-    # We want the canonical "Diversified" output, so bump market to 0.31
-    # so it dominates without crossing 0.30 strictly.
-    factors2 = [
         _factor("market", beta=0.4, p_value=0.10, contribution=0.30),
         _factor("sector", beta=0.3, p_value=0.10, contribution=0.25),
         _factor("rates", beta=-0.2, p_value=0.10, contribution=0.20),
         _factor("idiosyncratic", beta=None, p_value=None, contribution=0.25),
     ]
-    out2 = build_regression_summary(
-        factors=factors2, r_squared=0.70, sample_size=252
+    out = build_regression_summary(
+        factors=factors, r_squared=0.70, sample_size=252
     )
-    # market.contribution = 0.30, not strictly > 0.30, so "Diversified" wins.
-    assert out2.startswith("Diversified driver mix")
-    # First call's dominant is idiosyncratic at 0.30 (still tied with market);
-    # since max() takes the first occurrence of equal values among the
-    # iteration order, idiosyncratic wins here only if it appears first.
-    # We don't assert on `out`; the second case is the deterministic one.
-    del out
+    assert out.startswith("Diversified driver mix")
 
 
 def test_rule_3_positive_beta_on_rates_renders_meaningful_and_positive() -> None:
