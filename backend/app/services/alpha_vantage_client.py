@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -203,3 +204,188 @@ def get_cached_next_earnings_date(symbol: str) -> Optional[str]:
 def clear_cache() -> None:
     """Clear the in-memory earnings cache (for testing)."""
     _cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# INCOME_STATEMENT (issue #280, plan §3.1 + §4.6)
+# ---------------------------------------------------------------------------
+#
+# The financial-scorecard endpoint uses Alpha Vantage's ``INCOME_STATEMENT``
+# function as its primary source, with yfinance as a fallback when AV
+# rate-limits or errors. This block mirrors the two-tier cache pattern
+# above (in-memory hot cache + ``app_settings`` durable cache) so a
+# server restart does not burn the 25-calls/day free-tier quota. Cache
+# key prefix: ``av_financials:`` (frozen in plan §4.6).
+#
+# Append-only per the W-A worker contract — existing earnings functions
+# above are untouched.
+
+_income_cache: dict[str, tuple[Optional[list[dict]], datetime]] = {}
+_INCOME_DB_KEY_PREFIX = "av_financials:"
+
+# Error signals returned by Alpha Vantage as HTTP-200 JSON bodies. Mirrors
+# the set ``alpha_vantage_client`` already filters on the EARNINGS_CALENDAR
+# path so the rate-limit semantics are identical across the two endpoints.
+_AV_ERROR_KEYS = ("Error Message", "Note", "Information")
+
+
+def _read_income_db_cache(
+    symbol: str,
+) -> Optional[tuple[Optional[list[dict]], datetime]]:
+    """Read cached quarterly income statement from SQLite. ``None`` on miss."""
+    try:
+        from app.models.database import SessionLocal, AppSetting
+        db = SessionLocal()
+        try:
+            entry = db.query(AppSetting).filter(
+                AppSetting.key == f"{_INCOME_DB_KEY_PREFIX}{symbol}"
+            ).first()
+            if entry:
+                # Payload format: ``<iso>|<json-payload>``. ``json-payload``
+                # is either a JSON list of quarter dicts, or the literal
+                # ``null`` for a known-empty/upstream-fail cached result.
+                ts_part, _, json_part = entry.value.partition("|")
+                fetched_at = datetime.fromisoformat(ts_part)
+                payload = json.loads(json_part) if json_part else None
+                return (payload, fetched_at)
+        finally:
+            db.close()
+    except (ImportError, SQLAlchemyError, ValueError) as e:
+        logger.debug(
+            "Failed to read AV income cache from DB for %s: %s", symbol, e
+        )
+    return None
+
+
+def _write_income_db_cache(
+    symbol: str, payload: Optional[list[dict]], fetched_at: datetime
+) -> None:
+    """Persist cached quarterly income statement to SQLite."""
+    try:
+        from app.models.database import SessionLocal, AppSetting
+        db = SessionLocal()
+        try:
+            key = f"{_INCOME_DB_KEY_PREFIX}{symbol}"
+            value = f"{fetched_at.isoformat()}|{json.dumps(payload)}"
+            entry = db.query(AppSetting).filter(AppSetting.key == key).first()
+            if entry:
+                entry.value = value
+            else:
+                db.add(AppSetting(key=key, value=value))
+            db.commit()
+        finally:
+            db.close()
+    except (ImportError, SQLAlchemyError) as e:
+        logger.debug(
+            "Failed to write AV income cache to DB for %s: %s", symbol, e
+        )
+
+
+def get_income_statement(symbol: str, n: int = 8) -> Optional[list[dict]]:
+    """Fetch the most recent ``n`` quarters of income statement data.
+
+    Mirrors :func:`get_next_earnings_date` two-tier cache pattern (in-
+    memory hot + SQLite durable; 24h TTL). Returns:
+
+    - ``list[dict]`` (length up to ``n``, newest first) on success — each
+      dict contains the raw AV fields the caller needs to compute
+      gross_margin and operating_margin: ``fiscalDateEnding``,
+      ``totalRevenue``, ``grossProfit``, ``operatingIncome``,
+      ``netIncome``, ``reportedEPS`` (best-effort).
+    - ``None`` on any of: missing API key, AV rate-limit / error response,
+      network failure, malformed JSON. The caller is expected to fall
+      back to yfinance per plan §3.1.
+
+    Cache key: ``av_financials:{symbol}`` per plan §4.6 (frozen).
+    """
+    now = datetime.now(timezone.utc)
+
+    # Tier 1: in-memory hot cache
+    if symbol in _income_cache:
+        cached, fetched_at = _income_cache[symbol]
+        if now - fetched_at < _CACHE_TTL:
+            return cached
+
+    # Tier 2: SQLite durable cache
+    db_entry = _read_income_db_cache(symbol)
+    if db_entry:
+        cached, fetched_at = db_entry
+        if now - fetched_at < _CACHE_TTL:
+            _income_cache[symbol] = (cached, fetched_at)
+            return cached
+
+    api_key = get_alpha_vantage_api_key()
+    if not api_key:
+        logger.warning(
+            "Alpha Vantage API key not configured; "
+            "skipping income statement lookup for %s",
+            symbol,
+        )
+        return None
+
+    try:
+        resp = requests.get(
+            "https://www.alphavantage.co/query",
+            params={
+                "function": "INCOME_STATEMENT",
+                "symbol": symbol,
+                "apikey": api_key,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+
+        try:
+            body = resp.json()
+        except ValueError:
+            logger.warning(
+                "Alpha Vantage returned non-JSON income statement for %s",
+                symbol,
+            )
+            return None
+
+        # The documented rate-limit / error envelope
+        for key in _AV_ERROR_KEYS:
+            if key in body:
+                logger.warning(
+                    "Alpha Vantage INCOME_STATEMENT %s for %s: %s",
+                    key,
+                    symbol,
+                    body.get(key),
+                )
+                # Do NOT cache rate-limit responses — caller falls back
+                # to yfinance and we want a fresh attempt on the next
+                # request after the rate-limit window has passed.
+                return None
+
+        quarterly = body.get("quarterlyReports")
+        if not isinstance(quarterly, list) or not quarterly:
+            logger.warning(
+                "Alpha Vantage INCOME_STATEMENT missing quarterlyReports "
+                "for %s",
+                symbol,
+            )
+            return None
+
+        # AV returns quarters newest-first; trust the order but slice
+        # defensively to ``n``.
+        result = quarterly[:n]
+
+        # Cache successful result in both tiers
+        _income_cache[symbol] = (result, now)
+        _write_income_db_cache(symbol, result, now)
+        return result
+
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "Alpha Vantage income statement lookup failed for %s: %s",
+            symbol,
+            e,
+        )
+        # Don't cache transient failures — allow retry on next call
+        return None
+
+
+def clear_income_cache() -> None:
+    """Clear the in-memory income statement cache (for testing)."""
+    _income_cache.clear()
