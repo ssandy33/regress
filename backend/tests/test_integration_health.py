@@ -1,3 +1,4 @@
+import queue
 from unittest.mock import patch, MagicMock
 
 from app.services.slack_notifier import SlackNotifier
@@ -197,7 +198,7 @@ class TestLoggingSelfMonitoring:
             while True:
                 try:
                     handler._q.get_nowait()
-                except Exception:
+                except queue.Empty:
                     break
             for _ in range(handler.queue_capacity + 3):
                 handler.emit(record)
