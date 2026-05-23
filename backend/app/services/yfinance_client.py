@@ -80,7 +80,10 @@ def _configure_yfinance_cache_dir(
         import yfinance
 
         yfinance.set_tz_cache_location(cache_dir)
-    except Exception as exc:  # noqa: BLE001 — defensive, never block module load
+    except (ImportError, AttributeError, TypeError, OSError) as exc:
+        # Defensive, never block module load. The narrow tuple covers:
+        # ImportError (yfinance missing), AttributeError (API renamed),
+        # TypeError (bad arg shape), OSError (cache write failure).
         logger.warning(
             "Failed to set yfinance tz_cache_location",
             extra={"cache_dir": cache_dir, "error": str(exc)},
@@ -119,9 +122,9 @@ def _classify_yfinance_error(exc: Exception) -> Exception:
     rate-limit signature. Any other exception is returned unchanged so
     the caller propagates / swallows it as before.
     """
-    import json as _json  # local import to keep module init lean
+    import json  # local import to keep module init lean
 
-    if isinstance(exc, _json.JSONDecodeError) and str(exc).startswith(
+    if isinstance(exc, json.JSONDecodeError) and str(exc).startswith(
         "Expecting value: line 1 column 1 (char 0)"
     ):
         return YFinanceRateLimitedError(

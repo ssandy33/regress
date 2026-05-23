@@ -113,3 +113,26 @@ def test_write_upserts_existing_key(client):
     persisted_payload, persisted_ts = result
     assert persisted_payload == {"v": 2}
     assert persisted_ts == fetched_at_v2
+
+
+def test_write_swallows_typeerror_on_non_serializable_payload(client):
+    """Non-JSON-serializable payload (set) raises ``TypeError`` inside
+    ``json.dumps`` — helper must catch it per the "never propagate"
+    contract (CodeRabbit PR #289). The row must NOT be created.
+    """
+    db = _db_session(client)
+    fetched_at = datetime(2026, 5, 23, 17, 30, 0, tzinfo=timezone.utc)
+
+    # Sets aren't JSON-serializable, so json.dumps raises TypeError.
+    bad_payload = {"unserializable": {1, 2, 3}}
+
+    # Must not propagate.
+    write_app_setting(db, "yf_business:BAD", bad_payload, fetched_at)
+
+    # No row written on failure.
+    row = (
+        db.query(AppSetting)
+        .filter(AppSetting.key == "yf_business:BAD")
+        .first()
+    )
+    assert row is None

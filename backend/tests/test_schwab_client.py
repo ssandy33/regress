@@ -261,6 +261,7 @@ HANDLER_CALL_ARGS = {
     "get_quote": ("AAPL",),
     "get_option_chain": ("AAPL",),
     "get_price_history": ("AAPL", "2024-01-01", "2024-01-03"),
+    "get_account_numbers": (),
     "get_accounts": (),
     "get_transactions": ("abc123", "2024-01-01", "2025-03-01"),
 }

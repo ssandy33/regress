@@ -81,7 +81,10 @@ def write_app_setting(
         else:
             entry.value = value
         db.commit()
-    except (SQLAlchemyError, ValueError) as exc:
+    except (SQLAlchemyError, ValueError, TypeError) as exc:
+        # ``TypeError`` covers non-JSON-serializable payloads from
+        # ``json.dumps`` (e.g. sets, custom objects) so the helper still
+        # honors its "never propagate" contract (CodeRabbit PR #289).
         logger.debug(
             "Failed to write app_setting",
             extra={"app_setting_key": key, "error": str(exc)},
