@@ -26,9 +26,69 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any
+import os
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# --- CookieCache directory configuration (issue #287) ----------------------
+#
+# In the prod Docker container the ``appuser`` runtime account lacks write
+# access to ``/home/appuser``, so yfinance's default CookieCache path raises
+# EACCES on every cold start. We redirect the library to a writable location
+# at module import time. ``YFINANCE_CACHE_DIR`` lets ops override the path
+# without a rebuild.
+
+_YFINANCE_CACHE_DIR_ENV = "YFINANCE_CACHE_DIR"
+_YFINANCE_CACHE_DIR_DEFAULT = "/tmp/yfinance-cache"
+
+
+def _configure_yfinance_cache_dir(
+    env_override: Optional[str] = None,
+) -> str:
+    """Direct yfinance's CookieCache to a writable location.
+
+    The directory is selected in order of preference: ``env_override``
+    parameter (test-only escape hatch), then the ``YFINANCE_CACHE_DIR``
+    environment variable, then ``/tmp/yfinance-cache``. The directory is
+    created (``exist_ok=True``) and ``yfinance.set_tz_cache_location`` is
+    invoked once so all subsequent ``Ticker(...)`` calls share the same
+    cache root.
+
+    Returns the resolved directory string so tests can introspect.
+
+    Failures (uncreatable directory, yfinance import failing, library
+    rejecting the path) are logged at WARNING and the function returns
+    the resolved path anyway — this is best-effort, never fatal.
+    """
+    if env_override is not None:
+        cache_dir = env_override
+    else:
+        cache_dir = os.environ.get(
+            _YFINANCE_CACHE_DIR_ENV, _YFINANCE_CACHE_DIR_DEFAULT
+        )
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError as exc:
+        logger.warning(
+            "yfinance cache dir not creatable; falling back to library default",
+            extra={"cache_dir": cache_dir, "error": str(exc)},
+        )
+        return cache_dir
+    try:
+        import yfinance
+
+        yfinance.set_tz_cache_location(cache_dir)
+    except Exception as exc:  # noqa: BLE001 — defensive, never block module load
+        logger.warning(
+            "Failed to set yfinance tz_cache_location",
+            extra={"cache_dir": cache_dir, "error": str(exc)},
+        )
+    return cache_dir
+
+
+YFINANCE_CACHE_DIR: str = _configure_yfinance_cache_dir()
 
 
 def _coerce_optional_str(value: Any) -> str | None:
