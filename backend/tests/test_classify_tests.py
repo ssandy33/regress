@@ -468,12 +468,27 @@ def test_strict_markers_rejects_unregistered(tmp_path):
             assert True
         """,
     )
-    # pick up only the bad-mark file so we don't drag the others in.
+    # Pass `-c` + `--strict-markers` explicitly so the test doesn't depend on
+    # pytest config discovery (which behaves differently when pytest-cov is
+    # loaded in the parent process — observed in CI vs local). The intent of
+    # this test is verifying the strict-markers behavior, not pytest's config
+    # search algorithm.
     result = _run_pytest(
-        ["tests/test_bad_mark.py", "-v"],
+        [
+            "-c", str(tmp_path / "pytest.ini"),
+            "--strict-markers",
+            "-p", "no:cacheprovider",
+            "tests/test_bad_mark.py",
+            "-v",
+        ],
         cwd=tmp_path,
     )
-    assert result.returncode != 0
+    assert result.returncode != 0, (
+        f"pytest should reject the unregistered marker.\n"
+        f"returncode={result.returncode}\n"
+        f"stdout={result.stdout}\n"
+        f"stderr={result.stderr}"
+    )
     # pytest prints the offending marker name on strict-markers failure.
     combined = result.stdout + result.stderr
     assert "bogus_unregistered" in combined
