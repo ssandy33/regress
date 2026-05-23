@@ -28,6 +28,9 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
 from app.models.schemas import ThesisPutRequest, ThesisResponse
+from app.services import journal
+from app.services.cache import CacheService
+from app.services.data_fetcher import DataFetcher
 from app.services.research_price_history import (
     DEFAULT_WINDOW,
     SUPPORTED_WINDOWS,
@@ -35,6 +38,14 @@ from app.services.research_price_history import (
     PriceHistoryResponse,
     PriceSourceUnavailableError,
     build_price_history,
+)
+from app.services.research_regression import (
+    DEFAULT_WINDOW as REGRESSION_DEFAULT_WINDOW,
+    InsufficientRegressionDataError,
+    RegressionSourceUnavailableError,
+    ResearchRegressionResponse,
+    get_regression_for_position,
+    validate_window as validate_regression_window,
 )
 from app.services.research_thesis import (
     PositionNotFoundError,
@@ -50,6 +61,11 @@ router = APIRouter(prefix="/api/positions", tags=["research"])
 
 # Generic 500 detail per CLAUDE.md — never leak ``str(e)``.
 _GENERIC_500_DETAIL = "Failed to load research data. Please try again."
+
+
+def _get_fetcher(db: DBSession = Depends(get_db)) -> DataFetcher:
+    """Construct a :class:`DataFetcher` bound to this request's DB session."""
+    return DataFetcher(CacheService(db))
 
 
 # ---------------------------------------------------------------------------
@@ -198,12 +214,90 @@ def write_thesis(
 
 
 # ---------------------------------------------------------------------------
+# Section E — Regression decomposition (Worker D — issue #280)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{position_id}/research/regression",
+    response_model=ResearchRegressionResponse,
+)
+def research_regression(
+    position_id: str,
+    window: str = Query(default=REGRESSION_DEFAULT_WINDOW),
+    db: DBSession = Depends(get_db),
+    fetcher: DataFetcher = Depends(_get_fetcher),
+):
+    """Compose the regression decomposition for a single position.
+
+    Pulls 1-year daily prices for the position's ticker, SPY, the position's
+    sector ETF (if mappable), and the FRED 10-year yield, then runs the
+    existing multi-factor OLS engine and returns the factor betas, p-values,
+    variance shares, R², and a plain-English summary string.
+
+    Status codes:
+
+    - ``200`` — success
+    - ``404`` — position not found
+    - ``422`` — ``window`` invalid OR fewer than 60 aligned trading days
+    - ``502`` — an upstream price/yield source was unavailable
+    - ``500`` — unexpected internal error (sanitized message per CLAUDE.md)
+    """
+    # Validate the window query param first — produces a 422 with a
+    # sanitized message rather than a 500 if a caller passes garbage.
+    try:
+        validate_regression_window(window)
+    except ValueError:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Unsupported window value"},
+        )
+
+    position = journal.get_position(db, position_id)
+    if position is None:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Position not found"},
+        )
+
+    ticker = position["ticker"]
+
+    try:
+        response = get_regression_for_position(
+            position_id=position_id,
+            ticker=ticker,
+            window=window,
+            fetcher=fetcher,
+        )
+    except InsufficientRegressionDataError:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Insufficient data for regression"},
+        )
+    except RegressionSourceUnavailableError:
+        return JSONResponse(
+            status_code=502,
+            content={"detail": "Source unavailable for regression"},
+        )
+    except Exception:  # noqa: BLE001 — generic 500 per CLAUDE.md
+        logger.exception(
+            "Unexpected error composing regression for position %s", position_id
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": _GENERIC_500_DETAIL},
+        )
+
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Section A — Business snapshot (Worker A — issue #280)
 # ---------------------------------------------------------------------------
 # Section D — Financial scorecard (Worker A — issue #280)
 # ---------------------------------------------------------------------------
-# Section E — Regression decomposition (Worker D — issue #280)
-# ---------------------------------------------------------------------------
 #
-# Sibling workers (A, D) append their endpoints below. Top-of-file imports
-# stay alphabetized.
+# Worker A landed service modules (research_business / research_financials)
+# in this release without router shells. Worker W is responsible for adding
+# the matching ``GET /research/business`` and ``GET /research/financials``
+# endpoints that wire those services to the prefix above.
