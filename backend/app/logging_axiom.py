@@ -120,7 +120,13 @@ def _format_timestamp(created: float) -> str:
 class _AxiomWorker(threading.Thread):
     """Daemon thread that drains the queue and POSTs batches to Axiom."""
 
-    def __init__(self, q: "queue.Queue[dict[str, Any]]", token: str, dataset: str) -> None:
+    def __init__(
+        self,
+        q: "queue.Queue[dict[str, Any]]",
+        token: str,
+        dataset: str,
+        handler: "AxiomHandler | None" = None,
+    ) -> None:
         super().__init__(name="axiom-log-worker", daemon=True)
         self._q = q
         self._url = AXIOM_INGEST_URL.format(dataset=dataset)
@@ -135,6 +141,12 @@ class _AxiomWorker(threading.Thread):
         self._stop_event = threading.Event()
         self._warn_state: dict[str, float] = {}
         self._client = httpx.Client(timeout=HTTP_TIMEOUT_S)
+        # Back-reference to the owning :class:`AxiomHandler` so the worker
+        # can publish per-flush bookkeeping (``last_flush_at`` / ``last_flush_error``)
+        # via the handler's locked setters. May be ``None`` in unit tests
+        # that construct a worker directly; the setters short-circuit in
+        # that case.
+        self._handler = handler
 
     def stop(self) -> None:
         """Signal the worker loop to exit after the next batch flush."""
@@ -162,7 +174,14 @@ class _AxiomWorker(threading.Thread):
         return batch
 
     def _flush(self, batch: list[dict[str, Any]]) -> None:
-        """POST ``batch`` to the Axiom ingest endpoint, swallowing all errors."""
+        """POST ``batch`` to the Axiom ingest endpoint, swallowing all errors.
+
+        On success (2xx/3xx) publishes a sanitized ``last_flush_at`` timestamp
+        on the parent handler and clears any prior error. On failure publishes
+        a short, sanitized ``last_flush_error`` (status code or exception
+        class name — never ``str(e)``, response body, or headers). These
+        fields back the ``/api/health`` logging self-monitoring block (#274).
+        """
         if not batch:
             return
         try:
@@ -177,18 +196,32 @@ class _AxiomWorker(threading.Thread):
                     "http_4xx_5xx",
                     f"ingest failed status={resp.status_code}",
                 )
+                if self._handler is not None:
+                    self._handler._set_last_flush_err(
+                        f"ingest failed status={resp.status_code}"
+                    )
+            elif self._handler is not None:
+                self._handler._set_last_flush_ok(_format_timestamp(time.time()))
         except httpx.HTTPError as e:
             _warn_throttled(
                 self._warn_state,
                 "http_error",
                 f"ingest transport error: {type(e).__name__}",
             )
+            if self._handler is not None:
+                self._handler._set_last_flush_err(
+                    f"ingest transport error: {type(e).__name__}"
+                )
         except Exception as e:  # noqa: BLE001 — last-resort safety net
             _warn_throttled(
                 self._warn_state,
                 "unknown",
                 f"ingest unknown error: {type(e).__name__}",
             )
+            if self._handler is not None:
+                self._handler._set_last_flush_err(
+                    f"ingest unknown error: {type(e).__name__}"
+                )
 
     def run(self) -> None:
         """Main worker loop — drain and flush until :meth:`stop` is signalled."""
@@ -220,9 +253,17 @@ class AxiomHandler(logging.Handler):
     def __init__(self, token: str, dataset: str) -> None:
         super().__init__()
         self._q: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=QUEUE_MAX)
-        self._worker = _AxiomWorker(self._q, token, dataset)
         self._warn_state: dict[str, float] = {}
         self._dropped = 0
+        # Lock covers concurrent reads (from ``/api/health`` request threads)
+        # and writes (from the daemon worker after each flush). Both fields
+        # are scalars so the critical section is microseconds — issue #274.
+        self._stats_lock = threading.Lock()
+        self._last_flush_at: str | None = None
+        self._last_flush_error: str | None = None
+        # Pass ``self`` so the worker can publish per-flush state through
+        # the locked setters below.
+        self._worker = _AxiomWorker(self._q, token, dataset, handler=self)
         self._worker.start()
         atexit.register(self._atexit_flush)
 
@@ -230,6 +271,65 @@ class AxiomHandler(logging.Handler):
     def dropped(self) -> int:
         """Total number of events dropped due to a full queue since startup."""
         return self._dropped
+
+    @property
+    def queue_depth(self) -> int:
+        """Current number of events waiting in the in-process queue.
+
+        Per the CPython docs, ``queue.Queue.qsize()`` is *approximate* under
+        concurrent access — that is acceptable for the ``/api/health``
+        observability surface (#274), which only needs an order-of-magnitude
+        signal for queue saturation, not a transactionally consistent count.
+        """
+        return self._q.qsize()
+
+    @property
+    def queue_capacity(self) -> int:
+        """Configured maximum queue size (``QUEUE_MAX`` at construction time)."""
+        return self._q.maxsize
+
+    @property
+    def last_flush_at(self) -> str | None:
+        """ISO 8601 timestamp of the most recent successful Axiom flush.
+
+        ``None`` until at least one batch has flushed with a 2xx/3xx
+        response. Read under :attr:`_stats_lock` to pair with the worker's
+        write side.
+        """
+        with self._stats_lock:
+            return self._last_flush_at
+
+    @property
+    def last_flush_error(self) -> str | None:
+        """Sanitized short message from the most recent failed flush.
+
+        ``None`` when the last flush attempt succeeded (or no flush has run
+        yet). Never contains raw exception text, response body, or response
+        headers — only the status code or exception class name.
+        """
+        with self._stats_lock:
+            return self._last_flush_error
+
+    def _set_last_flush_ok(self, timestamp: str) -> None:
+        """Worker-side hook: record a successful flush + clear any prior error.
+
+        Called by :class:`_AxiomWorker._flush` after a 2xx/3xx ingest response.
+        Locked because the request thread reads these fields via
+        ``/api/health``.
+        """
+        with self._stats_lock:
+            self._last_flush_at = timestamp
+            self._last_flush_error = None
+
+    def _set_last_flush_err(self, message: str) -> None:
+        """Worker-side hook: record a sanitized failure message.
+
+        Callers (only :class:`_AxiomWorker._flush`) must pre-sanitize the
+        message — no PII, no ``str(e)``, no response body. The handler does
+        not re-sanitize, only locks the write.
+        """
+        with self._stats_lock:
+            self._last_flush_error = message
 
     def _atexit_flush(self) -> None:
         """Best-effort flush on interpreter exit. Bounded by :data:`ATEXIT_FLUSH_TIMEOUT_S`."""

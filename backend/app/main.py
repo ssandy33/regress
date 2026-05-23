@@ -207,8 +207,8 @@ async def value_error_handler(request: Request, exc: ValueError):
 
 
 # --- Health check ---
-
-
-@app.get("/api/health")
-def health_check():
-    return {"status": "ok"}
+# Issue #274: the inline ``GET /api/health`` handler moved to
+# :mod:`app.routers.health` so the endpoint can return an Axiom logging
+# self-monitoring block. The router is mounted at ``prefix="/api/health"``
+# elsewhere in this module, so the new ``@router.get("")`` resolves to the
+# same external URL.
