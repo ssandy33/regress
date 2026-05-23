@@ -47,6 +47,7 @@ def _sofi_position(**overrides) -> dict:
 
 
 class TestCanonicalShape:
+    @pytest.mark.unit
     def test_returns_four_paths_in_canonical_order(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -58,6 +59,7 @@ class TestCanonicalShape:
         assert [p["path_id"] for p in paths] == list(canonical_path_order())
         assert len(paths) == 4
 
+    @pytest.mark.unit
     def test_every_path_has_required_fields(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
