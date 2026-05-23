@@ -579,3 +579,105 @@ class TestWorkerBatching:
             assert q.qsize() == 15
         finally:
             worker.stop()
+
+
+# ---------------------------------------------------------------------------
+# Issue #274 — handler exposes flush bookkeeping for /api/health
+# ---------------------------------------------------------------------------
+
+
+class TestFlushBookkeepingIssue274:
+    """Worker writes ``last_flush_at`` / ``last_flush_error`` through the handler.
+
+    These tests drive ``_AxiomWorker._flush`` directly (no real network) so
+    we can assert that each branch (2xx, 4xx, transport error, generic
+    exception) publishes the expected sanitized state on the handler.
+    """
+
+    def test_successful_flush_sets_last_flush_at_clears_error(self):
+        handler = AxiomHandler(token="t", dataset="d")
+        try:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            handler._worker._client = MagicMock()
+            handler._worker._client.post.return_value = mock_resp
+
+            # Pre-seed an error to confirm the success branch clears it.
+            handler._set_last_flush_err("old")
+
+            handler._worker._flush([{"_time": "now", "message": "hi"}])
+
+            assert handler.last_flush_error is None
+            assert handler.last_flush_at is not None
+            # Sanity-check the format — ``_format_timestamp`` produces
+            # ``YYYY-MM-DDTHH:MM:SS.mmmZ``.
+            assert handler.last_flush_at.endswith("Z")
+            assert "T" in handler.last_flush_at
+        finally:
+            _stop_handler(handler)
+
+    def test_4xx_flush_sets_sanitized_error_only_status(self, capsys):
+        handler = AxiomHandler(token="t", dataset="d")
+        try:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 401
+            handler._worker._client = MagicMock()
+            handler._worker._client.post.return_value = mock_resp
+
+            handler._worker._flush([{"_time": "now", "message": "hi"}])
+
+            assert handler.last_flush_error == "ingest failed status=401"
+            # No PII, no body, no headers leaked.
+            captured = capsys.readouterr()
+            assert "ingest failed status=401" in captured.err
+            # last_flush_at should not advance on failure.
+            assert handler.last_flush_at is None
+        finally:
+            _stop_handler(handler)
+
+    def test_transport_error_records_exception_class_name_only(self):
+        handler = AxiomHandler(token="t", dataset="d")
+        try:
+            handler._worker._client = MagicMock()
+            handler._worker._client.post.side_effect = httpx.ConnectError("nope")
+
+            handler._worker._flush([{"_time": "now", "message": "hi"}])
+
+            # Only the class name leaks — never str(e).
+            assert handler.last_flush_error == "ingest transport error: ConnectError"
+            assert "nope" not in (handler.last_flush_error or "")
+            assert handler.last_flush_at is None
+        finally:
+            _stop_handler(handler)
+
+    def test_generic_exception_records_exception_class_name_only(self):
+        handler = AxiomHandler(token="t", dataset="d")
+        try:
+            handler._worker._client = MagicMock()
+            handler._worker._client.post.side_effect = RuntimeError("explode-detail")
+
+            handler._worker._flush([{"_time": "now", "message": "hi"}])
+
+            assert handler.last_flush_error == "ingest unknown error: RuntimeError"
+            assert "explode-detail" not in (handler.last_flush_error or "")
+        finally:
+            _stop_handler(handler)
+
+    def test_worker_without_handler_back_reference_is_a_noop_on_bookkeeping(self):
+        """A worker constructed without a handler back-ref must not crash."""
+        # Build a worker directly (no handler) — the production code always
+        # passes one, but test-helpers may not.
+        import queue as _queue
+
+        q: "_queue.Queue[dict[str, object]]" = _queue.Queue(maxsize=10)
+        worker = _AxiomWorker(q, "t", "d")  # no handler kwarg
+        try:
+            worker._client = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            worker._client.post.return_value = mock_resp
+
+            # Should not raise even though there is no handler to publish to.
+            worker._flush([{"_time": "now", "message": "hi"}])
+        finally:
+            worker.stop()

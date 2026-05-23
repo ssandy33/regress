@@ -1086,3 +1086,61 @@ class TestProfitTakeCardThreadsManagementThresholds:
         assert captured["dte_review_days"] == 30
         assert captured["expiration_warning_days"] == 10
 
+
+
+# ---------------------------------------------------------------------------
+# Issue #164 — large_loser subject must use a single space, not double
+# ---------------------------------------------------------------------------
+
+
+class TestLargeLoserSubjectSpacingIssue164:
+    """``position.large_loser`` ``subject.amount`` uses a single space.
+
+    Prior code rendered ``"AAPL  -$1,234 (-12.3%)"`` (two spaces) because
+    the f-string template hardcoded ``"{ticker}  {amount_dollars}"``. The
+    frontend prints the string verbatim, so the double space was a visible
+    cosmetic defect.
+    """
+
+    def test_subject_amount_uses_single_space_with_pct(self):
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position("p-loser", "TSLA", unrealized_pl=-2000.0, pl_pct=-0.20),
+            ],
+            open_legs=[],
+        )
+        loser = next(
+            a for a in actions if a["action_id"] == "position.large_loser"
+        )
+        amount = loser["subject"]["amount"]
+        assert amount.startswith("TSLA -$"), (
+            f"expected 'TSLA -$' prefix (single space), got {amount!r}"
+        )
+        assert "  " not in amount, (
+            f"subject.amount must not contain a double space: {amount!r}"
+        )
+
+    def test_subject_amount_uses_single_space_when_pct_is_none(self):
+        # The no-pct branch hits the alternate f-string at L296 — same
+        # spacing rule must hold even though the trailing ``({pct})`` is
+        # absent from the rendered string.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position("p-loser", "AMZN", unrealized_pl=-1500.0, pl_pct=None),
+            ],
+            open_legs=[],
+        )
+        loser = next(
+            a for a in actions if a["action_id"] == "position.large_loser"
+        )
+        amount = loser["subject"]["amount"]
+        # No pct → string ends after the dollar amount, no parens.
+        assert amount.startswith("AMZN -$")
+        assert "(" not in amount
+        assert "  " not in amount, (
+            f"subject.amount must not contain a double space: {amount!r}"
+        )
