@@ -413,7 +413,13 @@ class TestRouteProtection:
     """Verify health is public and protected routes require auth when configured."""
 
     def test_health_check_is_public(self):
-        """The /api/health endpoint works without auth."""
+        """The /api/health endpoint works without auth.
+
+        Issue #274 (bridge edit): the response body gained an additive
+        ``logging`` self-monitoring subsection. The "public + 200 + status
+        ok" contract is preserved as a substring assertion rather than
+        strict-equality.
+        """
         from app.main import app
 
         client = TestClient(app)
@@ -423,7 +429,8 @@ class TestRouteProtection:
             resp = client.get("/api/health")
 
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        body = resp.json()
+        assert body["status"] == "ok"
 
     def test_protected_route_returns_401_when_auth_enabled(self):
         """A protected endpoint returns 401 without auth when NEXTAUTH_SECRET is set."""
