@@ -8,7 +8,7 @@ import re
 
 import httpx
 import pandas as pd
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError, SchwabTokenManager
 
@@ -26,8 +26,29 @@ SCHWAB_SYMBOL_MAP = {
 
 
 class SchwabClientError(Exception):
-    """Raised for non-auth Schwab API errors."""
-    pass
+    """Raised for non-auth Schwab API errors.
+
+    Args:
+        message: human-readable error description (already sanitized).
+        status_code: HTTP status code from the upstream Schwab response, if applicable.
+            ``None`` for non-HTTP errors (transport errors, missing-data errors).
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _should_retry_schwab(exc: BaseException) -> bool:
+    """Retry on 5xx + network errors; never retry 4xx client errors.
+
+    A ``SchwabClientError`` with ``status_code=None`` is a transport/no-data error and
+    is retried. A 4xx is never retried — the request itself is wrong, so backoff is
+    pointless and just delays the failure.
+    """
+    return isinstance(exc, SchwabClientError) and (
+        exc.status_code is None or exc.status_code >= 500
+    )
 
 
 SCHWAB_TRANSPORT_ERROR_MSG = "Unable to reach Schwab API. Please try again later."
@@ -56,7 +77,7 @@ class SchwabClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=10),
-        retry=retry_if_exception_type(SchwabClientError),
+        retry=retry_if_exception(_should_retry_schwab),
         reraise=True,
     )
     def get_quote(self, ticker: str) -> dict:
@@ -79,7 +100,7 @@ class SchwabClient:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab quote API error: %s — response body: %s", e, e.response.text)
-            raise SchwabClientError("Schwab quote API error") from e
+            raise SchwabClientError("Schwab quote API error", status_code=e.response.status_code) from e
         except httpx.RequestError as e:
             logger.error("Schwab quote request error: %s", e)
             raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
@@ -94,7 +115,7 @@ class SchwabClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=10),
-        retry=retry_if_exception_type(SchwabClientError),
+        retry=retry_if_exception(_should_retry_schwab),
         reraise=True,
     )
     def get_option_chain(
@@ -145,7 +166,7 @@ class SchwabClient:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab chains API error: %s — response body: %s", e, e.response.text)
-            raise SchwabClientError("Schwab option chains API error") from e
+            raise SchwabClientError("Schwab option chains API error", status_code=e.response.status_code) from e
         except httpx.RequestError as e:
             logger.error("Schwab chains request error: %s", e)
             raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
@@ -159,7 +180,7 @@ class SchwabClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=10),
-        retry=retry_if_exception_type(SchwabClientError),
+        retry=retry_if_exception(_should_retry_schwab),
         reraise=True,
     )
     def get_price_history(self, ticker: str, start: str, end: str) -> pd.DataFrame:
@@ -182,6 +203,7 @@ class SchwabClient:
             "symbol": symbol,
             "startDate": start_ms,
             "endDate": end_ms,
+            "periodType": "year",
             "frequencyType": "daily",
             "frequency": 1,
         }
@@ -199,7 +221,7 @@ class SchwabClient:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab price history API error for '%s': %s — response body: %s", ticker, e, e.response.text)
-            raise SchwabClientError("Schwab price history API error") from e
+            raise SchwabClientError("Schwab price history API error", status_code=e.response.status_code) from e
         except httpx.RequestError as e:
             logger.error("Schwab price history request error: %s", e)
             raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
@@ -225,7 +247,7 @@ class SchwabClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=10),
-        retry=retry_if_exception_type(SchwabClientError),
+        retry=retry_if_exception(_should_retry_schwab),
         reraise=True,
     )
     def get_account_numbers(self) -> list[dict]:
@@ -243,7 +265,7 @@ class SchwabClient:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab accountNumbers API error: %s — response body: %s", e, e.response.text)
-            raise SchwabClientError("Schwab accountNumbers API error") from e
+            raise SchwabClientError("Schwab accountNumbers API error", status_code=e.response.status_code) from e
         except httpx.RequestError as e:
             logger.error("Schwab accountNumbers request error: %s", e)
             raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
@@ -253,7 +275,7 @@ class SchwabClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=10),
-        retry=retry_if_exception_type(SchwabClientError),
+        retry=retry_if_exception(_should_retry_schwab),
         reraise=True,
     )
     def get_accounts(self) -> list[dict]:
@@ -267,7 +289,7 @@ class SchwabClient:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab accounts API error: %s — response body: %s", e, e.response.text)
-            raise SchwabClientError("Schwab accounts API error") from e
+            raise SchwabClientError("Schwab accounts API error", status_code=e.response.status_code) from e
         except httpx.RequestError as e:
             logger.error("Schwab accounts request error: %s", e)
             raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
@@ -277,7 +299,7 @@ class SchwabClient:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, min=2, max=10),
-        retry=retry_if_exception_type(SchwabClientError),
+        retry=retry_if_exception(_should_retry_schwab),
         reraise=True,
     )
     def get_transactions(self, account_hash: str, start_date: str, end_date: str) -> list[dict]:
@@ -307,7 +329,7 @@ class SchwabClient:
                 SchwabTokenManager().invalidate_token()
                 raise SchwabAuthError("Schwab API returned 401 — token may be invalid", code=SchwabAuthCode.API_401) from e
             logger.error("Schwab transactions API error: %s — response body: %s", e, e.response.text)
-            raise SchwabClientError("Schwab transactions API error") from e
+            raise SchwabClientError("Schwab transactions API error", status_code=e.response.status_code) from e
         except httpx.RequestError as e:
             logger.error("Schwab transactions request error: %s", e)
             raise SchwabClientError(SCHWAB_TRANSPORT_ERROR_MSG) from e
