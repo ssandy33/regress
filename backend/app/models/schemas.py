@@ -1191,3 +1191,40 @@ class CoveredCallView(BaseModel):
     )
     applicability: COVERED_CALL_APPLICABILITY
     disclaimer: Optional[str] = None
+
+
+# --- Research (#280) ---
+
+
+# Maximum thesis body length per the issue #280 plan §4.3 (locked decision 4
+# from the user). Enforced both via the Pydantic field constraint on the PUT
+# request and on the response-shaping path so the cap is never side-stepped.
+THESIS_MAX_BODY_LENGTH: int = 4000
+
+
+class ThesisPutRequest(BaseModel):
+    """Request body for ``PUT /api/positions/{id}/research/thesis``.
+
+    ``thesis`` is the freeform note body. Empty strings are explicitly
+    allowed (they clear the note) — the plan does not forbid empty bodies.
+    Pydantic enforces the 4000-character ceiling at request validation
+    time; oversize bodies return ``422`` automatically. The router layer
+    re-validates server-side for defence in depth, so callers that bypass
+    the model still get a sanitized 422.
+    """
+
+    thesis: str = Field(default="", max_length=THESIS_MAX_BODY_LENGTH)
+
+
+class ThesisResponse(BaseModel):
+    """Response shape for thesis GET + PUT (issue #280 PRD §F).
+
+    When no row exists yet the endpoint returns ``thesis=None``,
+    ``updated_at=None``, and ``version=0`` — the spec calls for an
+    empty-state shape rather than a 404 so the frontend can render the
+    editor immediately.
+    """
+
+    thesis: Optional[str] = None
+    updated_at: Optional[str] = None
+    version: int = 0
