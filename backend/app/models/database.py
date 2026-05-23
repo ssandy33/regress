@@ -79,6 +79,39 @@ class Trade(Base):
     position = relationship("Position", back_populates="trades")
 
 
+class PositionNote(Base):
+    """Freeform research thesis attached to a single position (issue #280).
+
+    One row per position (``UNIQUE`` on ``position_id``). The ``version``
+    column increments on every successful PUT so the frontend can surface
+    optimistic-lock style "edited in another tab" warnings; the column
+    exists for future use even though v1 does not expose version history.
+
+    Schema frozen in the issue #280 implementation plan §3.2 / §4.3.
+
+    The project has no Alembic — the table is picked up by the existing
+    ``Base.metadata.create_all(bind=engine)`` call in :func:`init_db` and
+    ``create_all`` is idempotent, so an existing deployment grows the new
+    table on next startup without migration overhead. Rollback path is a
+    manual ``DROP TABLE position_notes``.
+    """
+
+    __tablename__ = "position_notes"
+
+    id = Column(String, primary_key=True)  # UUID4
+    position_id = Column(
+        String,
+        ForeignKey("positions.id"),
+        nullable=False,
+        index=True,
+        unique=True,
+    )
+    body = Column(Text, nullable=False, default="")  # max 4000 chars enforced at API
+    version = Column(Integer, nullable=False, default=1)  # increments on each PUT
+    updated_at = Column(String, nullable=False)  # ISO datetime
+    updated_by = Column(String, nullable=True)  # nullable in single-user mode
+
+
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
 
 
