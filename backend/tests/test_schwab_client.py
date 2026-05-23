@@ -261,6 +261,7 @@ HANDLER_CALL_ARGS = {
     "get_quote": ("AAPL",),
     "get_option_chain": ("AAPL",),
     "get_price_history": ("AAPL", "2024-01-01", "2024-01-03"),
+    "get_account_numbers": (),
     "get_accounts": (),
     "get_transactions": ("abc123", "2024-01-01", "2025-03-01"),
 }
@@ -349,3 +350,91 @@ class TestErrorResponseLogging:
             getattr(client, handler_name)(*HANDLER_CALL_ARGS[handler_name])
 
         assert "secret internal detail" not in str(exc_info.value)
+
+
+class TestPeriodTypeAndRetryOn4xx:
+    """Issue #286: pricehistory must include periodType=year; 4xx must not be retried."""
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_price_history_includes_period_type_year(self, mock_get, mock_tm_cls):
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "candles": [{"datetime": 1704067200000, "close": 100.0}]
+        }
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        SchwabClient().get_price_history("AAPL", "2024-01-01", "2024-01-03")
+
+        params = mock_get.call_args.kwargs["params"]
+        assert params["periodType"] == "year"
+        assert params["frequencyType"] == "daily"
+        assert params["frequency"] == 1
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_price_history_does_not_retry_on_4xx(self, mock_get, mock_tm_cls):
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 400
+        mock_resp.text = '{"errors": [{"detail": "bad request"}]}'
+        mock_get.return_value = mock_resp
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "400 Bad Request", request=MagicMock(), response=mock_resp
+        )
+
+        client = SchwabClient()
+        with pytest.raises(SchwabClientError):
+            client.get_price_history("AAPL", "2024-01-01", "2024-01-03")
+
+        assert mock_get.call_count == 1
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_price_history_still_retries_on_5xx(self, mock_get, mock_tm_cls):
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+
+        # First call: 503. Second call: 200 with valid candle.
+        err_resp = MagicMock(spec=httpx.Response)
+        err_resp.status_code = 503
+        err_resp.text = "Service Unavailable"
+        err_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "503", request=MagicMock(), response=err_resp
+        )
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.json.return_value = {
+            "candles": [{"datetime": 1704067200000, "close": 100.0}]
+        }
+        ok_resp.raise_for_status = MagicMock()
+
+        mock_get.side_effect = [err_resp, ok_resp]
+
+        df = SchwabClient().get_price_history("AAPL", "2024-01-01", "2024-01-03")
+
+        assert mock_get.call_count == 2
+        assert len(df) == 1
+        assert df["value"].iloc[0] == 100.0
+
+    @patch("app.services.schwab_client.SchwabTokenManager")
+    @patch("app.services.schwab_client.httpx.get")
+    def test_get_quote_does_not_retry_on_4xx(self, mock_get, mock_tm_cls):
+        """Cross-handler regression: 4xx no-retry applies to every @retry-decorated method."""
+        mock_tm_cls.return_value.get_access_token.return_value = "token"
+        mock_resp = MagicMock(spec=httpx.Response)
+        mock_resp.status_code = 400
+        mock_resp.text = '{"errors": []}'
+        mock_get.return_value = mock_resp
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "400 Bad Request", request=MagicMock(), response=mock_resp
+        )
+
+        client = SchwabClient()
+        with pytest.raises(SchwabClientError):
+            client.get_quote("AAPL")
+
+        assert mock_get.call_count == 1

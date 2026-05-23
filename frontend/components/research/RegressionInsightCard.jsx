@@ -22,6 +22,7 @@ const FACTOR_COLOR = {
   sector: '#10b981',
   rates: '#f59e0b',
   idiosyncratic: '#94a3b8',
+  unknown: '#64748b',
 };
 
 const FACTOR_BORDER = {
@@ -29,6 +30,7 @@ const FACTOR_BORDER = {
   sector: 'border-emerald-500',
   rates: 'border-amber-500',
   idiosyncratic: 'border-slate-400',
+  unknown: 'border-slate-500',
 };
 
 function FailureTile({ source, onRetry }) {
@@ -110,6 +112,7 @@ function Donut({ wedges, size = 180 }) {
       <g transform={`rotate(-90 ${radius} ${radius})`}>
         {wedgeArcs.map((w) => {
           const dash = `${w.length} ${circumference - w.length}`;
+          const testIdProp = w.testId ? { 'data-testid': w.testId } : {};
           return (
             <circle
               key={w.name}
@@ -121,6 +124,7 @@ function Donut({ wedges, size = 180 }) {
               strokeWidth={strokeWidth}
               strokeDasharray={dash}
               strokeDashoffset={-w.offset}
+              {...testIdProp}
             />
           );
         })}
@@ -207,7 +211,10 @@ function categorizeFactor(factor) {
   if (name.startsWith('XL') || factor?.role === 'sector') {
     return { key: 'sector', label: name, displayName: 'Sector' };
   }
-  return { key: 'sector', label: name, displayName: 'Sector' };
+  if (typeof console !== 'undefined' && console.warn) {
+    console.warn('[RegressionInsightCard] Unknown factor type', factor);
+  }
+  return { key: 'unknown', label: name, displayName: 'Unknown' };
 }
 
 export default function RegressionInsightCard({ data, loading, error, onRetry }) {
@@ -227,6 +234,7 @@ export default function RegressionInsightCard({ data, loading, error, onRetry })
     const market = find('market');
     const sector = find('sector');
     const rates = find('rates');
+    const unknowns = categorized.filter((c) => c.key === 'unknown');
 
     const wedges = [
       {
@@ -253,6 +261,12 @@ export default function RegressionInsightCard({ data, loading, error, onRetry })
         share: idioShare,
         color: FACTOR_COLOR.idiosyncratic,
       },
+      ...unknowns.map((u) => ({
+        name: `unknown-${u.label}`,
+        share: u.raw?.share ?? 0,
+        color: FACTOR_COLOR.unknown,
+        testId: 'factor-bucket-unknown',
+      })),
     ];
 
     const basket = (data.basket || []).join(' + ');
@@ -319,6 +333,18 @@ export default function RegressionInsightCard({ data, loading, error, onRetry })
                   pValue={null}
                   share={idioShare}
                 />
+                {unknowns.map((u) => (
+                  <BetaRow
+                    key={u.label}
+                    rowId="research-e-row-unknown"
+                    color={FACTOR_BORDER.unknown}
+                    name="Unknown"
+                    label={u.label}
+                    beta={u.raw?.beta}
+                    pValue={u.raw?.p_value}
+                    share={u.raw?.share}
+                  />
+                ))}
               </tbody>
             </table>
           </div>

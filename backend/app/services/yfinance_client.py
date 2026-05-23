@@ -26,9 +26,111 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any
+import os
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# --- CookieCache directory configuration (issue #287) ----------------------
+#
+# In the prod Docker container the ``appuser`` runtime account lacks write
+# access to ``/home/appuser``, so yfinance's default CookieCache path raises
+# EACCES on every cold start. We redirect the library to a writable location
+# at module import time. ``YFINANCE_CACHE_DIR`` lets ops override the path
+# without a rebuild.
+
+_YFINANCE_CACHE_DIR_ENV = "YFINANCE_CACHE_DIR"
+_YFINANCE_CACHE_DIR_DEFAULT = "/tmp/yfinance-cache"
+
+
+def _configure_yfinance_cache_dir(
+    env_override: Optional[str] = None,
+) -> str:
+    """Direct yfinance's CookieCache to a writable location.
+
+    The directory is selected in order of preference: ``env_override``
+    parameter (test-only escape hatch), then the ``YFINANCE_CACHE_DIR``
+    environment variable, then ``/tmp/yfinance-cache``. The directory is
+    created (``exist_ok=True``) and ``yfinance.set_tz_cache_location`` is
+    invoked once so all subsequent ``Ticker(...)`` calls share the same
+    cache root.
+
+    Returns the resolved directory string so tests can introspect.
+
+    Failures (uncreatable directory, yfinance import failing, library
+    rejecting the path) are logged at WARNING and the function returns
+    the resolved path anyway — this is best-effort, never fatal.
+    """
+    if env_override is not None:
+        cache_dir = env_override
+    else:
+        cache_dir = os.environ.get(
+            _YFINANCE_CACHE_DIR_ENV, _YFINANCE_CACHE_DIR_DEFAULT
+        )
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+    except OSError as exc:
+        logger.warning(
+            "yfinance cache dir not creatable; falling back to library default",
+            extra={"cache_dir": cache_dir, "error": str(exc)},
+        )
+        return cache_dir
+    try:
+        import yfinance
+
+        yfinance.set_tz_cache_location(cache_dir)
+    except (ImportError, AttributeError, TypeError, OSError) as exc:
+        # Defensive, never block module load. The narrow tuple covers:
+        # ImportError (yfinance missing), AttributeError (API renamed),
+        # TypeError (bad arg shape), OSError (cache write failure).
+        logger.warning(
+            "Failed to set yfinance tz_cache_location",
+            extra={"cache_dir": cache_dir, "error": str(exc)},
+        )
+    return cache_dir
+
+
+YFINANCE_CACHE_DIR: str = _configure_yfinance_cache_dir()
+
+
+# --- Rate-limit classification (issue #288) --------------------------------
+#
+# yfinance's HTML-as-JSON failure mode: when Yahoo returns a 429 HTML
+# page, yfinance calls ``json.loads`` on it and raises
+# ``JSONDecodeError("Expecting value: line 1 column 1 (char 0)")``. We
+# classify that signature and re-raise as ``YFinanceRateLimitedError`` so
+# callers can surface a "try again in a few minutes" message instead of
+# the generic "Source unavailable".
+
+
+class YFinanceRateLimitedError(Exception):
+    """Raised when Yahoo Finance is throttling yfinance requests.
+
+    The classifier maps the well-known
+    ``JSONDecodeError("Expecting value: line 1 column 1 (char 0)")``
+    signature (Yahoo serving an HTML 429 page that yfinance fails to
+    parse as JSON) to this exception. All other exceptions pass through
+    the classifier unchanged.
+    """
+
+
+def _classify_yfinance_error(exc: Exception) -> Exception:
+    """Map known yfinance failure signatures to specific exceptions.
+
+    Currently the only classified case is the Yahoo HTML-as-JSON
+    rate-limit signature. Any other exception is returned unchanged so
+    the caller propagates / swallows it as before.
+    """
+    import json  # local import to keep module init lean
+
+    if isinstance(exc, json.JSONDecodeError) and str(exc).startswith(
+        "Expecting value: line 1 column 1 (char 0)"
+    ):
+        return YFinanceRateLimitedError(
+            "Yahoo Finance rate-limited the request"
+        )
+    return exc
 
 
 def _coerce_optional_str(value: Any) -> str | None:
@@ -82,6 +184,9 @@ def fetch_business_info(ticker: str) -> dict[str, Any] | None:
     try:
         info = yfinance.Ticker(ticker).info or {}
     except Exception as exc:  # noqa: BLE001 — defensive per plan §4.11
+        classified = _classify_yfinance_error(exc)
+        if isinstance(classified, YFinanceRateLimitedError):
+            raise classified from exc
         logger.warning("yfinance Ticker.info failed for %s: %s", ticker, exc)
         return None
 
@@ -138,6 +243,9 @@ def fetch_quarterly_income_stmt(
         ticker_obj = yfinance.Ticker(ticker)
         statement = ticker_obj.quarterly_income_stmt
     except Exception as exc:  # noqa: BLE001 — defensive per plan §4.11
+        classified = _classify_yfinance_error(exc)
+        if isinstance(classified, YFinanceRateLimitedError):
+            raise classified from exc
         logger.warning(
             "yfinance quarterly_income_stmt failed for %s: %s", ticker, exc
         )
