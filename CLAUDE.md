@@ -18,6 +18,27 @@
 - No unused imports, variables, or dead code.
 - Keep PRs focused — one issue per PR (or, for parallel-execution releases, one PR per integration branch — see Release Model).
 
+## Observability
+
+All new logging code MUST follow the conventions in [ADR Discussion #292](https://github.com/ssandy33/regress/discussions/292):
+
+- **Event names** — `<noun>.<lifecycle_phase>` (e.g., `refresh_job.complete`) or single `<noun>` (e.g., `provider_call`). snake_case, dot-separated, 1–3 segments.
+- **Structured fields via `extra={}`** — canonical vocabulary: `event`, `request_id`, `outcome`, `duration_ms`, `error_class`, `ticker`, `position_id`, `data_class`, `provider`, `endpoint`, `status_code`, `latency_ms`, `cache_hit`. Use these field names exactly — don't invent local variants.
+- **Lifecycle events** always carry `outcome` (`success` / `failed` / `throttled` / `no_data` / `degraded`); `.complete` and `.failed` always carry `duration_ms`.
+- **Sanitization** (hard): never log raw upstream API response bodies, Schwab/Axiom tokens, encryption keys, user secrets, or full request bodies for authenticated endpoints. See #292 for the full NEVER / OK lists.
+- **Phase 5 reviewers** check observability conformance during code review, alongside the no-raw-exception-messages and test-coverage checks.
+
+## API Contract
+
+The full API-contract architecture is specified in [**PRD #262 — Contract v1: OpenAPI as Source of Truth**](https://github.com/ssandy33/regress/discussions/262) — committed `openapi.json` snapshot artifact, CI drift detection, Schemathesis contract tests, and `openapi-typescript` frontend type generation. Contract v1 lands as a Platform-lane milestone (#28); first-wave issues are filed just-in-time when the milestone activates.
+
+While Contract v1 is in draft, the following interim disciplines apply to all new endpoints:
+
+- **`response_model` is required on every route** — `@router.get("/path", response_model=SomeSchema)`. This is the minimum-viable contract discipline; PRD #262 builds on this with Schemathesis + drift detection when it activates.
+- **Pydantic model location** — define new response shapes in `backend/app/models/schemas.py` under the appropriate `# --- <domain> ---` section divider. No inline orphan models on routes.
+- **Stability tiers** — every endpoint is **Internal** (UI-only, ships in lockstep, no deprecation cycle) unless explicitly promoted to **Public**. All endpoints are Internal today; reserve `/api/v1/...` for future Public per PRD #262's authoring direction.
+- **Phase 5 reviewers** check API-contract conformance during code review (every new endpoint has `response_model` + every new response shape is in `schemas.py`).
+
 ## Issue Management
 
 - When creating an issue, determine its priority (critical, high, medium, low) and add a comment explaining the rationale for the chosen priority level.
