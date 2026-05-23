@@ -48,16 +48,18 @@ the (slower, less rate-limited but still costly) yfinance call.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.services import alpha_vantage_client, research_cache, yfinance_client
 from app.services.research_business import ResearchSourceUnavailable
+from app.services.research_cache_utils import (
+    read_app_setting,
+    write_app_setting,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,57 +160,6 @@ def _project_yf_quarter(raw: dict) -> dict[str, Any]:
     }
 
 
-def _read_app_setting(
-    db: Session, key: str
-) -> Optional[tuple[dict, datetime]]:
-    """Return ``(payload, fetched_at)`` from ``app_settings`` or ``None``."""
-    try:
-        from app.models.database import AppSetting
-
-        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if entry is None:
-            return None
-        ts_part, _, json_part = entry.value.partition("|")
-        if not ts_part or not json_part:
-            return None
-        fetched_at = datetime.fromisoformat(ts_part)
-        payload = json.loads(json_part)
-        if not isinstance(payload, dict):
-            return None
-        return payload, fetched_at
-    except (SQLAlchemyError, ValueError) as exc:
-        logger.debug(
-            "Failed to read app_setting",
-            extra={"app_setting_key": key, "error": str(exc)},
-        )
-        return None
-
-
-def _write_app_setting(
-    db: Session, key: str, payload: dict, fetched_at: datetime
-) -> None:
-    """Upsert ``payload`` into ``app_settings`` under ``key``."""
-    try:
-        from app.models.database import AppSetting
-
-        value = f"{fetched_at.isoformat()}|{json.dumps(payload)}"
-        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if entry is None:
-            db.add(AppSetting(key=key, value=value))
-        else:
-            entry.value = value
-        db.commit()
-    except (SQLAlchemyError, ValueError) as exc:
-        logger.debug(
-            "Failed to write app_setting",
-            extra={"app_setting_key": key, "error": str(exc)},
-        )
-        try:
-            db.rollback()
-        except SQLAlchemyError:
-            pass
-
-
 def build_financials_payload(
     db: Session,
     ticker: str,
@@ -259,7 +210,7 @@ def build_financials_payload(
     # Fall back to yfinance
     # First check the durable yf cache so a server restart with AV down
     # still serves a fresh-enough payload.
-    yf_db_hit = _read_app_setting(db, yf_app_key)
+    yf_db_hit = read_app_setting(db, yf_app_key)
     if yf_db_hit is not None:
         payload, fetched_at = yf_db_hit
         if datetime.now(timezone.utc) - fetched_at < FINANCIALS_CACHE_TTL:
@@ -284,5 +235,5 @@ def build_financials_payload(
         "fetched_at": fetched_at.isoformat().replace("+00:00", "Z"),
     }
     research_cache.set(yf_memory_key, payload)
-    _write_app_setting(db, yf_app_key, payload, fetched_at)
+    write_app_setting(db, yf_app_key, payload, fetched_at)
     return payload

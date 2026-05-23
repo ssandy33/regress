@@ -40,15 +40,17 @@ upstream failure is logged at WARNING and surfaced as the same generic
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.services import research_cache, yfinance_client
+from app.services.research_cache_utils import (
+    read_app_setting,
+    write_app_setting,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,55 +76,6 @@ class ResearchSourceUnavailable(RuntimeError):
     def __init__(self, detail: str = _SOURCE_UNAVAILABLE_DETAIL) -> None:
         super().__init__(detail)
         self.detail = detail
-
-
-def _read_app_setting(db: Session, key: str) -> Optional[tuple[dict, datetime]]:
-    """Return ``(payload, fetched_at)`` from ``app_settings`` or ``None``."""
-    try:
-        from app.models.database import AppSetting
-
-        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if entry is None:
-            return None
-        ts_part, _, json_part = entry.value.partition("|")
-        if not ts_part or not json_part:
-            return None
-        fetched_at = datetime.fromisoformat(ts_part)
-        payload = json.loads(json_part)
-        if not isinstance(payload, dict):
-            return None
-        return payload, fetched_at
-    except (SQLAlchemyError, ValueError) as exc:
-        logger.debug(
-            "Failed to read app_setting",
-            extra={"app_setting_key": key, "error": str(exc)},
-        )
-        return None
-
-
-def _write_app_setting(
-    db: Session, key: str, payload: dict, fetched_at: datetime
-) -> None:
-    """Upsert ``payload`` (JSON-serialized) into ``app_settings`` under ``key``."""
-    try:
-        from app.models.database import AppSetting
-
-        value = f"{fetched_at.isoformat()}|{json.dumps(payload)}"
-        entry = db.query(AppSetting).filter(AppSetting.key == key).first()
-        if entry is None:
-            db.add(AppSetting(key=key, value=value))
-        else:
-            entry.value = value
-        db.commit()
-    except (SQLAlchemyError, ValueError) as exc:
-        logger.debug(
-            "Failed to write app_setting",
-            extra={"app_setting_key": key, "error": str(exc)},
-        )
-        try:
-            db.rollback()
-        except SQLAlchemyError:
-            pass
 
 
 # Injectable fetcher hook — tests override this without monkey-patching
@@ -156,7 +109,7 @@ def build_business_payload(
         return hit
 
     # Tier 2 — durable app_settings
-    db_hit = _read_app_setting(db, app_setting_key)
+    db_hit = read_app_setting(db, app_setting_key)
     if db_hit is not None:
         payload, fetched_at = db_hit
         if datetime.now(timezone.utc) - fetched_at < BUSINESS_CACHE_TTL:
@@ -187,5 +140,5 @@ def build_business_payload(
     }
 
     research_cache.set(memory_key, payload)
-    _write_app_setting(db, app_setting_key, payload, fetched_at)
+    write_app_setting(db, app_setting_key, payload, fetched_at)
     return payload
