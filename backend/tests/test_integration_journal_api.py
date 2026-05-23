@@ -1,4 +1,5 @@
 """Integration tests for journal API endpoints (Phase 2)."""
+import pytest
 
 
 def _create_position(client, **overrides):
@@ -38,12 +39,14 @@ def _create_trade(client, position_id, **overrides):
 # --- GET /api/journal/positions ---
 
 
+@pytest.mark.integration
 def test_list_positions_empty(client):
     resp = client.get("/api/journal/positions")
     assert resp.status_code == 200
     assert resp.json()["positions"] == []
 
 
+@pytest.mark.integration
 def test_list_positions_returns_created(client):
     _create_position(client)
     resp = client.get("/api/journal/positions")
@@ -53,6 +56,7 @@ def test_list_positions_returns_created(client):
     assert positions[0]["ticker"] == "AAPL"
 
 
+@pytest.mark.integration
 def test_list_positions_filter_by_status(client):
     _create_position(client, ticker="AAPL")
     r2 = _create_position(client, ticker="MSFT")
@@ -71,6 +75,7 @@ def test_list_positions_filter_by_status(client):
 # --- GET /api/journal/positions/{id} ---
 
 
+@pytest.mark.integration
 def test_get_position_by_id(client):
     r = _create_position(client)
     pos_id = r.json()["id"]
@@ -85,6 +90,7 @@ def test_get_position_by_id(client):
     assert "trades" in data
 
 
+@pytest.mark.integration
 def test_get_position_not_found(client):
     resp = client.get("/api/journal/positions/nonexistent")
     assert resp.status_code == 404
@@ -93,6 +99,7 @@ def test_get_position_not_found(client):
 # --- POST /api/journal/positions ---
 
 
+@pytest.mark.integration
 def test_create_position(client):
     resp = _create_position(client)
     assert resp.status_code == 201
@@ -107,6 +114,7 @@ def test_create_position(client):
     assert len(data["id"]) == 36
 
 
+@pytest.mark.integration
 def test_create_position_ignores_strategy_field(client):
     """Issue #131: ``strategy`` is no longer accepted on PositionCreate.
 
@@ -118,6 +126,7 @@ def test_create_position_ignores_strategy_field(client):
     assert resp.json()["strategy"] == "csp"
 
 
+@pytest.mark.integration
 def test_create_position_zero_shares(client):
     resp = _create_position(client, shares=0)
     assert resp.status_code == 422
@@ -126,6 +135,7 @@ def test_create_position_zero_shares(client):
 # --- PUT /api/journal/positions/{id} ---
 
 
+@pytest.mark.integration
 def test_update_position(client):
     r = _create_position(client)
     pos_id = r.json()["id"]
@@ -140,6 +150,7 @@ def test_update_position(client):
     assert data["ticker"] == "AAPL"
 
 
+@pytest.mark.integration
 def test_update_position_not_found(client):
     resp = client.put(
         "/api/journal/positions/nonexistent", json={"notes": "test"}
@@ -150,6 +161,7 @@ def test_update_position_not_found(client):
 # --- POST /api/journal/trades ---
 
 
+@pytest.mark.integration
 def test_create_trade(client):
     pos = _create_position(client).json()
     resp = _create_trade(client, pos["id"])
@@ -161,11 +173,13 @@ def test_create_trade(client):
     assert data["premium"] == 1.50
 
 
+@pytest.mark.integration
 def test_create_trade_invalid_position(client):
     resp = _create_trade(client, "nonexistent-id")
     assert resp.status_code == 404
 
 
+@pytest.mark.integration
 def test_create_trade_invalid_trade_type(client):
     pos = _create_position(client).json()
     resp = _create_trade(client, pos["id"], trade_type="invalid")
@@ -175,6 +189,7 @@ def test_create_trade_invalid_trade_type(client):
 # --- PUT /api/journal/trades/{id} ---
 
 
+@pytest.mark.integration
 def test_update_trade(client):
     pos = _create_position(client).json()
     trade = _create_trade(client, pos["id"]).json()
@@ -189,6 +204,7 @@ def test_update_trade(client):
     assert data["strike"] == 48.0
 
 
+@pytest.mark.integration
 def test_update_trade_not_found(client):
     resp = client.put(
         "/api/journal/trades/nonexistent", json={"premium": 2.00}
@@ -199,6 +215,7 @@ def test_update_trade_not_found(client):
 # --- DELETE /api/journal/trades/{id} ---
 
 
+@pytest.mark.integration
 def test_delete_trade(client):
     pos = _create_position(client).json()
     trade = _create_trade(client, pos["id"]).json()
@@ -210,6 +227,7 @@ def test_delete_trade(client):
     assert len(pos_resp.json()["trades"]) == 0
 
 
+@pytest.mark.integration
 def test_delete_trade_not_found(client):
     resp = client.delete("/api/journal/trades/nonexistent")
     assert resp.status_code == 404
@@ -218,6 +236,7 @@ def test_delete_trade_not_found(client):
 # --- DELETE /api/journal/positions/{id} ---
 
 
+@pytest.mark.integration
 def test_delete_position_success_cascades_trades(client):
     """Deleting a position removes the row and every child trade in one shot."""
     pos = _create_position(client).json()
@@ -241,11 +260,13 @@ def test_delete_position_success_cascades_trades(client):
     assert listing["positions"] == []
 
 
+@pytest.mark.integration
 def test_delete_position_not_found(client):
     resp = client.delete("/api/journal/positions/does-not-exist")
     assert resp.status_code == 404
 
 
+@pytest.mark.integration
 def test_delete_position_does_not_touch_other_positions(client):
     """Deleting one position leaves siblings intact."""
     keep = _create_position(client, ticker="AAPL").json()
@@ -262,6 +283,7 @@ def test_delete_position_does_not_touch_other_positions(client):
     assert len(surviving[0]["trades"]) == 1
 
 
+@pytest.mark.integration
 def test_delete_position_500_does_not_leak_exception_text(client, monkeypatch):
     """If the service raises, the response stays generic — no ``str(e)`` leak."""
     from app.routers import journal as journal_router
@@ -283,6 +305,7 @@ def test_delete_position_500_does_not_leak_exception_text(client, monkeypatch):
 # --- DELETE /api/journal/all ---
 
 
+@pytest.mark.integration
 def test_clear_all_journal_wipes_everything(client):
     """Clear-all removes every position and trade and returns pre-delete counts."""
     p1 = _create_position(client, ticker="AAPL").json()
@@ -300,6 +323,7 @@ def test_clear_all_journal_wipes_everything(client):
     assert after["positions"] == []
 
 
+@pytest.mark.integration
 def test_clear_all_journal_when_already_empty(client):
     """Empty journal still returns a well-formed zero-count payload."""
     resp = client.delete("/api/journal/all")
@@ -307,6 +331,7 @@ def test_clear_all_journal_when_already_empty(client):
     assert resp.json() == {"deleted_positions": 0, "deleted_trades": 0}
 
 
+@pytest.mark.integration
 def test_clear_all_journal_500_does_not_leak_exception_text(client, monkeypatch):
     """Clear-all 500 errors are generic."""
     from app.routers import journal as journal_router
@@ -377,6 +402,7 @@ def _trade_close_map(client, position_id):
     return {t["id"]: t["closed_at"] for t in pos["trades"]}
 
 
+@pytest.mark.integration
 def test_reconcile_dry_run_returns_summary_without_writes(client):
     """``dry_run=true`` returns a structured summary and writes nothing."""
     pos = _seed_full_cycle(client)
@@ -407,6 +433,7 @@ def test_reconcile_dry_run_returns_summary_without_writes(client):
     assert after_trade_closes == before_trade_closes
 
 
+@pytest.mark.integration
 def test_reconcile_apply_persists_changes(client):
     """``dry_run=false`` commits the recomputed state to the database."""
     pos = _seed_full_cycle(client)
@@ -431,6 +458,7 @@ def test_reconcile_apply_persists_changes(client):
     assert len(closed_trade_ids) >= 2
 
 
+@pytest.mark.integration
 def test_reconcile_default_is_dry_run(client):
     """Empty body / missing field defaults to ``dry_run=true`` — never mutates."""
     pos = _seed_full_cycle(client)
@@ -446,6 +474,7 @@ def test_reconcile_default_is_dry_run(client):
     assert after["status"] == "open"
 
 
+@pytest.mark.integration
 def test_reconcile_empty_journal_returns_zero_counts(client):
     """No positions in DB returns positions_processed=0 with empty diff list."""
     resp = client.post("/api/journal/reconcile", json={"dry_run": True})
@@ -457,6 +486,7 @@ def test_reconcile_empty_journal_returns_zero_counts(client):
     assert body["errors"] == 0
 
 
+@pytest.mark.integration
 def test_reconcile_500_does_not_leak_exception_text(client, monkeypatch):
     """If the service raises, the response stays generic — no ``str(e)`` leak."""
     from app.routers import journal as journal_router
@@ -477,6 +507,7 @@ def test_reconcile_500_does_not_leak_exception_text(client, monkeypatch):
 # --- Computed fields via API ---
 
 
+@pytest.mark.integration
 def test_adjusted_basis_via_api(client):
     pos = _create_position(client, broker_cost_basis=5000.0).json()
     _create_trade(client, pos["id"], premium=1.50, quantity=1)  # 150
@@ -490,6 +521,7 @@ def test_adjusted_basis_via_api(client):
     assert data["min_compliant_cc_strike"] == 51.15
 
 
+@pytest.mark.integration
 def test_adjusted_basis_mixed_trades_via_api(client):
     pos = _create_position(client, broker_cost_basis=5000.0).json()
     _create_trade(client, pos["id"], premium=2.00, quantity=1)  # +200
@@ -503,6 +535,7 @@ def test_adjusted_basis_mixed_trades_via_api(client):
     assert data["adjusted_cost_basis"] == 4850.0
 
 
+@pytest.mark.integration
 def test_position_with_trades_in_list(client):
     """Verify list endpoint includes computed fields."""
     pos = _create_position(client, broker_cost_basis=5000.0).json()
@@ -518,12 +551,14 @@ def test_position_with_trades_in_list(client):
 # --- Input validation via API ---
 
 
+@pytest.mark.integration
 def test_invalid_status_query_param(client):
     """Invalid status query param should return 422."""
     resp = client.get("/api/journal/positions?status=bogus")
     assert resp.status_code == 422
 
 
+@pytest.mark.integration
 def test_update_position_negative_shares(client):
     """shares=-1 in update should return 422."""
     pos = _create_position(client).json()
@@ -533,6 +568,7 @@ def test_update_position_negative_shares(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.integration
 def test_create_trade_zero_quantity(client):
     """quantity=0 should return 422."""
     pos = _create_position(client).json()
@@ -540,6 +576,7 @@ def test_create_trade_zero_quantity(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.integration
 def test_update_trade_zero_quantity(client):
     """quantity=0 in trade update should return 422."""
     pos = _create_position(client).json()
@@ -550,6 +587,7 @@ def test_update_trade_zero_quantity(client):
     assert resp.status_code == 422
 
 
+@pytest.mark.integration
 def test_update_position_ignores_strategy_field(client):
     """Issue #131: ``strategy`` is no longer accepted on PositionUpdate.
 

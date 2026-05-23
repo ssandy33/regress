@@ -46,6 +46,7 @@ def _seed(factory, **kv):
 
 
 class TestSecurityChecks:
+    @pytest.mark.integration
     def test_security_checks_pass_with_valid_key(self, db_session_factory):
         """Valid encryption key — the check completes without raising."""
         with patch("app.main.SessionLocal", db_session_factory), patch(
@@ -56,6 +57,7 @@ class TestSecurityChecks:
             # Must not raise — valid key satisfies the gate.
             _run_security_checks()
 
+    @pytest.mark.integration
     def test_security_checks_pass_without_key_when_no_tokens(
         self, db_session_factory
     ):
@@ -71,6 +73,7 @@ class TestSecurityChecks:
             _run_security_checks()
             assert mock_logger.warning.called
 
+    @pytest.mark.integration
     def test_security_checks_fail_without_key(self, db_session_factory):
         """Fail-closed: stored Schwab tokens + no key — raises EncryptionKeyMissing.
 
@@ -86,6 +89,7 @@ class TestSecurityChecks:
             with pytest.raises(EncryptionKeyMissing):
                 _run_security_checks()
 
+    @pytest.mark.integration
     def test_security_checks_migrates_plaintext_tokens_with_key(
         self, db_session_factory
     ):
@@ -111,6 +115,7 @@ class TestSecurityChecks:
         finally:
             db.close()
 
+    @pytest.mark.integration
     def test_security_checks_db_error_propagates_when_no_key(self):
         """A DB error during the no-key token check propagates — fail-closed.
 
@@ -136,6 +141,7 @@ class TestExceptionHandlers:
     routes so the full FastAPI handler path is covered.
     """
 
+    @pytest.mark.integration
     def test_schwab_auth_handler_returns_generic_message(self, client):
         """SchwabAuthError handler returns a generic message, not raw text."""
         from app.main import app
@@ -161,6 +167,7 @@ class TestExceptionHandlers:
                 if getattr(r, "path", None) != "/api/_test/schwab-error"
             ]
 
+    @pytest.mark.integration
     def test_unhandled_exception_does_not_leak_raw_text(self):
         """A generic unhandled exception does not echo its message to the client.
 
@@ -199,6 +206,7 @@ class TestExceptionHandlers:
                 if getattr(r, "path", None) != "/api/_test/boom"
             ]
 
+    @pytest.mark.integration
     def test_data_fetch_error_handler_status_code(self, client):
         """DataFetchError handler maps to HTTP 502."""
         from app.main import app
@@ -218,6 +226,7 @@ class TestExceptionHandlers:
                 if getattr(r, "path", None) != "/api/_test/data-fetch-error"
             ]
 
+    @pytest.mark.integration
     def test_invalid_ticker_error_handler_status_code(self, client):
         """InvalidTickerError handler maps to HTTP 404."""
         from app.main import app
@@ -237,6 +246,7 @@ class TestExceptionHandlers:
                 if getattr(r, "path", None) != "/api/_test/invalid-ticker"
             ]
 
+    @pytest.mark.integration
     def test_value_error_handler_status_code(self, client):
         """ValueError handler maps to HTTP 400."""
         from app.main import app

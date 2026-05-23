@@ -54,11 +54,13 @@ def _make_mock_cache(has_fresh=False, has_stale=False, sample_df=None):
 
 
 class TestSourceDetection:
+    @pytest.mark.unit
     def test_fred_series(self):
         assert detect_source("FEDFUNDS") == "fred"
         assert detect_source("DGS10") == "fred"
         assert detect_source("CSUSHPINSA") == "fred"
 
+    @pytest.mark.unit
     def test_schwab_default(self):
         assert detect_source("AAPL") == "schwab"
         assert detect_source("^GSPC") == "schwab"
@@ -66,6 +68,7 @@ class TestSourceDetection:
 
 
 class TestSerializationRoundtrip:
+    @pytest.mark.unit
     def test_roundtrip(self):
         df = _make_sample_df()
         json_str = _df_to_json(df)
@@ -75,6 +78,7 @@ class TestSerializationRoundtrip:
 
 
 class TestDataFetcherCacheHit:
+    @pytest.mark.unit
     def test_cache_hit_no_api_call(self):
         """When cache is fresh, no external API should be called."""
         cache = _make_mock_cache(has_fresh=True)
@@ -90,6 +94,7 @@ class TestDataFetcherCacheHit:
 
 
 class TestDataFetcherCacheMiss:
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_cache_miss_fetches_and_caches(self, mock_fetch_schwab):
         """When cache is empty, should fetch from API and populate cache."""
@@ -107,6 +112,7 @@ class TestDataFetcherCacheMiss:
 
 
 class TestDataFetcherFallbackToStale:
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_api_failure_uses_stale_cache(self, mock_fetch_schwab):
         """When API fails but stale cache exists, return stale data."""
@@ -120,6 +126,7 @@ class TestDataFetcherFallbackToStale:
         assert meta.is_stale
         assert len(df) > 0
 
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_auth_error_uses_stale_cache(self, mock_fetch_schwab):
         """When Schwab auth fails but stale cache exists, return stale data."""
@@ -136,6 +143,7 @@ class TestDataFetcherFallbackToStale:
 
 
 class TestDataFetcherNoFallback:
+    @pytest.mark.unit
     @patch("app.services.data_fetcher._fetch_schwab")
     def test_api_failure_no_cache_raises(self, mock_fetch_schwab):
         """When API fails and no cache exists, should raise error."""

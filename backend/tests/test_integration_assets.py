@@ -1,7 +1,9 @@
+import pytest
 from unittest.mock import patch
 
 
 class TestAssetSearchEndpoints:
+    @pytest.mark.integration
     def test_search_assets_offline(self, client):
         response = client.get("/api/assets/search?q=SP&offline=true")
         assert response.status_code == 200
@@ -10,6 +12,7 @@ class TestAssetSearchEndpoints:
         identifiers = [r["identifier"] for r in results]
         assert "^GSPC" in identifiers
 
+    @pytest.mark.integration
     def test_search_assets_with_yahoo_mocked(self, client):
         with (
             patch("app.routers.assets._validate_ticker_yahoo", return_value=None),
@@ -19,6 +22,7 @@ class TestAssetSearchEndpoints:
             assert response.status_code == 200
             assert len(response.json()["results"]) > 0
 
+    @pytest.mark.integration
     def test_case_shiller_list(self, client):
         response = client.get("/api/assets/case-shiller")
         assert response.status_code == 200
@@ -26,6 +30,7 @@ class TestAssetSearchEndpoints:
         assert len(metros) > 0
         assert any("Case-Shiller" in m["name"] for m in metros)
 
+    @pytest.mark.integration
     def test_suggest_tickers(self, client):
         response = client.get("/api/assets/suggest?q=GC")
         assert response.status_code == 200

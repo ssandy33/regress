@@ -20,6 +20,7 @@ This file covers the three W-E deliverables:
 """
 
 from __future__ import annotations
+import pytest
 
 import json
 from datetime import datetime, timezone
@@ -115,6 +116,7 @@ def _set_sizing_cap_account(client, value: str | None) -> None:
 class TestRulesEndpointMigration:
     """The GET /rules response carries a ``migration`` sibling (S4)."""
 
+    @pytest.mark.integration
     def test_get_rules_includes_migration_field_when_no_migration_happened(self, client):
         """With no ``sizing_cap_migration`` row, ``migration.sizing_cap`` is None."""
         response = client.get("/api/settings/rules")
@@ -123,6 +125,7 @@ class TestRulesEndpointMigration:
         assert "migration" in data
         assert data["migration"] == {"sizing_cap": None}
 
+    @pytest.mark.integration
     def test_get_rules_includes_migration_field_after_v1_to_v2_migration(self, client):
         """A v1 row triggers the migration block; GET surfaces the marker."""
         previous_dollars = _seed_v1_rules_row(client)
@@ -141,6 +144,7 @@ class TestRulesEndpointMigration:
         assert isinstance(sizing_cap["migrated_at"], str)
         datetime.fromisoformat(sizing_cap["migrated_at"])
 
+    @pytest.mark.integration
     def test_dismiss_migration_sets_dismissed_at(self, client):
         """POST dismiss stamps ``dismissed_at``; the next GET surfaces it."""
         _seed_v1_rules_row(client)
@@ -159,6 +163,7 @@ class TestRulesEndpointMigration:
         got = client.get("/api/settings/rules").json()
         assert got["migration"]["sizing_cap"]["dismissed_at"] == first_dismissed
 
+    @pytest.mark.integration
     def test_dismiss_migration_idempotent(self, client):
         """A second POST is a no-op-success: 200 with a fresh ``dismissed_at``."""
         _seed_v1_rules_row(client)
@@ -176,6 +181,7 @@ class TestRulesEndpointMigration:
         # didn't 4xx and the field is still populated.
         assert second_dismissed >= first_dismissed
 
+    @pytest.mark.integration
     def test_dismiss_is_safe_when_no_migration_row(self, client):
         """Dismiss on a clean DB returns 200 with ``sizing_cap: null``.
 
@@ -196,6 +202,7 @@ class TestRulesEndpointMigration:
 class TestAccountValueEndpoints:
     """The account-value endpoints surface W-A's service via the router."""
 
+    @pytest.mark.integration
     def test_get_account_value_returns_cached_when_available(self, client):
         """A fresh hot-cache hit short-circuits — the network function is not called."""
         cached = _fresh_account_value()
@@ -218,6 +225,7 @@ class TestAccountValueEndpoints:
         # Cold-cache fall-through must NOT fire when the cache is warm.
         mock_network.assert_not_called()
 
+    @pytest.mark.integration
     def test_get_account_value_falls_through_to_network_when_cache_empty(self, client):
         """On a cold cache, the GET endpoint warms it with one ordinary fetch."""
         fetched = _fresh_account_value(total_capital=37500.0)
@@ -242,6 +250,7 @@ class TestAccountValueEndpoints:
         _, kwargs = mock_network.call_args
         assert kwargs.get("force_refresh") is False
 
+    @pytest.mark.integration
     def test_post_refresh_calls_force_refresh(self, client):
         """POST /refresh calls get_account_value with ``force_refresh=True``."""
         fetched = _fresh_account_value()
@@ -256,6 +265,7 @@ class TestAccountValueEndpoints:
         _, kwargs = mock_network.call_args
         assert kwargs.get("force_refresh") is True
 
+    @pytest.mark.integration
     def test_endpoints_pass_sizing_cap_account_from_rules(self, client):
         """``rules.position.sizing_cap_account`` is threaded into the W-A service."""
         _set_sizing_cap_account(client, "…4471")
@@ -280,6 +290,7 @@ class TestAccountValueEndpoints:
         assert kwargs.get("sizing_cap_account") == "…4471"
         assert kwargs.get("force_refresh") is True
 
+    @pytest.mark.integration
     def test_endpoints_return_503_on_schwab_client_error(self, client):
         """A raised :class:`SchwabClientError` is mapped to a generic 503."""
         # GET path: a raise out of get_cached_account_value (defence in
@@ -306,6 +317,7 @@ class TestAccountValueEndpoints:
         assert body["detail"] == "Schwab service unavailable"
         assert "internal transport text" not in json.dumps(body)
 
+    @pytest.mark.integration
     def test_endpoints_return_503_on_schwab_auth_error(self, client):
         """A raised :class:`SchwabAuthError` is mapped to a generic 503.
 
@@ -322,6 +334,7 @@ class TestAccountValueEndpoints:
         assert resp.status_code == 503
         assert resp.json()["detail"] == "Schwab service unavailable"
 
+    @pytest.mark.integration
     def test_endpoints_return_disconnected_status_in_payload(self, client):
         """``status='disconnected'`` is a structured success — 200, not 503."""
         disconnected = AccountValueResult(
@@ -354,6 +367,7 @@ class TestAccountValueEndpoints:
         assert resp.status_code == 200
         assert resp.json()["status"] == "disconnected"
 
+    @pytest.mark.integration
     def test_get_serialises_cached_at_as_iso_string(self, client):
         """The dataclass ``datetime`` field is surfaced as an ISO string."""
         cached_at = datetime(2026, 4, 1, 9, 30, 0, tzinfo=timezone.utc)

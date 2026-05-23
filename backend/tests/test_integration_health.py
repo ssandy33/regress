@@ -1,3 +1,4 @@
+import pytest
 import queue
 from unittest.mock import patch, MagicMock
 
@@ -5,6 +6,7 @@ from app.services.slack_notifier import SlackNotifier
 
 
 class TestHealthEndpoints:
+    @pytest.mark.integration
     def test_health_check(self, client):
         """Top-level health probe returns ``status: ok`` and a logging block.
 
@@ -20,6 +22,7 @@ class TestHealthEndpoints:
         assert body["status"] == "ok"
         assert "logging" in body
 
+    @pytest.mark.integration
     def test_health_sources(self, client):
         with (
             patch("app.routers.health._check_alpha_vantage", return_value={"available": True, "error": None}),
@@ -34,6 +37,7 @@ class TestHealthEndpoints:
             assert data["zillow"]["available"] is True
             assert data["all_down"] is False
 
+    @pytest.mark.integration
     def test_health_sources_includes_slack_when_configured(self, client):
         """Slack status appears in health response when webhook is configured."""
         notifier = SlackNotifier(webhook_url="https://hooks.slack.com/test")
@@ -50,6 +54,7 @@ class TestHealthEndpoints:
             assert "slack" in data
             assert data["slack"]["available"] is True
 
+    @pytest.mark.integration
     def test_health_sources_no_slack_when_not_configured(self, client):
         """Slack status is absent from health response when webhook is not configured."""
         notifier = SlackNotifier(webhook_url="")
@@ -65,6 +70,7 @@ class TestHealthEndpoints:
             data = response.json()
             assert "slack" not in data
 
+    @pytest.mark.integration
     def test_health_sources_sends_degraded_notifications(self, client):
         """Slack notifications are sent for degraded sources."""
         notifier = MagicMock(spec=SlackNotifier)
@@ -108,6 +114,7 @@ class TestLoggingSelfMonitoring:
         "last_flush_error",
     }
 
+    @pytest.mark.integration
     def test_health_includes_logging_block_when_axiom_disabled(self, client):
         """No token → zero/null defaults, schema still present, HTTP 200."""
         with patch("app.routers.health._get_axiom_handler", return_value=None), \
@@ -128,6 +135,7 @@ class TestLoggingSelfMonitoring:
             "last_flush_error": None,
         }
 
+    @pytest.mark.integration
     def test_health_logging_block_when_axiom_enabled_zero_traffic(self, client):
         """Axiom attached but no flushes yet → ``axiom_enabled=true`` and nulls."""
         from app import logging_axiom
@@ -158,6 +166,7 @@ class TestLoggingSelfMonitoring:
         finally:
             handler._atexit_flush()
 
+    @pytest.mark.integration
     def test_health_logging_dropped_total_reflects_overflow(self, client, monkeypatch):
         """Overflowing the handler's queue increments ``dropped_total``."""
         from app import logging_axiom
@@ -214,6 +223,7 @@ class TestLoggingSelfMonitoring:
         finally:
             handler._atexit_flush()
 
+    @pytest.mark.integration
     def test_health_endpoint_makes_no_outbound_http(self, client):
         """The endpoint must never reach the network when answering."""
         # If anything inside /api/health tried to make an httpx call, this
@@ -228,6 +238,7 @@ class TestLoggingSelfMonitoring:
         assert response.status_code == 200
         assert response.json()["status"] == "ok"
 
+    @pytest.mark.integration
     def test_health_returns_200_when_handler_attr_raises(self, client):
         """Defensive: a logging-internal hiccup must not 500 the health endpoint."""
         # Build a fake handler that raises on queue_depth read. The endpoint
@@ -263,6 +274,7 @@ class TestLoggingSelfMonitoring:
         assert log["queue_capacity"] == 1000
         assert log["axiom_enabled"] is True
 
+    @pytest.mark.integration
     def test_health_logging_block_axiom_enabled_reflects_token_when_no_handler(self, client):
         """``axiom_enabled`` follows the token even when the handler is missing.
 
@@ -296,6 +308,7 @@ class TestAxiomHandlerFlushBookkeeping:
     suite. Here we drive the setters directly so we never hit the network.
     """
 
+    @pytest.mark.unit
     def test_last_flush_ok_sets_timestamp_clears_error(self):
         from app.logging_axiom import AxiomHandler
 
@@ -311,6 +324,7 @@ class TestAxiomHandlerFlushBookkeeping:
         finally:
             handler._atexit_flush()
 
+    @pytest.mark.unit
     def test_queue_depth_and_capacity_accessors(self, monkeypatch):
         from app import logging_axiom
         from app.logging_axiom import AxiomHandler

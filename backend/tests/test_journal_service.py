@@ -22,6 +22,7 @@ def _make_trade(premium: float, quantity: int = 1) -> SimpleNamespace:
     return SimpleNamespace(premium=premium, quantity=quantity)
 
 
+@pytest.mark.unit
 def test_compute_total_premiums_sell_only():
     """Two sell_put trades should produce a positive total."""
     trades = [
@@ -31,6 +32,7 @@ def test_compute_total_premiums_sell_only():
     assert compute_total_premiums(trades) == 350.0
 
 
+@pytest.mark.unit
 def test_compute_total_premiums_multi_contract():
     """Multi-contract trades correctly multiply by quantity."""
     trades = [
@@ -39,6 +41,7 @@ def test_compute_total_premiums_multi_contract():
     assert compute_total_premiums(trades) == 450.0
 
 
+@pytest.mark.unit
 def test_compute_total_premiums_mixed():
     """Sells and buy-to-close should net out correctly."""
     trades = [
@@ -48,21 +51,25 @@ def test_compute_total_premiums_mixed():
     assert compute_total_premiums(trades) == 150.0
 
 
+@pytest.mark.unit
 def test_compute_total_premiums_empty():
     """No trades should return 0.0."""
     assert compute_total_premiums([]) == 0.0
 
 
+@pytest.mark.unit
 def test_compute_adjusted_basis():
     """broker_cost_basis 5000, premiums 350 -> 4650."""
     assert compute_adjusted_basis(5000.0, 350.0) == 4650.0
 
 
+@pytest.mark.unit
 def test_compute_min_cc_strike():
     """adjusted 4650, 100 shares -> (4650/100)*1.10 = 51.15."""
     assert compute_min_cc_strike(4650.0, 100) == 51.15
 
 
+@pytest.mark.unit
 def test_compute_min_cc_strike_rounding():
     """Verify result is rounded to 2 decimal places."""
     # 4777 / 100 = 47.77, * 1.10 = 52.547 -> 52.55
@@ -118,6 +125,7 @@ def _seed_position(db, ticker: str = "AAPL", trade_count: int = 0) -> Position:
     return pos
 
 
+@pytest.mark.unit
 def test_delete_position_cascades_trades(db_session):
     """delete_position should also remove every child trade via ORM cascade."""
     pos = _seed_position(db_session, trade_count=3)
@@ -127,10 +135,12 @@ def test_delete_position_cascades_trades(db_session):
     assert db_session.query(Trade).count() == 0
 
 
+@pytest.mark.unit
 def test_delete_position_returns_false_for_unknown(db_session):
     assert delete_position(db_session, "missing-id") is False
 
 
+@pytest.mark.unit
 def test_clear_all_journal_data_returns_counts(db_session):
     _seed_position(db_session, ticker="AAPL", trade_count=2)
     _seed_position(db_session, ticker="MSFT", trade_count=1)
@@ -141,6 +151,7 @@ def test_clear_all_journal_data_returns_counts(db_session):
     assert db_session.query(Trade).count() == 0
 
 
+@pytest.mark.unit
 def test_clear_all_journal_data_empty_db(db_session):
     result = clear_all_journal_data(db_session)
     assert result == {"deleted_positions": 0, "deleted_trades": 0}
@@ -149,6 +160,7 @@ def test_clear_all_journal_data_empty_db(db_session):
 # --- Issue #278: caller-side guard against compute_min_cc_strike log spam ---
 
 
+@pytest.mark.unit
 def test_build_position_response_no_warning_for_shares_zero(db_session, caplog):
     """``_build_position_response`` must not emit the noisy ``shares=0`` WARNING.
 
@@ -182,6 +194,7 @@ def test_build_position_response_no_warning_for_shares_zero(db_session, caplog):
     assert result["shares"] == 0
 
 
+@pytest.mark.unit
 def test_build_position_response_still_computes_for_positive_shares(db_session, caplog):
     """Positive-shares path is unchanged: real call, no warning, real value."""
     from app.services.journal import _build_position_response
@@ -207,6 +220,7 @@ def test_build_position_response_still_computes_for_positive_shares(db_session, 
     assert result["min_compliant_cc_strike"] == 110.0
 
 
+@pytest.mark.unit
 def test_compute_min_cc_strike_direct_call_still_warns_for_zero_shares(caplog):
     """Direct calls to :func:`compute_min_cc_strike` still emit the defensive WARNING.
 
@@ -221,6 +235,7 @@ def test_compute_min_cc_strike_direct_call_still_warns_for_zero_shares(caplog):
     assert "compute_min_cc_strike called with shares=0" in caplog.text
 
 
+@pytest.mark.unit
 def test_build_position_response_warns_for_negative_shares(db_session, caplog):
     """Negative-shares (data corruption) still reaches the defensive WARNING path.
 

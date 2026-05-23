@@ -54,6 +54,7 @@ class TestSettingsEndpoints:
         get_resp = client.get("/api/settings")
         assert get_resp.json()["theme"] == "dark"
 
+    @pytest.mark.integration
     def test_get_cache_stats_empty(self, client):
         response = client.get("/api/settings/cache")
         assert response.status_code == 200
@@ -65,6 +66,7 @@ class TestSettingsEndpoints:
 class TestCacheClearAndFreshness:
     """Tests for DELETE /api/settings/cache and GET /api/settings/cache/freshness."""
 
+    @pytest.mark.integration
     def test_clear_cache_empty(self, client):
         """Clearing an empty cache succeeds with status ok."""
         response = client.delete("/api/settings/cache")
@@ -73,6 +75,7 @@ class TestCacheClearAndFreshness:
         assert data["status"] == "ok"
         assert data["message"] == "Cache cleared"
 
+    @pytest.mark.integration
     def test_clear_cache_with_entries(self, client, db):
         """Clearing a populated cache removes all entries."""
         _insert_cache_entry(db, "fred:DGS10")
@@ -89,6 +92,7 @@ class TestCacheClearAndFreshness:
         stats_after = client.get("/api/settings/cache").json()
         assert stats_after["entry_count"] == 0
 
+    @pytest.mark.integration
     def test_cache_freshness_empty(self, client):
         """No cache entries returns empty entries list."""
         response = client.get("/api/settings/cache/freshness")
@@ -96,6 +100,7 @@ class TestCacheClearAndFreshness:
         data = response.json()
         assert data["entries"] == []
 
+    @pytest.mark.integration
     def test_cache_freshness_fresh_entry(self, client, db):
         """Entry fetched 5 days ago is labeled 'fresh'."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
@@ -109,6 +114,7 @@ class TestCacheClearAndFreshness:
         assert entries[0]["age_days"] == 5
         assert entries[0]["asset_key"] == "fred:DGS10"
 
+    @pytest.mark.integration
     def test_cache_freshness_stale_entry(self, client, db):
         """Entry fetched 60 days ago is labeled 'stale'."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()
@@ -119,6 +125,7 @@ class TestCacheClearAndFreshness:
         assert entries[0]["freshness"] == "stale"
         assert entries[0]["age_days"] == 60
 
+    @pytest.mark.integration
     def test_cache_freshness_very_stale_entry(self, client, db):
         """Entry fetched 100 days ago is labeled 'very_stale'."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
@@ -129,6 +136,7 @@ class TestCacheClearAndFreshness:
         assert entries[0]["freshness"] == "very_stale"
         assert entries[0]["age_days"] == 100
 
+    @pytest.mark.integration
     def test_cache_freshness_naive_datetime(self, client, db):
         """Naive datetime (no tzinfo) is treated as UTC."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=10)).strftime(
@@ -145,6 +153,7 @@ class TestCacheClearAndFreshness:
 class TestHealthChecks:
     """Tests for GET /api/settings/health/fred and /health/schwab."""
 
+    @pytest.mark.integration
     def test_fred_health_no_key(self, client):
         """No FRED key returns configured=False, valid=False."""
         with patch("app.routers.settings.get_fred_api_key", return_value=None):
@@ -154,6 +163,7 @@ class TestHealthChecks:
         assert data["configured"] is False
         assert data["valid"] is False
 
+    @pytest.mark.integration
     def test_fred_health_valid_key(self, client):
         """Valid FRED key returns configured=True, valid=True."""
         mock_fred_cls = MagicMock()
@@ -166,6 +176,7 @@ class TestHealthChecks:
         assert data["configured"] is True
         assert data["valid"] is True
 
+    @pytest.mark.integration
     def test_fred_health_invalid_key(self, client):
         """Invalid FRED key returns configured=True, valid=False."""
         mock_fred_cls = MagicMock()
@@ -178,6 +189,7 @@ class TestHealthChecks:
         assert data["configured"] is True
         assert data["valid"] is False
 
+    @pytest.mark.integration
     def test_schwab_health_not_configured(self, client):
         """No Schwab tokens returns configured=False."""
         with patch("app.routers.settings.SchwabTokenManager") as mock_cls:
@@ -188,6 +200,7 @@ class TestHealthChecks:
         assert data["configured"] is False
         assert data["valid"] is False
 
+    @pytest.mark.integration
     def test_schwab_health_configured_valid(self, client):
         """Configured Schwab with valid token returns valid=True."""
         expiry = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
@@ -209,6 +222,7 @@ class TestHealthChecks:
         assert data["token_expiry"]["warning"] is False
         assert data["token_expiry"]["expired"] is False
 
+    @pytest.mark.integration
     def test_schwab_health_expired_token(self, client):
         """Expired Schwab token returns valid=False with sanitized error."""
         with patch("app.routers.settings.SchwabTokenManager") as mock_cls:
@@ -226,6 +240,7 @@ class TestHealthChecks:
         # Verify raw exception message is NOT leaked
         assert "Token expired" not in str(data)
 
+    @pytest.mark.integration
     def test_schwab_health_http_error(self, client):
         """Schwab API HTTP error returns valid=False with HTTP status."""
         mock_response = MagicMock()
@@ -247,6 +262,7 @@ class TestHealthChecks:
         assert data["valid"] is False
         assert data["error"] == "HTTP 401"
 
+    @pytest.mark.integration
     @pytest.mark.skip(reason="Alpha Vantage health check lives in routers/health.py, not settings.py. Tracked separately.")
     def test_alpha_vantage_health_check(self):
         """AC from issue #84 — deferred: endpoint is in health router, not settings router."""
@@ -256,6 +272,7 @@ class TestHealthChecks:
 class TestBackups:
     """Tests for GET /api/settings/backups and POST /api/settings/backups/restore."""
 
+    @pytest.mark.integration
     def test_list_backups_empty(self, client):
         """No backups returns empty list."""
         with patch("app.routers.settings.list_backups", return_value=[]):
@@ -263,6 +280,7 @@ class TestBackups:
         assert response.status_code == 200
         assert response.json()["backups"] == []
 
+    @pytest.mark.integration
     def test_list_backups_with_entries(self, client):
         """Backups list returns proper structure."""
         sample_backups = [
@@ -280,6 +298,7 @@ class TestBackups:
         assert len(data["backups"]) == 2
         assert data["backups"][0]["filename"] == "regression_tool_20240601_120000.db"
 
+    @pytest.mark.integration
     def test_restore_success(self, client):
         """Successful restore returns status ok."""
         with patch("app.routers.settings.restore_backup") as mock_restore:
@@ -293,6 +312,7 @@ class TestBackups:
         assert data["status"] == "ok"
         assert "Restored" in data["message"]
 
+    @pytest.mark.integration
     def test_restore_not_found(self, client):
         """Restoring a nonexistent backup returns 404."""
         with patch(
@@ -306,6 +326,7 @@ class TestBackups:
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
 
+    @pytest.mark.integration
     def test_restore_failure_sanitized_error(self, client):
         """Generic restore failure returns 500 with sanitized message."""
         with patch(
@@ -326,12 +347,14 @@ class TestBackups:
 class TestCacheRefresh:
     """Tests for POST /api/settings/cache/refresh-all and /cache/refresh-stale."""
 
+    @pytest.mark.integration
     def test_refresh_all_empty(self, client):
         """No cache entries returns empty results."""
         response = client.post("/api/settings/cache/refresh-all")
         assert response.status_code == 200
         assert response.json()["results"] == []
 
+    @pytest.mark.integration
     def test_refresh_all_with_entries(self, client, db, mock_fetcher):
         """All entries are refreshed successfully."""
         _insert_cache_entry(db, "fred:DGS10")
@@ -343,6 +366,7 @@ class TestCacheRefresh:
         assert len(results) == 2
         assert all(r["status"] == "refreshed" for r in results)
 
+    @pytest.mark.integration
     def test_refresh_all_skips_zillow_csv(self, client, db, mock_fetcher):
         """The zillow:__csv__ entry is skipped during refresh-all."""
         _insert_cache_entry(db, "zillow:__csv__", source_name="zillow")
@@ -353,6 +377,7 @@ class TestCacheRefresh:
         assert len(results) == 1
         assert results[0]["asset_key"] == "fred:DGS10"
 
+    @pytest.mark.integration
     def test_refresh_all_partial_failure(self, client, db):
         """Mixed success/failure returns per-entry status with sanitized errors."""
         _insert_cache_entry(db, "fred:DGS10")
@@ -379,6 +404,7 @@ class TestCacheRefresh:
         # Verify raw exception is NOT leaked
         assert "Connection timed out" not in str(results)
 
+    @pytest.mark.integration
     def test_refresh_stale_no_stale_entries(self, client, db):
         """All entries are fresh (<30 days), none are refreshed."""
         fetched_at = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
@@ -388,6 +414,7 @@ class TestCacheRefresh:
         assert response.status_code == 200
         assert response.json()["results"] == []
 
+    @pytest.mark.integration
     def test_refresh_stale_with_stale_entries(self, client, db, mock_fetcher):
         """Only stale entries (>30 days) are refreshed."""
         fresh_at = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
@@ -401,6 +428,7 @@ class TestCacheRefresh:
         assert results[0]["asset_key"] == "fred:CPIAUCSL"
         assert results[0]["status"] == "refreshed"
 
+    @pytest.mark.integration
     def test_refresh_stale_skips_zillow_csv(self, client, db, mock_fetcher):
         """The zillow:__csv__ entry is skipped even when stale."""
         stale_at = (datetime.now(timezone.utc) - timedelta(days=60)).isoformat()

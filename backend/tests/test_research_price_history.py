@@ -168,6 +168,7 @@ def _clear_price_history_cache():
 class TestTradeEventMapping:
     """:func:`_trade_events_from_position` correctly normalizes legacy types."""
 
+    @pytest.mark.integration
     def test_normalizes_buy_put_close_to_buy_close(self):
         events = svc._trade_events_from_position(
             {
@@ -186,6 +187,7 @@ class TestTradeEventMapping:
         assert events[0].date == "2025-02-15"
         assert events[0].strike == 26.0
 
+    @pytest.mark.integration
     def test_normalizes_buy_call_close_to_buy_close(self):
         events = svc._trade_events_from_position(
             {
@@ -201,6 +203,7 @@ class TestTradeEventMapping:
         )
         assert events[0].type == "buy_close"
 
+    @pytest.mark.integration
     def test_passes_through_v1_vocabulary_unchanged(self):
         for raw in ("sell_put", "sell_call", "assignment", "called_away", "expired"):
             events = svc._trade_events_from_position(
@@ -217,6 +220,7 @@ class TestTradeEventMapping:
             )
             assert events and events[0].type == raw, raw
 
+    @pytest.mark.integration
     def test_skips_unknown_trade_types(self):
         events = svc._trade_events_from_position(
             {
@@ -237,6 +241,7 @@ class TestTradeEventMapping:
         )
         assert [e.type for e in events] == ["sell_put"]
 
+    @pytest.mark.integration
     def test_skips_rows_without_opened_at(self):
         events = svc._trade_events_from_position(
             {
@@ -246,6 +251,7 @@ class TestTradeEventMapping:
         )
         assert events == []
 
+    @pytest.mark.integration
     def test_sorts_events_by_date(self):
         events = svc._trade_events_from_position(
             {
@@ -263,12 +269,14 @@ class TestTradeEventMapping:
 class TestWindowResolution:
     """:func:`_window_dates` returns a sensible (start, end) range."""
 
+    @pytest.mark.integration
     def test_default_window_is_one_year(self):
         start, end = svc._window_dates("1Y")
         # The window is 365 days; allow ±1 day for the day-boundary edge.
         delta = (date.fromisoformat(end) - date.fromisoformat(start)).days
         assert 364 <= delta <= 366
 
+    @pytest.mark.integration
     @pytest.mark.parametrize("window,min_days,max_days", [
         ("6M", 182, 184),
         ("1Y", 364, 366),
@@ -279,6 +287,7 @@ class TestWindowResolution:
         delta = (date.fromisoformat(end) - date.fromisoformat(start)).days
         assert min_days <= delta <= max_days
 
+    @pytest.mark.integration
     def test_unsupported_window_raises(self):
         with pytest.raises(svc.InvalidWindowError):
             svc._window_dates("3D")
@@ -297,6 +306,7 @@ _AV_PATCH = "app.services.research_price_history.get_historical_earnings"
 class TestPriceHistoryEndpoint:
     """End-to-end behavior of ``GET /research/price-history``."""
 
+    @pytest.mark.integration
     def test_success_path_with_trades_and_earnings(self, client):
         _seed_position_with_trades(client)
         earnings = [
@@ -330,6 +340,7 @@ class TestPriceHistoryEndpoint:
         for e in payload["earnings_events"]:
             assert e["label"] == "Earnings"
 
+    @pytest.mark.integration
     def test_empty_position_returns_basis_and_empty_trade_events(self, client):
         _seed_position_with_trades(client, with_trades=False)
         with patch(_FETCH_PATCH, return_value=(_price_df(), _price_meta())), \
@@ -344,6 +355,7 @@ class TestPriceHistoryEndpoint:
         # No trades → adjusted basis equals broker basis (no premium offset).
         assert payload["basis"]["adjusted"] == _BROKER_BASIS
 
+    @pytest.mark.integration
     def test_av_failure_degrades_to_empty_earnings_with_200(self, client):
         """AV unavailable must NOT fail the whole payload (NFR-3)."""
         _seed_position_with_trades(client)
@@ -357,6 +369,7 @@ class TestPriceHistoryEndpoint:
         assert payload["earnings_events"] == []
         assert len(payload["prices"]) > 0  # primary signal still rendered
 
+    @pytest.mark.integration
     def test_av_raises_unexpected_exception_still_degrades_to_empty(self, client):
         """Even if the AV client raises, the endpoint must stay 200."""
         _seed_position_with_trades(client)
@@ -368,6 +381,7 @@ class TestPriceHistoryEndpoint:
         assert resp.status_code == 200
         assert resp.json()["earnings_events"] == []
 
+    @pytest.mark.integration
     def test_price_source_failure_returns_502(self, client):
         _seed_position_with_trades(client)
         with patch(_FETCH_PATCH, side_effect=RuntimeError("schwab kaboom")), \
@@ -381,6 +395,7 @@ class TestPriceHistoryEndpoint:
         # CLAUDE.md: no raw exception messages in API responses.
         assert "kaboom" not in body["detail"]
 
+    @pytest.mark.integration
     def test_position_not_found_returns_404(self, client):
         with patch(_FETCH_PATCH, return_value=(_price_df(), _price_meta())), \
              patch(_AV_PATCH, return_value=[]):
@@ -390,6 +405,7 @@ class TestPriceHistoryEndpoint:
         assert resp.status_code == 404
         assert resp.json()["detail"] == "Position not found"
 
+    @pytest.mark.integration
     def test_default_window_is_one_year(self, client):
         _seed_position_with_trades(client)
         with patch(_FETCH_PATCH, return_value=(_price_df(), _price_meta())), \
@@ -400,6 +416,7 @@ class TestPriceHistoryEndpoint:
         assert resp.status_code == 200
         assert resp.json()["window"] == "1Y"
 
+    @pytest.mark.integration
     @pytest.mark.parametrize("window", ["6M", "1Y", "2Y"])
     def test_supported_windows_accepted(self, client, window):
         _seed_position_with_trades(client)
@@ -411,6 +428,7 @@ class TestPriceHistoryEndpoint:
         assert resp.status_code == 200, resp.text
         assert resp.json()["window"] == window
 
+    @pytest.mark.integration
     def test_lowercase_window_accepted(self, client):
         """The service uppercases ``window`` before validating."""
         _seed_position_with_trades(client)
@@ -422,6 +440,7 @@ class TestPriceHistoryEndpoint:
         assert resp.status_code == 200
         assert resp.json()["window"] == "1Y"
 
+    @pytest.mark.integration
     def test_unsupported_window_returns_422(self, client):
         _seed_position_with_trades(client)
         with patch(_FETCH_PATCH, return_value=(_price_df(), _price_meta())), \
@@ -435,6 +454,7 @@ class TestPriceHistoryEndpoint:
         for w in ("6M", "1Y", "2Y"):
             assert w in detail
 
+    @pytest.mark.integration
     def test_cache_hit_skips_second_fetch_within_ttl(self, client):
         """Second call within 15 min should NOT re-fetch prices or earnings."""
         _seed_position_with_trades(client)
@@ -453,6 +473,7 @@ class TestPriceHistoryEndpoint:
         assert fetch_mock.call_count == 1
         assert av_mock.call_count == 1
 
+    @pytest.mark.integration
     def test_cache_key_is_per_window(self, client):
         """Different window params get separate cache entries."""
         _seed_position_with_trades(client)

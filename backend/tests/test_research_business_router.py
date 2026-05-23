@@ -59,6 +59,7 @@ def _fake_info() -> dict:
     }
 
 
+@pytest.mark.integration
 def test_get_business_404_for_missing_position(client):
     """Unknown ``position_id`` → 404 with sanitized detail (never str(e))."""
     resp = client.get("/api/positions/does-not-exist/research/business")
@@ -66,6 +67,7 @@ def test_get_business_404_for_missing_position(client):
     assert resp.json() == {"detail": "Position not found"}
 
 
+@pytest.mark.integration
 def test_get_business_200_returns_payload(client):
     """yfinance returns full info → 200 with the BusinessResponse shape."""
     pid = _create_position(client)
@@ -87,6 +89,7 @@ def test_get_business_200_returns_payload(client):
     assert body["fetched_at"].endswith("Z")
 
 
+@pytest.mark.integration
 def test_get_business_502_on_source_unavailable(client):
     """yfinance hard-fail + empty cache → 502 with sanitized detail."""
     pid = _create_position(client)
@@ -100,6 +103,7 @@ def test_get_business_502_on_source_unavailable(client):
     assert resp.json() == {"detail": "Source unavailable"}
 
 
+@pytest.mark.integration
 def test_get_business_500_on_unexpected_exception(client):
     """Unexpected service exception → 500 with the generic CLAUDE.md detail."""
     pid = _create_position(client)

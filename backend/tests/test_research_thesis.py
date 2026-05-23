@@ -14,6 +14,7 @@ Covers the eight required scenarios from the worker brief:
 """
 
 from __future__ import annotations
+import pytest
 
 
 def _create_position(client, ticker: str = "AAPL") -> str:
@@ -34,6 +35,7 @@ def _create_position(client, ticker: str = "AAPL") -> str:
 # --- GET ---
 
 
+@pytest.mark.integration
 def test_get_thesis_empty_state_when_no_row(client):
     """Position exists but no thesis row → empty-state shape (NOT 404)."""
     pid = _create_position(client)
@@ -43,6 +45,7 @@ def test_get_thesis_empty_state_when_no_row(client):
     assert body == {"thesis": None, "updated_at": None, "version": 0}
 
 
+@pytest.mark.integration
 def test_get_thesis_404_for_missing_position(client):
     """A missing position id returns sanitized 404."""
     resp = client.get("/api/positions/does-not-exist/research/thesis")
@@ -53,6 +56,7 @@ def test_get_thesis_404_for_missing_position(client):
 # --- PUT create ---
 
 
+@pytest.mark.integration
 def test_put_creates_row_version_one(client):
     """First PUT creates the row at version 1; GET returns it."""
     pid = _create_position(client)
@@ -72,6 +76,7 @@ def test_put_creates_row_version_one(client):
     assert get_resp.json() == payload
 
 
+@pytest.mark.integration
 def test_put_404_for_missing_position(client):
     """PUT on a missing position id returns sanitized 404."""
     resp = client.put(
@@ -85,6 +90,7 @@ def test_put_404_for_missing_position(client):
 # --- PUT update / versioning ---
 
 
+@pytest.mark.integration
 def test_put_update_increments_version_and_refreshes_updated_at(client):
     """Second PUT bumps version, refreshes updated_at, replaces body."""
     pid = _create_position(client)
@@ -106,6 +112,7 @@ def test_put_update_increments_version_and_refreshes_updated_at(client):
     assert second["updated_at"] >= first["updated_at"]
 
 
+@pytest.mark.integration
 def test_put_three_times_increments_version_each_call(client):
     """Three sequential PUTs land at versions 1, 2, 3 in order."""
     pid = _create_position(client)
@@ -123,6 +130,7 @@ def test_put_three_times_increments_version_each_call(client):
 # --- PUT validation ---
 
 
+@pytest.mark.integration
 def test_put_rejects_over_4000_chars(client):
     """Bodies longer than the cap return 422 with a sanitized message."""
     pid = _create_position(client)
@@ -142,6 +150,7 @@ def test_put_rejects_over_4000_chars(client):
     assert "4000" in text or "limit" in text.lower() or "length" in text.lower()
 
 
+@pytest.mark.integration
 def test_put_accepts_exactly_4000_chars(client):
     """Exactly 4000 characters is within the cap (boundary)."""
     pid = _create_position(client)
@@ -154,6 +163,7 @@ def test_put_accepts_exactly_4000_chars(client):
     assert resp.json()["thesis"] == boundary
 
 
+@pytest.mark.integration
 def test_put_empty_string_is_allowed_and_bumps_version(client):
     """Empty body clears the note but still increments the version."""
     pid = _create_position(client)
@@ -174,6 +184,7 @@ def test_put_empty_string_is_allowed_and_bumps_version(client):
 # --- Round-trip / sanity ---
 
 
+@pytest.mark.integration
 def test_body_column_round_trips_complex_text(client):
     """``body`` round-trips newlines, unicode, and punctuation losslessly."""
     pid = _create_position(client)
@@ -189,6 +200,7 @@ def test_body_column_round_trips_complex_text(client):
     assert get_resp.json()["thesis"] == original
 
 
+@pytest.mark.integration
 def test_two_positions_have_independent_notes(client):
     """Each position has its own thesis — no cross-pollination."""
     pid_a = _create_position(client, ticker="AAPL")

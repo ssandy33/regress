@@ -21,6 +21,7 @@ Covers:
 """
 
 from __future__ import annotations
+import pytest
 
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -166,6 +167,7 @@ def _patch_schwab(quote_price: float | None = 13.1579, chain=None):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_canonical_covered_call_reconciles_with_worked_example(client):
     """The headline AC: combined +$17.63, if_assigned ≈ +$217."""
     _seed_position(client)
@@ -191,6 +193,7 @@ def test_canonical_covered_call_reconciles_with_worked_example(client):
     assert entry["if_assigned_pnl"] == 217.34
 
 
+@pytest.mark.integration
 def test_per_leg_breakdown_carries_coverage_and_pnl(client):
     _seed_position(client)
     _seed_trade(client)
@@ -208,6 +211,7 @@ def test_per_leg_breakdown_carries_coverage_and_pnl(client):
     assert row["if_assigned_pnl"] == 217.34
 
 
+@pytest.mark.integration
 def test_position_summary_basis_is_per_share(client):
     """broker_cost_basis on the response is per-share, not the DB total."""
     _seed_position(client, broker_cost_basis=1321.0, shares=100)
@@ -219,6 +223,7 @@ def test_position_summary_basis_is_per_share(client):
     assert summary["broker_cost_basis"] == 13.21
 
 
+@pytest.mark.integration
 def test_disclaimer_is_present(client):
     _seed_position(client)
     _seed_trade(client)
@@ -236,6 +241,7 @@ def test_disclaimer_is_present(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_csp_only_position_returns_not_applicable_no_shares(client):
     _seed_position(client, shares=0, broker_cost_basis=0.0, strategy="csp")
     # Open short put — still not applicable because shares == 0.
@@ -254,6 +260,7 @@ def test_csp_only_position_returns_not_applicable_no_shares(client):
     assert payload["per_leg_breakdown"] == []
 
 
+@pytest.mark.integration
 def test_holding_with_no_short_call_returns_not_applicable_no_short_call(client):
     # 100 shares, no open option leg at all.
     _seed_position(client, strategy="holding")
@@ -263,6 +270,7 @@ def test_holding_with_no_short_call_returns_not_applicable_no_short_call(client)
     assert resp.json()["applicability"] == "not_applicable_no_short_call"
 
 
+@pytest.mark.integration
 def test_holding_with_short_put_only_returns_not_applicable_no_short_call(
     client,
 ):
@@ -275,6 +283,7 @@ def test_holding_with_short_put_only_returns_not_applicable_no_short_call(
     assert resp.json()["applicability"] == "not_applicable_no_short_call"
 
 
+@pytest.mark.integration
 def test_closed_position_returns_not_applicable_closed(client):
     _seed_position(client, status="closed")
     _seed_trade(client)
@@ -289,6 +298,7 @@ def test_closed_position_returns_not_applicable_closed(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_multi_leg_earliest_expiring_first_allocation(client):
     """Two short calls, leg A (DTE 38) and leg B (DTE 60), both qty 1."""
     _seed_position(client)
@@ -329,6 +339,7 @@ def test_multi_leg_earliest_expiring_first_allocation(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_degraded_no_live_mid_keeps_if_assigned_real(client):
     """Empty option chain → options_pnl null, but if_assigned survives."""
     _seed_position(client)
@@ -346,6 +357,7 @@ def test_degraded_no_live_mid_keeps_if_assigned_real(client):
     assert payload["if_assigned"][0]["if_assigned_pnl"] == 217.34
 
 
+@pytest.mark.integration
 def test_degraded_no_live_share_price_keeps_if_assigned_real(client):
     """No live quote → stock_pnl null, options_pnl still real."""
     _seed_position(client)
@@ -373,6 +385,7 @@ def test_degraded_no_live_share_price_keeps_if_assigned_real(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_returns_404_for_unknown_position(client):
     with _patch_schwab():
         resp = client.get("/api/positions/no-such-position/covered-call")
@@ -380,6 +393,7 @@ def test_returns_404_for_unknown_position(client):
     assert resp.json() == {"detail": "Position not found"}
 
 
+@pytest.mark.integration
 def test_500_on_quote_failure_returns_generic_detail(client):
     """A Schwab failure yields the generic 500; no ``str(e)`` leak."""
     _seed_position(client)

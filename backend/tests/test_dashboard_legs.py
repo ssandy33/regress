@@ -20,80 +20,98 @@ from app.services.dashboard_legs import (
 
 
 class TestComputeDte:
+    @pytest.mark.unit
     def test_today_is_zero(self):
         today = date(2026, 5, 5)
         assert compute_dte("2026-05-05", today=today) == 0
 
+    @pytest.mark.unit
     def test_tomorrow_is_one(self):
         today = date(2026, 5, 5)
         assert compute_dte("2026-05-06", today=today) == 1
 
+    @pytest.mark.unit
     def test_yesterday_is_negative(self):
         today = date(2026, 5, 5)
         assert compute_dte("2026-05-04", today=today) == -1
 
+    @pytest.mark.unit
     def test_two_weeks_out(self):
         today = date(2026, 5, 5)
         assert compute_dte("2026-05-19", today=today) == 14
 
+    @pytest.mark.unit
     def test_isoformat_with_time_suffix(self):
         today = date(2026, 5, 5)
         assert compute_dte("2026-05-08T10:00:00Z", today=today) == 3
 
+    @pytest.mark.unit
     def test_unparseable_returns_sentinel(self):
         assert compute_dte("not-a-date", today=date(2026, 5, 5)) == 9999
 
+    @pytest.mark.unit
     def test_none_returns_sentinel(self):
         assert compute_dte(None, today=date(2026, 5, 5)) == 9999
 
 
 class TestComputeMoneyness:
+    @pytest.mark.unit
     def test_short_put_itm_when_price_below_strike(self):
         result = compute_moneyness("put", strike=175.0, current_price=174.50)
         assert result["state"] == "ITM"
         assert result["distance_dollars"] == pytest.approx(0.50)
         assert result["distance_pct"] == pytest.approx(0.50 / 175.0)
 
+    @pytest.mark.unit
     def test_short_put_otm_when_price_above_strike(self):
         result = compute_moneyness("put", strike=175.0, current_price=180.0)
         assert result["state"] == "OTM"
         assert result["distance_dollars"] == pytest.approx(5.0)
 
+    @pytest.mark.unit
     def test_short_put_atm_when_equal(self):
         result = compute_moneyness("put", strike=175.0, current_price=175.0)
         assert result["state"] == "ATM"
 
+    @pytest.mark.unit
     def test_short_call_itm_when_price_above_strike(self):
         result = compute_moneyness("call", strike=240.0, current_price=245.0)
         assert result["state"] == "ITM"
         assert result["distance_dollars"] == pytest.approx(5.0)
 
+    @pytest.mark.unit
     def test_short_call_otm_when_price_below_strike(self):
         result = compute_moneyness("call", strike=240.0, current_price=230.0)
         assert result["state"] == "OTM"
 
+    @pytest.mark.unit
     def test_returns_none_when_no_price(self):
         assert compute_moneyness("put", 175.0, None) is None
 
 
 class TestComputeDecisionTag:
+    @pytest.mark.unit
     def test_roll_or_assign_when_short_dte_and_itm(self):
         assert compute_decision_tag(3, "ITM") == "roll-or-assign"
         assert compute_decision_tag(7, "ITM") == "roll-or-assign"
 
+    @pytest.mark.unit
     def test_manage_when_short_dte_and_otm(self):
         assert compute_decision_tag(3, "OTM") == "manage"
         assert compute_decision_tag(0, "ATM") == "manage"  # ATM treated as not-ITM
 
+    @pytest.mark.unit
     def test_watch_when_medium_dte_and_itm(self):
         assert compute_decision_tag(10, "ITM") == "watch"
         assert compute_decision_tag(14, "ITM") == "watch"
 
+    @pytest.mark.unit
     def test_hold_when_far_dte_or_otm_medium(self):
         assert compute_decision_tag(10, "OTM") == "hold"
         assert compute_decision_tag(20, "ITM") == "hold"
         assert compute_decision_tag(30, "OTM") == "hold"
 
+    @pytest.mark.unit
     def test_hold_when_moneyness_unknown(self):
         # Conservative fallback: never recommend an action without a price.
         assert compute_decision_tag(2, None) == "hold"
@@ -108,6 +126,7 @@ class TestDeriveOpenLegs:
             "trades": trades,
         }
 
+    @pytest.mark.unit
     def test_filters_out_closed_trades(self):
         positions = [
             self._position(
@@ -138,6 +157,7 @@ class TestDeriveOpenLegs:
         )
         assert [leg["id"] for leg in legs] == ["t-open"]
 
+    @pytest.mark.unit
     def test_filters_out_exit_event_trades(self):
         # buy_put_close, assignment, called_away, etc. are exit events — not legs.
         positions = [
@@ -165,6 +185,7 @@ class TestDeriveOpenLegs:
         legs = derive_open_legs(positions, quotes_by_ticker={"AAPL": 175.0})
         assert legs == []
 
+    @pytest.mark.unit
     def test_attaches_dte_and_moneyness(self):
         positions = [
             self._position(
@@ -190,6 +211,7 @@ class TestDeriveOpenLegs:
         assert legs[0]["dte"] == 3
         assert legs[0]["moneyness"]["state"] == "ITM"
 
+    @pytest.mark.unit
     def test_exposes_raw_current_mid_passthrough(self):
         # Issue #244 — the leg dict carries the raw matched option mid so the
         # BTC detail endpoint can compute cost-to-close. `None` when no mark.
@@ -226,6 +248,7 @@ class TestDeriveOpenLegs:
         )
         assert no_mark[0]["current_mid"] is None
 
+    @pytest.mark.unit
     def test_sorts_by_dte_then_ticker(self):
         positions = [
             self._position(
@@ -265,24 +288,29 @@ class TestDeriveOpenLegs:
 
 
 class TestComputeAssignmentRisk:
+    @pytest.mark.unit
     def test_high_at_seven_dte_itm(self):
         assert compute_assignment_risk(7, "ITM") == "high"
         assert compute_assignment_risk(0, "ITM") == "high"
 
+    @pytest.mark.unit
     def test_watch_at_fourteen_dte_itm(self):
         # At the boundary the spec rule "dte <= 14 AND ITM" still applies.
         assert compute_assignment_risk(14, "ITM") == "watch"
         assert compute_assignment_risk(8, "ITM") == "watch"
 
+    @pytest.mark.unit
     def test_low_at_fifteen_dte_itm(self):
         # Outside both windows even when ITM.
         assert compute_assignment_risk(15, "ITM") == "low"
         assert compute_assignment_risk(30, "ITM") == "low"
 
+    @pytest.mark.unit
     def test_low_when_not_itm(self):
         assert compute_assignment_risk(3, "OTM") == "low"
         assert compute_assignment_risk(3, "ATM") == "low"
 
+    @pytest.mark.unit
     def test_low_when_moneyness_unknown(self):
         assert compute_assignment_risk(3, None) == "low"
 
@@ -291,6 +319,7 @@ class TestComputeAssignmentRisk:
     # consumes the same 7/14 thresholds; drifting either side breaks the
     # "thresholds must match" AC. These assertions sit alongside the existing
     # tests on purpose so a single test file reads as the canonical pin.
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "dte,moneyness_state,expected",
         [
@@ -312,20 +341,25 @@ class TestComputeAssignmentRisk:
 
 
 class TestComputeSuggestedAction:
+    @pytest.mark.unit
     def test_roll_for_roll_or_assign(self):
         assert compute_suggested_action("roll-or-assign") == "roll"
 
+    @pytest.mark.unit
     def test_manage_for_manage(self):
         assert compute_suggested_action("manage") == "manage"
 
+    @pytest.mark.unit
     def test_hold_for_watch(self):
         # Watch maps to hold because the V0.5 vocabulary is intentionally
         # smaller; the frontend already shows a Watch pill via decision_tag.
         assert compute_suggested_action("watch") == "hold"
 
+    @pytest.mark.unit
     def test_hold_for_hold(self):
         assert compute_suggested_action("hold") == "hold"
 
+    @pytest.mark.unit
     def test_never_emits_close_in_v05(self):
         # Locked architectural decision: V0.5 never emits "close" because
         # the 50%-target signal requires live option-chain data.
@@ -339,6 +373,7 @@ class TestComputeSuggestedAction:
 class TestProfitTargetStatusBuilder:
     """Pure math for the dashboard ``% CAPT`` profit-target signal (#240)."""
 
+    @pytest.mark.unit
     def test_locked_acceptance_screenshot_example(self):
         # LOCKED acceptance test — the F 15C leg from the issue #240 screenshot.
         # premium 0.3834 credit, current mid 0.155 → ~59.57% of credit captured,
@@ -347,30 +382,35 @@ class TestProfitTargetStatusBuilder:
         assert result["captured_pct"] == pytest.approx(0.5957, abs=1e-4)
         assert result["state"] == "captured_50"
 
+    @pytest.mark.unit
     def test_in_progress_below_target(self):
         # 1.00 credit decayed to 0.70 → 30% captured, under the 50% target.
         result = build_profit_target_status(premium=1.00, current_mid=0.70)
         assert result["captured_pct"] == pytest.approx(0.30)
         assert result["state"] == "in_progress"
 
+    @pytest.mark.unit
     def test_captured_50_at_exact_boundary(self):
         # Exactly the 50% threshold counts as captured (>= compare).
         result = build_profit_target_status(premium=1.00, current_mid=0.50)
         assert result["captured_pct"] == pytest.approx(0.50)
         assert result["state"] == "captured_50"
 
+    @pytest.mark.unit
     def test_underwater_when_mid_above_premium(self):
         # 1.00 credit, mid rose to 1.30 → -30% captured (a paper loss).
         result = build_profit_target_status(premium=1.00, current_mid=1.30)
         assert result["captured_pct"] == pytest.approx(-0.30)
         assert result["state"] == "underwater"
 
+    @pytest.mark.unit
     def test_in_progress_when_mid_equals_premium(self):
         # mid == premium → exactly 0% captured → in_progress, not underwater.
         result = build_profit_target_status(premium=1.00, current_mid=1.00)
         assert result["captured_pct"] == pytest.approx(0.0)
         assert result["state"] == "in_progress"
 
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "premium,current_mid",
         [
@@ -386,6 +426,7 @@ class TestProfitTargetStatusBuilder:
         )
         assert result == {"captured_pct": None, "state": "unknown"}
 
+    @pytest.mark.unit
     def test_expired_leg_is_unknown(self):
         # Once expired (dte < 0) there is no live management decision.
         result = build_profit_target_status(
@@ -393,6 +434,7 @@ class TestProfitTargetStatusBuilder:
         )
         assert result == {"captured_pct": None, "state": "unknown"}
 
+    @pytest.mark.unit
     def test_profit_review_pct_threshold_is_honored(self):
         # ~60% captured, but the user's threshold is 75% → still in_progress.
         result = build_profit_target_status(
@@ -405,6 +447,7 @@ class TestProfitTargetStatusBuilder:
 class TestDeriveLegEconomics:
     """Pure coverage + dollar-economics derivation for an open leg (#246)."""
 
+    @pytest.mark.unit
     def test_covered_call_when_shares_held(self):
         # A short call against shares the user holds → covered.
         result = derive_leg_economics(
@@ -416,6 +459,7 @@ class TestDeriveLegEconomics:
         )
         assert result["coverage"] == "covered"
 
+    @pytest.mark.unit
     def test_naked_call_when_zero_shares(self):
         # A short call with no shares to deliver → naked (the warning state).
         result = derive_leg_economics(
@@ -427,6 +471,7 @@ class TestDeriveLegEconomics:
         )
         assert result["coverage"] == "naked"
 
+    @pytest.mark.unit
     def test_short_put_never_naked(self):
         # A cash-secured put is not "naked" — coverage is a short-call axis.
         result = derive_leg_economics(
@@ -438,6 +483,7 @@ class TestDeriveLegEconomics:
         )
         assert result["coverage"] is None
 
+    @pytest.mark.unit
     def test_worked_example_pnl_and_cost(self):
         # The F 15C worked example from the issue / spec §1.2.
         # premium 0.3834, mid 0.155, quantity 1 → P&L +$22.84, cost $15.50.
@@ -452,6 +498,7 @@ class TestDeriveLegEconomics:
         assert result["cost_to_close"] == 15.50
         assert result["premium"] == 0.3834
 
+    @pytest.mark.unit
     def test_pnl_reconciles_with_captured_pct(self):
         # The whole-position $ P&L must agree with the per-share % CAPT — they
         # are computed by two different functions but share the same inputs,
@@ -472,6 +519,7 @@ class TestDeriveLegEconomics:
         )
         assert captured_from_dollars == round(status["captured_pct"] * 100) == 60
 
+    @pytest.mark.unit
     def test_quantity_scales_dollars(self):
         # Whole-position dollars scale linearly with the contract count.
         one = derive_leg_economics(
@@ -491,6 +539,7 @@ class TestDeriveLegEconomics:
         assert three["pnl_dollars"] == pytest.approx(one["pnl_dollars"] * 3)
         assert three["cost_to_close"] == pytest.approx(one["cost_to_close"] * 3)
 
+    @pytest.mark.unit
     def test_no_mid_degrades_pnl_and_cost(self):
         # No live mid → dollars are None, but coverage + premium survive.
         result = derive_leg_economics(
@@ -505,6 +554,7 @@ class TestDeriveLegEconomics:
         assert result["coverage"] == "naked"
         assert result["premium"] == 0.3834
 
+    @pytest.mark.unit
     def test_underwater_leg_negative_pnl(self):
         # current_mid > premium → a paper loss: P&L must be negative, not
         # abs()'d or floored at 0. Reconciles with the negative % CAPT.
@@ -524,6 +574,7 @@ class TestDeriveLegEconomics:
         )
         assert captured_from_dollars == round(status["captured_pct"] * 100) == -30
 
+    @pytest.mark.unit
     @pytest.mark.parametrize("dte", [-1, -10])
     def test_expired_leg_degrades_economics(self, dte):
         # An expired leg (dte < 0) mirrors build_profit_target_status's guard —
@@ -541,6 +592,7 @@ class TestDeriveLegEconomics:
         # Coverage still derives — it depends only on shares.
         assert result["coverage"] == "covered"
 
+    @pytest.mark.unit
     @pytest.mark.parametrize("quantity", [0, None])
     def test_bad_quantity_degrades_economics(self, quantity):
         # A malformed quantity degrades the dollar figures to None rather than
@@ -557,6 +609,7 @@ class TestDeriveLegEconomics:
         # Coverage is unaffected by a bad quantity.
         assert result["coverage"] == "covered"
 
+    @pytest.mark.unit
     def test_non_credit_premium_degrades_economics(self):
         # premium <= 0 mirrors build_profit_target_status's guard.
         for premium in (0.0, -1.0, None):
@@ -589,6 +642,7 @@ class TestBuildOptionMarkIndex:
             },
         }
 
+    @pytest.mark.unit
     def test_builds_keys_and_mids(self):
         index = build_option_mark_index({"AAPL": self._chain()})
         # Call leg uses the explicit `mark`.
@@ -596,6 +650,7 @@ class TestBuildOptionMarkIndex:
         # Put leg with no `mark` falls back to (bid + ask) / 2.
         assert index[("AAPL", "put", 175.0, "2026-05-08")] == pytest.approx(1.50)
 
+    @pytest.mark.unit
     def test_strike_normalization(self):
         # "15" and "15.0" must both normalize to the float 15.0.
         chain = {
@@ -608,12 +663,14 @@ class TestBuildOptionMarkIndex:
         index = build_option_mark_index({"F": chain})
         assert ("F", "call", 15.0, "2026-06-26") in index
 
+    @pytest.mark.unit
     def test_exp_key_prefix_is_split(self):
         # The exp_key carries a ":DTE" suffix that must be stripped.
         index = build_option_mark_index({"AAPL": self._chain()})
         keys = {key[3] for key in index}
         assert keys == {"2026-06-26", "2026-05-08"}
 
+    @pytest.mark.unit
     def test_mark_preferred_over_bid_ask(self):
         chain = {
             "callExpDateMap": {
@@ -628,6 +685,7 @@ class TestBuildOptionMarkIndex:
         # mark wins even when bid/ask are present.
         assert index[("AAPL", "call", 100.0, "2026-06-26")] == pytest.approx(2.00)
 
+    @pytest.mark.unit
     def test_contract_with_no_usable_mid_is_skipped(self):
         chain = {
             "callExpDateMap": {
@@ -639,6 +697,7 @@ class TestBuildOptionMarkIndex:
         index = build_option_mark_index({"AAPL": chain})
         assert index == {}
 
+    @pytest.mark.unit
     def test_malformed_chains_do_not_raise(self):
         malformed = {
             "AAPL": {
@@ -659,17 +718,20 @@ class TestBuildOptionMarkIndex:
         index = build_option_mark_index(malformed)
         assert index == {}
 
+    @pytest.mark.unit
     def test_none_input_returns_empty(self):
         assert build_option_mark_index(None) == {}
 
 
 class TestComputeEarningsInWindow:
+    @pytest.mark.unit
     def test_false_when_lookup_returns_none(self):
         assert (
             compute_earnings_in_window("AAPL", dte=5, earnings_lookup=lambda _t: None)
             is False
         )
 
+    @pytest.mark.unit
     def test_false_when_dte_zero(self):
         # Zero DTE means the leg expires today — no future window.
         assert (
@@ -679,6 +741,7 @@ class TestComputeEarningsInWindow:
             is False
         )
 
+    @pytest.mark.unit
     def test_true_when_within_window(self):
         future = (date.today() + timedelta(days=3)).isoformat()
         assert (
@@ -688,6 +751,7 @@ class TestComputeEarningsInWindow:
             is True
         )
 
+    @pytest.mark.unit
     def test_false_when_after_window(self):
         future = (date.today() + timedelta(days=30)).isoformat()
         assert (
@@ -697,6 +761,7 @@ class TestComputeEarningsInWindow:
             is False
         )
 
+    @pytest.mark.unit
     def test_false_when_lookup_returns_garbage(self):
         assert (
             compute_earnings_in_window(
@@ -712,6 +777,7 @@ class TestDeriveOpenLegsV05Signals:
     def _position(self, ticker: str, position_id: str, trades: list[dict]) -> dict:
         return {"id": position_id, "ticker": ticker, "trades": trades}
 
+    @pytest.mark.unit
     def test_includes_v05_signal_fields(self):
         positions = [
             self._position(
@@ -748,6 +814,7 @@ class TestDeriveOpenLegsV05Signals:
         # Earnings lookup defaults to cache-miss → False.
         assert leg["earnings_in_window"] is False
 
+    @pytest.mark.unit
     def test_profit_target_status_uses_matching_option_mark(self):
         positions = [
             self._position(
@@ -778,6 +845,7 @@ class TestDeriveOpenLegsV05Signals:
         assert status["captured_pct"] == pytest.approx(0.60)
         assert status["state"] == "captured_50"
 
+    @pytest.mark.unit
     def test_profit_target_status_unknown_when_mark_key_absent(self):
         positions = [
             self._position(
@@ -809,6 +877,7 @@ class TestDeriveOpenLegsV05Signals:
             "state": "unknown",
         }
 
+    @pytest.mark.unit
     def test_earnings_lookup_must_not_be_called_with_network(self):
         # Custom lookup proves derive_open_legs uses cache-only semantics
         # via the injected callable. No real network is allowed.
@@ -863,6 +932,7 @@ class TestDeriveOpenLegsRuleMonitor:
         trade.update(overrides)
         return trade
 
+    @pytest.mark.unit
     def test_every_leg_carries_verdict_layer_fields(self):
         positions = [
             self._position("AAPL", "p-1", [self._trade(expiration="2026-07-31")])
@@ -879,6 +949,7 @@ class TestDeriveOpenLegsRuleMonitor:
         assert "triggered_rules" in leg
         assert len(leg["triggered_rules"]) == 4
 
+    @pytest.mark.unit
     def test_quiet_leg_verdict_is_hold(self):
         # 87 DTE, OTM, no mark → nothing fires.
         positions = [
@@ -892,6 +963,7 @@ class TestDeriveOpenLegsRuleMonitor:
         assert legs[0]["verdict"] == "hold"
         assert legs[0]["verdict_label"] == "Hold"
 
+    @pytest.mark.unit
     def test_profit_take_verdict_with_live_mark(self):
         # Premium 1.00, mark 0.40 → 60% captured → profit-take verdict.
         positions = [
@@ -907,6 +979,7 @@ class TestDeriveOpenLegsRuleMonitor:
         assert legs[0]["verdict"] == "profit_take_review"
         assert legs[0]["verdict_label"] == "Review · 50%"
 
+    @pytest.mark.unit
     def test_dte_review_window_threshold_honored(self):
         # 25-DTE leg with dte_review_days=30 → fires; with default 21 → quiet.
         positions = [
@@ -928,6 +1001,7 @@ class TestDeriveOpenLegsRuleMonitor:
         )
         assert quiet[0]["verdict"] == "hold"
 
+    @pytest.mark.unit
     def test_expiration_warning_threshold_honored(self):
         # 10-DTE OTM leg: fires only when expiration_warning_days >= 10.
         positions = [
@@ -959,6 +1033,7 @@ class TestDeriveOpenLegsEconomics:
             "trades": trades,
         }
 
+    @pytest.mark.unit
     def test_covered_call_leg_carries_economics(self):
         # A short call against 100 held shares, with a live mark — the F 15C
         # worked example surfaced through derive_open_legs.
@@ -993,6 +1068,7 @@ class TestDeriveOpenLegsEconomics:
         assert leg["pnl_dollars"] == 22.84
         assert leg["cost_to_close"] == 15.50
 
+    @pytest.mark.unit
     def test_naked_call_leg_when_no_shares(self):
         # A short call on a position holding 0 shares → naked.
         positions = [
@@ -1020,6 +1096,7 @@ class TestDeriveOpenLegsEconomics:
         )
         assert legs[0]["coverage"] == "naked"
 
+    @pytest.mark.unit
     def test_short_put_leg_has_no_coverage(self):
         # A cash-secured put always has coverage None, even with 0 shares.
         positions = [
@@ -1047,6 +1124,7 @@ class TestDeriveOpenLegsEconomics:
         )
         assert legs[0]["coverage"] is None
 
+    @pytest.mark.unit
     def test_wheel_position_per_leg_coverage(self):
         # One wheel position holding 100 shares carries both a sell_put and a
         # sell_call leg — coverage is derived per-leg, not per-position: the
@@ -1087,6 +1165,7 @@ class TestDeriveOpenLegsEconomics:
         assert by_id["t-call"]["coverage"] == "covered"
         assert by_id["t-put"]["coverage"] is None
 
+    @pytest.mark.unit
     def test_degraded_leg_keeps_coverage_drops_dollars(self):
         # No option mark for the leg → pnl_dollars / cost_to_close degrade to
         # None, but the naked coverage badge (from shares) still derives.
@@ -1121,6 +1200,7 @@ class TestDeriveOpenLegsEconomics:
 
     # ---- V1.0.8 / #251 — partial-coverage tri-state ----
 
+    @pytest.mark.unit
     def test_wheel_position_per_leg_partial_coverage(self):
         # 100 held shares + 2 short calls (200 shares' worth of obligation).
         # Both call legs share the same position dict — the per-leg `quantity`
@@ -1164,6 +1244,7 @@ class TestDeriveOpenLegsEconomics:
         # The cash-secured put leg remains coverage-less.
         assert by_id["t-put-1x"]["coverage"] is None
 
+    @pytest.mark.unit
     def test_partial_at_boundary(self):
         # 99 shares vs. 1 short call (100 shares needed) — one share short of
         # covered. The strict-inequality lower boundary of the `covered` branch.
@@ -1192,6 +1273,7 @@ class TestDeriveOpenLegsEconomics:
         )
         assert legs[0]["coverage"] == "partial"
 
+    @pytest.mark.unit
     def test_covered_when_shares_meet_obligation_exactly(self):
         # 100 shares vs. 1 short call (100 shares needed) — the inclusive
         # boundary of the `covered` branch. An exact match is `covered`, not
@@ -1232,6 +1314,7 @@ class TestDashboardOpenLegSchemaBackwardCompat:
     (legacy tests, cached fixtures, downstream consumers).
     """
 
+    @pytest.mark.unit
     def test_dashboard_open_leg_schema_accepts_new_fields(self):
         # A minimal payload that mirrors the pre-#246 shape — none of the
         # four V1.0.6 economics fields are supplied.
@@ -1279,6 +1362,7 @@ class TestDashboardOpenLegQuantity:
             "trades": trades,
         }
 
+    @pytest.mark.unit
     def test_quantity_field_defaults_to_1(self):
         # A pre-#252 payload (no `quantity` key) must still validate, with
         # `quantity` resolving to `1`. Protects backward compat with legacy
@@ -1300,6 +1384,7 @@ class TestDashboardOpenLegQuantity:
         leg = DashboardOpenLeg(**old_payload)
         assert leg.quantity == 1
 
+    @pytest.mark.unit
     def test_quantity_2_dollars_reconcile(self):
         # qty=2, premium=$3.00/sh, current_mid=$1.50/sh.
         # Credit received  = premium * 100 * qty  = 3.00 * 100 * 2 = $600
@@ -1338,6 +1423,7 @@ class TestDashboardOpenLegQuantity:
         # The reconciliation identity the InspectPanel relies on:
         assert leg["pnl_dollars"] + leg["cost_to_close"] == leg["premium"] * 100 * leg["quantity"]
 
+    @pytest.mark.unit
     def test_quantity_3_economics_scale(self):
         # Two-leg comparison: qty=1 vs qty=3 with identical premium/mid → the
         # qty=3 leg's dollar figures are exactly 3× the qty=1 leg's. Confirms

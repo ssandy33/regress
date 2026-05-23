@@ -91,6 +91,7 @@ def _create_sample_trade(db_session, position_id, **overrides):
 # --- Position CRUD ---
 
 
+@pytest.mark.unit
 def test_create_position(db_session):
     result = _create_sample_position(db_session)
     assert result["ticker"] == "AAPL"
@@ -104,11 +105,13 @@ def test_create_position(db_session):
     assert len(result["id"]) == 36  # UUID4 format
 
 
+@pytest.mark.unit
 def test_get_positions_empty(db_session):
     result = get_positions(db_session)
     assert result == []
 
 
+@pytest.mark.unit
 def test_get_positions_after_create(db_session):
     _create_sample_position(db_session)
     result = get_positions(db_session)
@@ -116,6 +119,7 @@ def test_get_positions_after_create(db_session):
     assert result[0]["ticker"] == "AAPL"
 
 
+@pytest.mark.unit
 def test_get_positions_filter_by_status(db_session):
     _create_sample_position(db_session, ticker="AAPL")
     pos2 = _create_sample_position(db_session, ticker="MSFT")
@@ -130,6 +134,7 @@ def test_get_positions_filter_by_status(db_session):
     assert closed_positions[0]["ticker"] == "MSFT"
 
 
+@pytest.mark.unit
 def test_get_position_by_id(db_session):
     created = _create_sample_position(db_session)
     result = get_position(db_session, created["id"])
@@ -142,11 +147,13 @@ def test_get_position_by_id(db_session):
     assert "min_compliant_cc_strike" in result
 
 
+@pytest.mark.unit
 def test_get_position_not_found(db_session):
     result = get_position(db_session, "nonexistent-id")
     assert result is None
 
 
+@pytest.mark.unit
 def test_update_position(db_session):
     created = _create_sample_position(db_session)
     updated = update_position(
@@ -161,6 +168,7 @@ def test_update_position(db_session):
     assert updated["ticker"] == "AAPL"
 
 
+@pytest.mark.unit
 def test_update_position_not_found(db_session):
     result = update_position(
         db_session, "nonexistent-id", PositionUpdate(notes="test")
@@ -171,6 +179,7 @@ def test_update_position_not_found(db_session):
 # --- Trade CRUD ---
 
 
+@pytest.mark.unit
 def test_create_trade(db_session):
     position = _create_sample_position(db_session)
     trade = _create_sample_trade(db_session, position["id"])
@@ -184,11 +193,13 @@ def test_create_trade(db_session):
     assert "id" in trade
 
 
+@pytest.mark.unit
 def test_create_trade_invalid_position(db_session):
     trade = _create_sample_trade(db_session, "nonexistent-position-id")
     assert trade is None
 
 
+@pytest.mark.unit
 def test_update_trade(db_session):
     position = _create_sample_position(db_session)
     trade = _create_sample_trade(db_session, position["id"])
@@ -204,6 +215,7 @@ def test_update_trade(db_session):
     assert updated["strike"] == 48.0
 
 
+@pytest.mark.unit
 def test_delete_trade(db_session):
     position = _create_sample_position(db_session)
     trade = _create_sample_trade(db_session, position["id"])
@@ -213,10 +225,12 @@ def test_delete_trade(db_session):
     assert len(pos["trades"]) == 0
 
 
+@pytest.mark.unit
 def test_delete_trade_not_found(db_session):
     assert delete_trade(db_session, "nonexistent-trade-id") is False
 
 
+@pytest.mark.unit
 def test_update_trade_not_found(db_session):
     result = update_trade(
         db_session, "nonexistent-trade-id", TradeUpdate(premium=2.00)
@@ -227,6 +241,7 @@ def test_update_trade_not_found(db_session):
 # --- Computed fields integration ---
 
 
+@pytest.mark.unit
 def test_adjusted_basis_with_premiums(db_session):
     """Create position + sell trades, verify computed adjusted_cost_basis."""
     position = _create_sample_position(db_session, broker_cost_basis=5000.0)
@@ -241,6 +256,7 @@ def test_adjusted_basis_with_premiums(db_session):
     assert result["adjusted_cost_basis"] == 4650.0
 
 
+@pytest.mark.unit
 def test_adjusted_basis_mixed_trades(db_session):
     """Sell + buy-to-close trades should net correctly."""
     position = _create_sample_position(db_session, broker_cost_basis=5000.0)
@@ -259,6 +275,7 @@ def test_adjusted_basis_mixed_trades(db_session):
     assert result["adjusted_cost_basis"] == 4850.0
 
 
+@pytest.mark.unit
 def test_adjusted_basis_no_trades(db_session):
     """With no trades, adjusted_cost_basis equals broker_cost_basis."""
     position = _create_sample_position(db_session, broker_cost_basis=5000.0)
@@ -267,6 +284,7 @@ def test_adjusted_basis_no_trades(db_session):
     assert result["adjusted_cost_basis"] == 5000.0
 
 
+@pytest.mark.unit
 def test_adjusted_basis_excludes_assignment_consumed_premium(db_session):
     """Issue #183: total_premiums must not double-count the put netted into basis.
 
@@ -325,6 +343,7 @@ def test_adjusted_basis_excludes_assignment_consumed_premium(db_session):
     assert result["adjusted_cost_basis"] == pytest.approx(1320.66, abs=1e-4)
 
 
+@pytest.mark.unit
 def test_adjusted_basis_post_assignment_cc_subtracts_only_new_premium(db_session):
     """Issue #183 follow-on: a CC sold after assignment IS subtracted normally.
 
@@ -385,6 +404,7 @@ def test_adjusted_basis_post_assignment_cc_subtracts_only_new_premium(db_session
     assert result["adjusted_cost_basis"] == pytest.approx(1280.66, abs=1e-4)
 
 
+@pytest.mark.unit
 def test_min_compliant_cc_strike(db_session):
     """Verify 1.10x calculation on adjusted basis."""
     position = _create_sample_position(
@@ -404,6 +424,7 @@ def test_min_compliant_cc_strike(db_session):
 # --- Input validation ---
 
 
+@pytest.mark.unit
 def test_strategy_field_silently_ignored_on_create():
     """Issue #131: ``strategy`` is no longer a PositionCreate field.
 
@@ -420,6 +441,7 @@ def test_strategy_field_silently_ignored_on_create():
     assert not hasattr(pos, "strategy")
 
 
+@pytest.mark.unit
 def test_invalid_trade_type_rejected():
     """Invalid trade_type value should be rejected by Pydantic."""
     with pytest.raises(ValidationError):
@@ -433,6 +455,7 @@ def test_invalid_trade_type_rejected():
         )
 
 
+@pytest.mark.unit
 def test_zero_shares_rejected():
     """shares=0 should be rejected by Pydantic validation."""
     with pytest.raises(ValidationError):
@@ -444,6 +467,7 @@ def test_zero_shares_rejected():
         )
 
 
+@pytest.mark.unit
 def test_invalid_close_reason_rejected():
     """Invalid close_reason should be rejected by Pydantic."""
     with pytest.raises(ValidationError):

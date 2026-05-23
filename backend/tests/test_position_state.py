@@ -124,6 +124,7 @@ def _seed_position(
 class TestSingleTrades:
     """Recomputer applied to ledgers with a single trade type."""
 
+    @pytest.mark.unit
     def test_sell_put_only_stays_open_zero_shares(self, db_session):
         pos = _seed_position(
             db_session,
@@ -150,6 +151,7 @@ class TestSingleTrades:
         assert result.broker_cost_basis == 0.0
         assert result.closed_at is None
 
+    @pytest.mark.unit
     def test_sell_call_only_stays_open(self, db_session):
         pos = _seed_position(
             db_session,
@@ -178,6 +180,7 @@ class TestSingleTrades:
 class TestLifecycleScenarios:
     """End-to-end cycles a wheel trader actually walks through."""
 
+    @pytest.mark.unit
     def test_sell_put_then_buy_to_close_closes_position(self, db_session):
         pos = _seed_position(
             db_session,
@@ -205,6 +208,7 @@ class TestLifecycleScenarios:
         assert result.broker_cost_basis == 0.0
         assert result.closed_at == "2026-03-05"
 
+    @pytest.mark.unit
     def test_sell_put_then_assignment_acquires_shares(self, db_session):
         pos = _seed_position(
             db_session,
@@ -231,6 +235,7 @@ class TestLifecycleScenarios:
         assert result.shares == 100
         assert result.broker_cost_basis == 1350.0
 
+    @pytest.mark.unit
     def test_full_wheel_cycle_called_away(self, db_session):
         pos = _seed_position(
             db_session,
@@ -270,6 +275,7 @@ class TestLifecycleScenarios:
         assert result.broker_cost_basis == 0.0
         assert result.closed_at == "2026-03-20"
 
+    @pytest.mark.unit
     def test_sell_put_then_expired_closes_position(self, db_session):
         pos = _seed_position(
             db_session,
@@ -297,6 +303,7 @@ class TestLifecycleScenarios:
         assert result.broker_cost_basis == 0.0
         assert result.closed_at == "2026-04-17"
 
+    @pytest.mark.unit
     def test_double_assignment_aggregates_shares_and_basis(self, db_session):
         pos = _seed_position(
             db_session,
@@ -335,6 +342,7 @@ class TestLifecycleScenarios:
         assert result.shares == 200
         assert result.broker_cost_basis == pytest.approx(2800.0 + 3000.0)
 
+    @pytest.mark.unit
     def test_two_open_legs_one_closed_position_stays_open(self, db_session):
         pos = _seed_position(
             db_session,
@@ -372,6 +380,7 @@ class TestLifecycleScenarios:
         assert result.shares == 0
         assert result.closed_at is None
 
+    @pytest.mark.unit
     def test_covered_call_expires_keeps_shares(self, db_session):
         # Wheel mid-cycle: assigned 100 shares from a put, then sold a covered
         # call that expired worthless. Position must stay open with shares and
@@ -418,6 +427,7 @@ class TestLifecycleScenarios:
         assert result.broker_cost_basis == pytest.approx(1350.0)
         assert result.closed_at is None
 
+    @pytest.mark.unit
     def test_partial_called_away_keeps_position_open(self, db_session):
         # 200 shares held (two assignments at $20), 1 call exercised at $22.
         # Expectation: 100 shares remain, basis halved, status stays open.
@@ -480,9 +490,11 @@ class TestLifecycleScenarios:
 class TestEdgeCases:
     """Defensive behavior when the trade ledger is unusual or partially valid."""
 
+    @pytest.mark.unit
     def test_returns_none_for_unknown_position_id(self, db_session):
         assert recompute_position_state(db_session, "nonexistent-id") is None
 
+    @pytest.mark.unit
     def test_orphan_buy_to_close_does_not_raise(self, db_session, caplog):
         # Closing trade with no matching open leg; recomputer must not raise.
         pos = _seed_position(
@@ -509,6 +521,7 @@ class TestEdgeCases:
             for record in caplog.records
         )
 
+    @pytest.mark.unit
     def test_idempotent_two_runs_same_state(self, db_session):
         pos = _seed_position(
             db_session,
@@ -534,6 +547,7 @@ class TestEdgeCases:
         second = recompute_position_state(db_session, pos.id)
         assert (second.status, second.shares, second.broker_cost_basis, second.closed_at) == snapshot
 
+    @pytest.mark.unit
     def test_out_of_order_trades_sorted_by_opened_at(self, db_session):
         # Insert assignment first (chronologically later), then sell_put.
         pos = _seed_position(
@@ -563,6 +577,7 @@ class TestEdgeCases:
         assert result.shares == 100
         assert result.broker_cost_basis == 1350.0
 
+    @pytest.mark.unit
     def test_dry_run_does_not_commit(self, db_session):
         pos = _seed_position(
             db_session,
@@ -597,6 +612,7 @@ class TestEdgeCases:
         assert reloaded.shares == 999
         assert reloaded.broker_cost_basis == 12345.67
 
+    @pytest.mark.unit
     def test_quantity_two_assignment_acquires_two_lots(self, db_session):
         # A single assignment row with quantity=2 should acquire 200 shares
         # at strike, and consume 2 open put legs at the same strike/expiration.
@@ -655,27 +671,33 @@ class TestDeriveStrategyLabel:
             trade_id="test-leg-call",
         )
 
+    @pytest.mark.unit
     def test_zero_shares_only_open_puts_is_csp(self):
         assert _derive_strategy_label(0, [self._put_leg()]) == "csp"
 
+    @pytest.mark.unit
     def test_shares_held_only_open_calls_is_cc(self):
         assert _derive_strategy_label(100, [self._call_leg()]) == "cc"
 
+    @pytest.mark.unit
     def test_shares_held_open_puts_and_calls_is_wheel(self):
         assert (
             _derive_strategy_label(100, [self._put_leg(), self._call_leg()])
             == "wheel"
         )
 
+    @pytest.mark.unit
     def test_shares_held_no_open_legs_is_holding(self):
         assert _derive_strategy_label(100, []) == "holding"
 
+    @pytest.mark.unit
     def test_zero_shares_no_open_legs_is_csp(self):
         # The closed-position case: status is closed and the label is not
         # rendered on the dashboard, but the helper still returns a defined
         # label so callers can use it unconditionally.
         assert _derive_strategy_label(0, []) == "csp"
 
+    @pytest.mark.unit
     def test_zero_shares_only_open_calls_is_cc_with_warning(self, caplog):
         # Anomalous (naked-call) case: derive ``cc`` and log a warning
         # because no shares + open calls should not occur in a wheel-only
@@ -689,6 +711,7 @@ class TestDeriveStrategyLabel:
             for record in caplog.records
         )
 
+    @pytest.mark.unit
     def test_shares_held_only_open_puts_is_csp(self):
         # Layered-entry edge case: short put while holding shares (e.g.
         # selling a deeper put after assignment but before the next call).
@@ -699,6 +722,7 @@ class TestDeriveStrategyLabel:
 class TestRecomputeWritesDerivedStrategy:
     """Integration: ``recompute_position_state`` must persist the derived label."""
 
+    @pytest.mark.unit
     def test_csp_flow_writes_csp_label(self, db_session):
         pos = _seed_position(
             db_session,
@@ -722,6 +746,7 @@ class TestRecomputeWritesDerivedStrategy:
         assert result.shares == 0
         assert result.strategy == "csp"
 
+    @pytest.mark.unit
     def test_holding_flow_writes_holding_label(self, db_session):
         # sell_put → assignment leaves 100 shares, no open legs → holding.
         pos = _seed_position(
@@ -748,6 +773,7 @@ class TestRecomputeWritesDerivedStrategy:
         assert result.shares == 100
         assert result.strategy == "holding"
 
+    @pytest.mark.unit
     def test_cc_flow_writes_cc_label(self, db_session):
         # Hold shares + open call leg → cc.
         pos = _seed_position(
@@ -784,6 +810,7 @@ class TestRecomputeWritesDerivedStrategy:
         assert result.shares == 100
         assert result.strategy == "cc"
 
+    @pytest.mark.unit
     def test_wheel_flow_writes_wheel_label(self, db_session):
         # Hold shares + open call AND open put → wheel.
         pos = _seed_position(
@@ -824,6 +851,7 @@ class TestRecomputeWritesDerivedStrategy:
         assert result.shares == 100
         assert result.strategy == "wheel"
 
+    @pytest.mark.unit
     def test_closed_position_retains_last_derived_label(self, db_session):
         # Full round trip → shares back to 0, no open legs → status closed.
         # The label is whatever the helper says for ``(0, [])`` — currently
@@ -866,6 +894,7 @@ class TestRecomputeWritesDerivedStrategy:
         assert result.shares == 0
         assert result.strategy == "csp"
 
+    @pytest.mark.unit
     def test_recompute_overwrites_stale_label(self, db_session):
         # Seeded with "wheel" but real ledger derives "holding". The
         # recomputer must overwrite the stale value — this is the user-
@@ -909,6 +938,7 @@ class TestLegPairingOnResolution:
     (calendar fallback).
     """
 
+    @pytest.mark.unit
     def test_sell_put_assignment_closes_put_leg(self, db_session):
         # AC #1: After importing a wheel cycle ``sell_put → assignment`` the
         # originating ``sell_put`` leg is closed and does not appear in the
@@ -946,6 +976,7 @@ class TestLegPairingOnResolution:
         assert sell_put is not None
         assert sell_put.closed_at == "2026-03-27"
 
+    @pytest.mark.unit
     def test_sell_call_called_away_closes_call_leg(self, db_session):
         # AC #2: After importing ``sell_call → called_away`` the originating
         # ``sell_call`` leg is closed.
@@ -989,6 +1020,7 @@ class TestLegPairingOnResolution:
         assert result.status == "closed"
         assert result.shares == 0
 
+    @pytest.mark.unit
     def test_sell_put_past_expiration_no_close_trade_closes_calendar(
         self, db_session
     ):
@@ -1026,6 +1058,7 @@ class TestLegPairingOnResolution:
         assert sell_put is not None
         assert sell_put.closed_at == "2025-09-26"
 
+    @pytest.mark.unit
     def test_sell_call_past_expiration_no_close_trade_closes_calendar(
         self, db_session
     ):
@@ -1052,6 +1085,7 @@ class TestLegPairingOnResolution:
         assert result.shares == 0
         assert result.closed_at == "2025-12-19"
 
+    @pytest.mark.unit
     def test_three_stacked_assignments_aggregate_to_300_shares(self, db_session):
         # AC #5: Multiple stacked assignments (the user's reported SOFI case)
         # all close their puts and shares accumulate to 300.
@@ -1112,6 +1146,7 @@ class TestLegPairingOnResolution:
         )
         assert result.strategy == "holding"
 
+    @pytest.mark.unit
     def test_future_expiration_no_close_trade_stays_open(self, db_session):
         # AC #4: Open legs whose expiration is today or later with no
         # closing trade must remain open — calendar fallback must not
@@ -1144,6 +1179,7 @@ class TestFifoFallbackForDirtyData:
     """Strict-then-FIFO pairing covers Schwab CSV rows whose strike or
     expiration drifts slightly from the originating short leg."""
 
+    @pytest.mark.unit
     def test_assignment_with_mismatched_strike_closes_via_fifo(self, db_session):
         # Resolving ``assignment`` strike differs from the open ``sell_put``
         # by a penny. Strict match fails; FIFO fallback consumes the only
@@ -1178,6 +1214,7 @@ class TestFifoFallbackForDirtyData:
         assert result.broker_cost_basis == pytest.approx(1349.0)
         assert result.strategy == "holding"
 
+    @pytest.mark.unit
     def test_called_away_with_mismatched_strike_closes_via_fifo(self, db_session):
         pos = _seed_position(
             db_session,
@@ -1227,6 +1264,7 @@ class TestUnpairedResolvingEvent:
         # genuine first-warning behavior regardless of test order.
         _reset_unpaired_warning_cache()
 
+    @pytest.mark.unit
     def test_assignment_with_no_matching_put_leg_warns_but_no_error(
         self, db_session, caplog
     ):
@@ -1260,6 +1298,7 @@ class TestUnpairedResolvingEvent:
         assert result.shares == 100
         assert result.broker_cost_basis == pytest.approx(5000.0)
 
+    @pytest.mark.unit
     def test_repeat_recompute_does_not_re_emit_warning(
         self, db_session, caplog
     ):
@@ -1322,6 +1361,7 @@ class TestUnpairedResolvingEvent:
 class TestCalendarCloseHelper:
     """Pure-function unit tests for ``_apply_calendar_close``."""
 
+    @pytest.mark.unit
     def test_empty_open_legs_returns_empty_and_none(self):
         still, latest, consumed = _apply_calendar_close(
             [], "F", date(2026, 5, 8)
@@ -1330,6 +1370,7 @@ class TestCalendarCloseHelper:
         assert latest is None
         assert consumed == []
 
+    @pytest.mark.unit
     def test_all_future_legs_unchanged(self):
         legs = [
             _LegKey(
@@ -1352,6 +1393,7 @@ class TestCalendarCloseHelper:
         assert latest is None
         assert consumed == []
 
+    @pytest.mark.unit
     def test_mix_of_past_and_future_legs(self):
         past = _LegKey(
             option_type="put",
@@ -1374,6 +1416,7 @@ class TestCalendarCloseHelper:
         # Trade.closed_at on the originating rows (issue #136).
         assert consumed == [past]
 
+    @pytest.mark.unit
     def test_multiple_past_legs_returns_latest_expiration(self):
         leg_a = _LegKey(
             option_type="put",
@@ -1403,6 +1446,7 @@ class TestCalendarCloseHelper:
         # callers can correlate consumed legs back to opening trades.
         assert consumed == [leg_a, leg_b, leg_c]
 
+    @pytest.mark.unit
     def test_unparseable_expiration_leaves_leg_alone(self):
         # Defensive: a malformed expiration string shouldn't trigger
         # calendar close (we can't prove it's past expiration).
@@ -1424,6 +1468,7 @@ class TestCalendarCloseRegressionGuard:
     """Calendar fallback must not regress the covered-call-with-shares case
     introduced in PR #130 (``test_covered_call_expires_keeps_shares``)."""
 
+    @pytest.mark.unit
     def test_calendar_close_does_not_regress_covered_call_with_shares(
         self, db_session
     ):
@@ -1499,6 +1544,7 @@ class TestPersistsTradeClosedAt:
     regression in the write-back loop is caught here.
     """
 
+    @pytest.mark.unit
     def test_assignment_stamps_closed_at_on_consumed_put(self, db_session):
         # AC #1 (strict-match path): ``sell_put → assignment`` stamps the
         # consumed sell_put's closed_at to the assignment's opened_at.
@@ -1530,6 +1576,7 @@ class TestPersistsTradeClosedAt:
         # closed_at == resolving trade's opened_at (the assignment's date).
         assert sell_put.closed_at == "2026-03-27"
 
+    @pytest.mark.unit
     def test_called_away_stamps_closed_at_on_consumed_call(self, db_session):
         # AC #1 (call side): ``sell_call → called_away`` stamps the consumed
         # sell_call's closed_at to the called_away's opened_at.
@@ -1576,6 +1623,7 @@ class TestPersistsTradeClosedAt:
         assert sell_call.closed_at == "2026-03-20"
         assert sell_put.closed_at == "2026-02-20"
 
+    @pytest.mark.unit
     def test_buy_to_close_stamps_closed_at_on_consumed_leg(self, db_session):
         # AC #1 (BTC variant): a ``sell_put → buy_put_close`` cycle stamps
         # the sell_put's closed_at to the buy_put_close's opened_at.
@@ -1604,6 +1652,7 @@ class TestPersistsTradeClosedAt:
         assert sell_put is not None
         assert sell_put.closed_at == "2026-03-05"
 
+    @pytest.mark.unit
     def test_fifo_fallback_stamps_closed_at_on_consumed_leg(self, db_session):
         # AC #2: penny-drift assignment matches via FIFO fallback. The
         # consumed sell_put still gets ``closed_at`` stamped to the
@@ -1636,6 +1685,7 @@ class TestPersistsTradeClosedAt:
         assert sell_put is not None
         assert sell_put.closed_at == "2026-03-27"
 
+    @pytest.mark.unit
     def test_calendar_close_stamps_closed_at_with_expiration(self, db_session):
         # AC #3: calendar-fallback close stamps the leg's expiration on the
         # consumed Trade (no real resolving trade exists to supply opened_at).
@@ -1661,6 +1711,7 @@ class TestPersistsTradeClosedAt:
         # No resolving trade — the leg's expiration is the canonical close.
         assert sell_put.closed_at == "2025-09-26"
 
+    @pytest.mark.unit
     def test_recompute_idempotent_preserves_trade_closed_at(self, db_session):
         # AC #5: a second recompute on the same ledger does NOT shift the
         # ``closed_at`` value already written on consumed legs. Locks the
@@ -1701,6 +1752,7 @@ class TestPersistsTradeClosedAt:
         db_session.refresh(sell_put)
         assert sell_put.closed_at == first_close
 
+    @pytest.mark.unit
     def test_orphan_assignment_does_not_stamp_anything(self, db_session):
         # When both strict and FIFO passes fail (no matching open leg), no
         # Trade should receive a phantom ``closed_at`` stamp — the orphan
@@ -1727,6 +1779,7 @@ class TestPersistsTradeClosedAt:
         assert assignment is not None
         assert assignment.closed_at is None
 
+    @pytest.mark.unit
     def test_holding_label_yields_empty_open_legs_via_derive_open_legs(
         self, db_session
     ):
@@ -1786,6 +1839,7 @@ class TestPersistsTradeClosedAt:
         # Holding-labeled position must surface zero open legs.
         assert legs == []
 
+    @pytest.mark.unit
     def test_buy_to_close_stamp_outranks_calendar_fallback(self, db_session):
         # When a real ``buy_put_close`` resolves the leg, that resolution
         # stamp must win — even when the recompute runs after the leg's
@@ -1820,6 +1874,7 @@ class TestPersistsTradeClosedAt:
         # Real resolving date wins, not the synthetic expiration.
         assert sell_put.closed_at == "2026-03-05"
 
+    @pytest.mark.unit
     def test_real_resolution_overwrites_synthetic_calendar_stamp(
         self, db_session
     ):
@@ -1879,6 +1934,7 @@ class TestPersistsTradeClosedAt:
         db_session.refresh(sell_put)
         assert sell_put.closed_at == "2026-03-15"
 
+    @pytest.mark.unit
     def test_called_away_overwrites_synthetic_calendar_stamp(self, db_session):
         # Symmetric variant of the issue #138 regression: synthetic calendar
         # stamp on a sell_call must be overwritten by a real ``called_away``
@@ -1941,6 +1997,7 @@ class TestPersistsTradeClosedAt:
         db_session.refresh(sell_call)
         assert sell_call.closed_at == "2026-03-18"
 
+    @pytest.mark.unit
     def test_real_resolution_value_preserved_when_already_stamped(
         self, db_session
     ):
@@ -1987,6 +2044,7 @@ class TestPersistsTradeClosedAt:
         db_session.refresh(sell_put)
         assert sell_put.closed_at == "2025-09-15"
 
+    @pytest.mark.unit
     def test_calendar_close_recompute_is_idempotent_under_equality_skip(
         self, db_session
     ):
@@ -2065,6 +2123,7 @@ class TestAssignmentBasisNetting:
         # creates rather than a demoted INFO from a prior run.
         _reset_unpaired_warning_cache()
 
+    @pytest.mark.unit
     def test_basis_nets_assignment_premium(self, db_session):
         # Canonical wheel cycle: Sell Put @ $13.50, premium $0.30, fees $0.66,
         # 1 contract → Assignment. Net premium = $30 - $0.66 = $29.34. Basis =
@@ -2097,6 +2156,7 @@ class TestAssignmentBasisNetting:
         assert result.shares == 100
         assert result.broker_cost_basis == pytest.approx(1320.66, abs=1e-4)
 
+    @pytest.mark.unit
     def test_basis_nets_multi_contract_assignment(self, db_session):
         # Sell 5 Puts @ $20.00 premium $0.40 fees $3.30; all 5 assigned.
         # Net premium = 5 * 100 * 0.40 - 3.30 = 200 - 3.30 = 196.70.
@@ -2130,6 +2190,7 @@ class TestAssignmentBasisNetting:
         assert result.shares == 500
         assert result.broker_cost_basis == pytest.approx(9803.30, abs=1e-4)
 
+    @pytest.mark.unit
     def test_basis_prorates_fees_on_partial_assignment(self, db_session):
         # Sell 5 Puts @ $20.00 premium $0.40 fees $3.30; only 3 assigned.
         # Each consumed contract gets ``3.30 / 5 = 0.66`` of the fee budget.
@@ -2168,6 +2229,7 @@ class TestAssignmentBasisNetting:
         assert result.shares == 300
         assert result.broker_cost_basis == pytest.approx(5881.98, abs=1e-4)
 
+    @pytest.mark.unit
     def test_basis_canonical_f_case_exact_1320_66(self, db_session):
         # Locks the user-facing AC from issue #183: the canonical F-case
         # must produce exactly $1320.66 (matches Schwab + IRS records).
@@ -2200,6 +2262,7 @@ class TestAssignmentBasisNetting:
         # 1350 - 29.34 = 1320.66 lands cleanly in float.
         assert result.broker_cost_basis == 1320.66
 
+    @pytest.mark.unit
     def test_basis_multi_cycle_matches_assigned_put_not_expired(
         self, db_session
     ):
@@ -2249,6 +2312,7 @@ class TestAssignmentBasisNetting:
         assert result.shares == 100
         assert result.broker_cost_basis == pytest.approx(1955.66, abs=1e-4)
 
+    @pytest.mark.unit
     def test_basis_falls_back_when_no_matching_put(self, db_session, caplog):
         # Orphan assignment row — basis falls back to raw strike × shares,
         # a WARNING is logged, and the recomputer does not crash.
@@ -2277,6 +2341,7 @@ class TestAssignmentBasisNetting:
             for record in caplog.records
         )
 
+    @pytest.mark.unit
     def test_basis_zero_premium_no_netting_no_warning(self, db_session, caplog):
         # Backward-compat: a sell_put with premium=0.0 (legacy imports) still
         # matches — yielding a net premium of 0.0 — so basis equals raw
@@ -2315,6 +2380,7 @@ class TestComputeAssignmentNetting:
     """Pure-function unit tests for the shared netting helper used by the
     journal read path."""
 
+    @pytest.mark.unit
     def test_no_assignment_returns_empty(self, db_session):
         pos = _seed_position(
             db_session,
@@ -2333,6 +2399,7 @@ class TestComputeAssignmentNetting:
 
         assert compute_assignment_netting(list(pos.trades)) == {}
 
+    @pytest.mark.unit
     def test_assignment_returns_gross_premium_dollars(self, db_session):
         # The helper reports gross premium dollars only — fees are NOT
         # included (compute_total_premiums excludes fees in the same way).
@@ -2362,6 +2429,7 @@ class TestComputeAssignmentNetting:
         # 0.30 * 100 = 30.00 gross premium dollars netted for one contract.
         assert result == {sell_put.id: pytest.approx(30.0, abs=1e-4)}
 
+    @pytest.mark.unit
     def test_orphan_assignment_returns_empty(self, db_session):
         # No matching sell_put → nothing to net. The journal read path uses
         # an empty map so it doesn't double-count premiums that aren't there.

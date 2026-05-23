@@ -15,6 +15,7 @@ from app.services.schwab_auth import SchwabAuthError
 
 
 class TestSymbolMapping:
+    @pytest.mark.unit
     def test_all_mapped_symbols(self):
         assert to_schwab_symbol("^GSPC") == "$SPX.X"
         assert to_schwab_symbol("^IXIC") == "$COMPX"
@@ -24,6 +25,7 @@ class TestSymbolMapping:
         assert to_schwab_symbol("SI=F") == "/SI"
         assert to_schwab_symbol("PL=F") == "/PL"
 
+    @pytest.mark.unit
     def test_passthrough_regular_tickers(self):
         assert to_schwab_symbol("AAPL") == "AAPL"
         assert to_schwab_symbol("MSFT") == "MSFT"
@@ -31,6 +33,7 @@ class TestSymbolMapping:
 
 
 class TestGetQuote:
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_success(self, mock_get, mock_tm_cls):
@@ -60,6 +63,7 @@ class TestGetQuote:
         assert call_kwargs.kwargs["params"] == {"symbols": "AAPL"}
         assert "Bearer test-token" in call_kwargs.kwargs["headers"]["Authorization"]
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_maps_index_symbol(self, mock_get, mock_tm_cls):
@@ -77,6 +81,7 @@ class TestGetQuote:
         assert quote["lastPrice"] == 18.5
         assert mock_get.call_args.kwargs["params"] == {"symbols": "$VIX.X"}
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_401_raises_auth_error(self, mock_get, mock_tm_cls):
@@ -92,6 +97,7 @@ class TestGetQuote:
         with pytest.raises(SchwabAuthError):
             client.get_quote("AAPL")
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_500_raises_client_error(self, mock_get, mock_tm_cls):
@@ -107,6 +113,7 @@ class TestGetQuote:
         with pytest.raises(SchwabClientError):
             client.get_quote("AAPL")
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_missing_symbol_raises(self, mock_get, mock_tm_cls):
@@ -122,6 +129,7 @@ class TestGetQuote:
             client.get_quote("AAPL")
 
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_network_error_raises_client_error(self, mock_get, mock_tm_cls):
@@ -132,6 +140,7 @@ class TestGetQuote:
         with pytest.raises(SchwabClientError, match="Unable to reach Schwab API"):
             client.get_quote("AAPL")
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_401_invalidates_token(self, mock_get, mock_tm_cls):
@@ -152,6 +161,7 @@ class TestGetQuote:
 
 
 class TestGetPriceHistory:
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_success(self, mock_get, mock_tm_cls):
@@ -177,6 +187,7 @@ class TestGetPriceHistory:
         assert df["value"].iloc[0] == 100.0
         assert df["value"].iloc[1] == 102.0
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_empty_candles_raises(self, mock_get, mock_tm_cls):
@@ -191,6 +202,7 @@ class TestGetPriceHistory:
         with pytest.raises(SchwabClientError, match="No price history"):
             client.get_price_history("BADTICKER", "2024-01-01", "2024-01-03")
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_401_raises_auth_error(self, mock_get, mock_tm_cls):
@@ -206,6 +218,7 @@ class TestGetPriceHistory:
         with pytest.raises(SchwabAuthError):
             client.get_price_history("AAPL", "2024-01-01", "2024-01-03")
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_maps_symbol(self, mock_get, mock_tm_cls):
@@ -228,6 +241,7 @@ class TestGetPriceHistory:
         call_kwargs = mock_get.call_args.kwargs
         assert call_kwargs["params"]["symbol"] == "$SPX.X"
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_network_error_raises_client_error(self, mock_get, mock_tm_cls):
@@ -238,6 +252,7 @@ class TestGetPriceHistory:
         with pytest.raises(SchwabClientError, match="Unable to reach Schwab API"):
             client.get_price_history("AAPL", "2024-01-01", "2024-01-03")
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_401_invalidates_token(self, mock_get, mock_tm_cls):
@@ -270,6 +285,7 @@ HANDLER_CALL_ARGS = {
 class TestGetTransactions:
     """Tests for get_transactions request parameters (issue #119)."""
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_transactions_passes_trade_and_receive_and_deliver_types(
@@ -291,6 +307,7 @@ class TestGetTransactions:
         assert "startDate" in params
         assert "endDate" in params
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_transactions_returns_response_json(self, mock_get, mock_tm_cls):
@@ -310,6 +327,7 @@ class TestGetTransactions:
 class TestErrorResponseLogging:
     """Tests for logging Schwab error response bodies (issue #73)."""
 
+    @pytest.mark.unit
     @pytest.mark.parametrize("handler_name", list(HANDLER_CALL_ARGS.keys()))
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
@@ -331,6 +349,7 @@ class TestErrorResponseLogging:
 
         assert any("date range too large" in r.message for r in caplog.records)
 
+    @pytest.mark.unit
     @pytest.mark.parametrize("handler_name", list(HANDLER_CALL_ARGS.keys()))
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
@@ -355,6 +374,7 @@ class TestErrorResponseLogging:
 class TestPeriodTypeAndRetryOn4xx:
     """Issue #286: pricehistory must include periodType=year; 4xx must not be retried."""
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_includes_period_type_year(self, mock_get, mock_tm_cls):
@@ -374,6 +394,7 @@ class TestPeriodTypeAndRetryOn4xx:
         assert params["frequencyType"] == "daily"
         assert params["frequency"] == 1
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_does_not_retry_on_4xx(self, mock_get, mock_tm_cls):
@@ -392,6 +413,7 @@ class TestPeriodTypeAndRetryOn4xx:
 
         assert mock_get.call_count == 1
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_price_history_still_retries_on_5xx(self, mock_get, mock_tm_cls):
@@ -420,6 +442,7 @@ class TestPeriodTypeAndRetryOn4xx:
         assert len(df) == 1
         assert df["value"].iloc[0] == 100.0
 
+    @pytest.mark.unit
     @patch("app.services.schwab_client.SchwabTokenManager")
     @patch("app.services.schwab_client.httpx.get")
     def test_get_quote_does_not_retry_on_4xx(self, mock_get, mock_tm_cls):

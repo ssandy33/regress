@@ -20,6 +20,7 @@ def client_obj():
 
 
 class TestQuoteErrorSanitization:
+    @pytest.mark.unit
     def test_http_error_no_url_leak(self, client_obj):
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 500
@@ -41,6 +42,7 @@ class TestQuoteErrorSanitization:
         assert not URL_PATTERN.search(msg), f"URL leaked: {msg}"
         assert "500" not in msg
 
+    @pytest.mark.unit
     def test_request_error_no_raw_text(self, client_obj):
         exc = httpx.RequestError("Connection refused for https://api.schwabapi.com/v1/quotes")
 
@@ -54,6 +56,7 @@ class TestQuoteErrorSanitization:
 
 
 class TestChainsErrorSanitization:
+    @pytest.mark.unit
     def test_http_error_no_url_leak(self, client_obj):
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 403
@@ -77,6 +80,7 @@ class TestChainsErrorSanitization:
 
 
 class TestPriceHistoryErrorSanitization:
+    @pytest.mark.unit
     def test_http_error_no_url_leak(self, client_obj):
         mock_resp = MagicMock(spec=httpx.Response)
         mock_resp.status_code = 500
@@ -98,6 +102,7 @@ class TestPriceHistoryErrorSanitization:
         assert not URL_PATTERN.search(msg), f"URL leaked: {msg}"
         assert "500" not in msg
 
+    @pytest.mark.unit
     def test_request_error_no_raw_text(self, client_obj):
         exc = httpx.RequestError("SSL error connecting to https://api.schwabapi.com")
 

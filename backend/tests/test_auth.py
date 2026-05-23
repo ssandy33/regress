@@ -10,6 +10,7 @@ Covers acceptance criteria from issue #20 (original auth) and issue #28
 - AC6: github_id and github_secret removed from Settings
 """
 
+import pytest
 import logging
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -71,6 +72,7 @@ def _mock_full_auth(mock_settings, allowed_users=""):
 class TestAC1NoAuthEnvVars:
     """AC1: App works out of the box with no auth env vars set."""
 
+    @pytest.mark.integration
     def test_anonymous_access_when_no_env_vars(self):
         """Protected routes allow anonymous access when no auth env vars are set."""
         app = _make_app()
@@ -84,6 +86,7 @@ class TestAC1NoAuthEnvVars:
         assert resp.json()["user"]["username"] == "anonymous"
         assert resp.json()["user"]["sub"] == "anonymous"
 
+    @pytest.mark.integration
     def test_anonymous_access_without_bearer_token(self):
         """No Authorization header needed when auth is unconfigured."""
         app = _make_app()
@@ -95,18 +98,21 @@ class TestAC1NoAuthEnvVars:
 
         assert resp.status_code == 200
 
+    @pytest.mark.integration
     def test_is_auth_configured_false_when_nothing_set(self):
         """is_auth_configured() returns False when NEXTAUTH_SECRET is not set."""
         with patch("app.auth.settings") as mock_settings:
             _mock_no_auth(mock_settings)
             assert is_auth_configured() is False
 
+    @pytest.mark.integration
     def test_is_auth_configured_false_for_empty_string(self):
         """is_auth_configured() returns False for empty NEXTAUTH_SECRET."""
         with patch("app.auth.settings") as mock_settings:
             mock_settings.nextauth_secret = ""
             assert is_auth_configured() is False
 
+    @pytest.mark.integration
     def test_logs_info_when_unconfigured(self, caplog):
         """Logs an info message when auth is not configured."""
         import app.auth
@@ -133,12 +139,14 @@ class TestAC1NoAuthEnvVars:
 class TestAC2FullAuthEnabled:
     """AC2: Setting NEXTAUTH_SECRET enables full auth (no GitHub secrets needed)."""
 
+    @pytest.mark.integration
     def test_is_auth_configured_true_when_secret_set(self):
         """is_auth_configured() returns True when NEXTAUTH_SECRET is set."""
         with patch("app.auth.settings") as mock_settings:
             _mock_full_auth(mock_settings)
             assert is_auth_configured() is True
 
+    @pytest.mark.integration
     def test_returns_401_when_no_token_provided(self):
         """When auth is configured but no token is sent, return 401."""
         app = _make_app()
@@ -151,6 +159,7 @@ class TestAC2FullAuthEnabled:
         assert resp.status_code == 401
         assert "Authentication required" in resp.json()["detail"]
 
+    @pytest.mark.integration
     def test_returns_user_for_valid_token(self):
         """A valid HS256 JWT returns the user info."""
         app = _make_app()
@@ -168,6 +177,7 @@ class TestAC2FullAuthEnabled:
         assert data["sub"] == "12345"
         assert data["username"] == "testuser"
 
+    @pytest.mark.integration
     def test_returns_401_for_expired_token(self):
         """An expired JWT returns 401."""
         app = _make_app()
@@ -187,6 +197,7 @@ class TestAC2FullAuthEnabled:
         assert resp.status_code == 401
         assert "expired" in resp.json()["detail"].lower()
 
+    @pytest.mark.integration
     def test_returns_401_for_wrong_secret(self):
         """A JWT signed with a different secret returns 401."""
         app = _make_app()
@@ -202,6 +213,7 @@ class TestAC2FullAuthEnabled:
         assert resp.status_code == 401
         assert "Invalid token" in resp.json()["detail"]
 
+    @pytest.mark.integration
     def test_returns_401_for_malformed_token(self):
         """A garbage string returns 401."""
         app = _make_app()
@@ -215,6 +227,7 @@ class TestAC2FullAuthEnabled:
 
         assert resp.status_code == 401
 
+    @pytest.mark.integration
     def test_rejects_blank_username(self):
         """A token with an empty username is rejected."""
         app = _make_app()
@@ -239,12 +252,14 @@ class TestAC2FullAuthEnabled:
 class TestAC3PartialConfig:
     """AC3: With single-var auth model, partial config is not possible."""
 
+    @pytest.mark.integration
     def test_no_partial_config_function(self):
         """_is_partially_configured() has been removed as dead code."""
         import app.auth
 
         assert not hasattr(app.auth, "_is_partially_configured")
 
+    @pytest.mark.integration
     def test_anonymous_access_when_secret_not_set(self):
         """Anonymous access works when NEXTAUTH_SECRET is not set."""
         app = _make_app()
@@ -266,6 +281,7 @@ class TestAC3PartialConfig:
 class TestAC4AllowedUsers:
     """AC4: ALLOWED_USERS still restricts access when auth is enabled."""
 
+    @pytest.mark.integration
     def test_rejects_user_not_in_allowlist(self):
         """A valid token for a user not in ALLOWED_USERS is rejected with 403."""
         app = _make_app()
@@ -281,6 +297,7 @@ class TestAC4AllowedUsers:
         assert resp.status_code == 403
         assert "not authorized" in resp.json()["detail"].lower()
 
+    @pytest.mark.integration
     def test_allows_user_in_allowlist(self):
         """A valid token for a user in ALLOWED_USERS succeeds."""
         app = _make_app()
@@ -296,6 +313,7 @@ class TestAC4AllowedUsers:
         assert resp.status_code == 200
         assert resp.json()["user"]["username"] == "Alice"
 
+    @pytest.mark.integration
     def test_case_insensitive_allowlist(self):
         """Allowlist matching is case-insensitive."""
         app = _make_app()
@@ -310,6 +328,7 @@ class TestAC4AllowedUsers:
 
         assert resp.status_code == 200
 
+    @pytest.mark.integration
     def test_empty_allowlist_allows_any_user(self):
         """When ALLOWED_USERS is empty, any authenticated user is allowed."""
         app = _make_app()
@@ -333,12 +352,14 @@ class TestAC4AllowedUsers:
 class TestAC5NoDevBypass:
     """AC5: DEV_AUTH_BYPASS is removed — not needed when unconfigured = open."""
 
+    @pytest.mark.integration
     def test_no_dev_auth_bypass_in_settings(self):
         """The Settings class no longer has a dev_auth_bypass field."""
         from app.config import Settings
 
         assert "dev_auth_bypass" not in Settings.model_fields
 
+    @pytest.mark.integration
     def test_no_dev_auth_bypass_in_env_example(self):
         """DEV_AUTH_BYPASS is not referenced in .env.example."""
         import pathlib
@@ -348,6 +369,7 @@ class TestAC5NoDevBypass:
             content = env_example.read_text()
             assert "DEV_AUTH_BYPASS" not in content
 
+    @pytest.mark.integration
     def test_anonymous_without_bypass_flag(self):
         """Anonymous access works without any bypass flag when auth is unconfigured."""
         app = _make_app()
@@ -369,18 +391,21 @@ class TestAC5NoDevBypass:
 class TestAC6NoGitHubSecretsInBackend:
     """AC6: GITHUB_ID and GITHUB_SECRET are removed from the backend."""
 
+    @pytest.mark.integration
     def test_no_github_id_in_settings(self):
         """The Settings class no longer has a github_id field."""
         from app.config import Settings
 
         assert "github_id" not in Settings.model_fields
 
+    @pytest.mark.integration
     def test_no_github_secret_in_settings(self):
         """The Settings class no longer has a github_secret field."""
         from app.config import Settings
 
         assert "github_secret" not in Settings.model_fields
 
+    @pytest.mark.integration
     def test_auth_works_without_github_secrets(self):
         """Auth is fully functional with only NEXTAUTH_SECRET."""
         app = _make_app()
@@ -396,6 +421,7 @@ class TestAC6NoGitHubSecretsInBackend:
         assert resp.status_code == 200
         assert resp.json()["user"]["username"] == "testuser"
 
+    @pytest.mark.integration
     def test_is_auth_configured_ignores_github_vars(self):
         """is_auth_configured() only checks NEXTAUTH_SECRET, not GitHub vars."""
         with patch("app.auth.settings") as mock_settings:
@@ -412,6 +438,7 @@ class TestAC6NoGitHubSecretsInBackend:
 class TestRouteProtection:
     """Verify health is public and protected routes require auth when configured."""
 
+    @pytest.mark.integration
     def test_health_check_is_public(self):
         """The /api/health endpoint works without auth.
 
@@ -432,6 +459,7 @@ class TestRouteProtection:
         body = resp.json()
         assert body["status"] == "ok"
 
+    @pytest.mark.integration
     def test_protected_route_returns_401_when_auth_enabled(self):
         """A protected endpoint returns 401 without auth when NEXTAUTH_SECRET is set."""
         from app.main import app
@@ -444,6 +472,7 @@ class TestRouteProtection:
 
         assert resp.status_code == 401
 
+    @pytest.mark.integration
     def test_protected_route_allows_anonymous_when_auth_disabled(self):
         """A protected endpoint allows anonymous access when auth is not configured."""
         app = _make_app()
@@ -456,6 +485,7 @@ class TestRouteProtection:
         assert resp.status_code == 200
         assert resp.json()["user"]["username"] == "anonymous"
 
+    @pytest.mark.integration
     def test_protected_route_allows_anonymous_when_secret_not_set(self):
         """A protected endpoint allows anonymous access when NEXTAUTH_SECRET is not set."""
         app = _make_app()

@@ -29,6 +29,7 @@ def _clear_av_cache():
 class TestAC1_EarningsDatesResolveViaAlphaVantage:
     """AC: Earnings dates resolve correctly via Alpha Vantage."""
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_parses_csv_and_returns_next_future_date(self, mock_get, mock_settings):
@@ -54,6 +55,7 @@ class TestAC1_EarningsDatesResolveViaAlphaVantage:
         assert kwargs["params"]["function"] == "EARNINGS_CALENDAR"
         assert kwargs["params"]["symbol"] == "AAPL"
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_selects_earliest_future_date_from_multiple(self, mock_get, mock_settings):
@@ -80,6 +82,7 @@ class TestAC1_EarningsDatesResolveViaAlphaVantage:
 class TestAC2_EarningsExclusionWorksInScanner:
     """AC: Earnings exclusion still works in scanner when date is available."""
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date")
     @patch("app.services.options_scanner.SchwabClient")
     def test_scan_excludes_expirations_near_earnings(self, mock_client_cls, mock_earnings):
@@ -145,6 +148,7 @@ class TestAC2_EarningsExclusionWorksInScanner:
 class TestAC3_ScannerCompletesWhenAlphaVantageReturnsNone:
     """AC: Scanner completes successfully when Alpha Vantage returns None."""
 
+    @pytest.mark.unit
     @patch("app.services.options_scanner.get_next_earnings_date", return_value=None)
     @patch("app.services.options_scanner.SchwabClient")
     def test_scan_succeeds_with_none_earnings(self, mock_client_cls, _mock_earnings):
@@ -211,6 +215,7 @@ class TestAC4_YfinanceRemovedFromRequirements:
     research/business endpoint (PRD §"API Contracts → A").
     """
 
+    @pytest.mark.unit
     @pytest.mark.skip(
         reason="Superseded by #280 / v1.1.0 PRD — yfinance is the v1 "
         "source for /api/positions/{id}/research/business. The "
@@ -230,6 +235,7 @@ class TestAC5_NoYfinanceImportsInAnyFile:
     new, scoped yfinance integration for the research surface.
     """
 
+    @pytest.mark.unit
     @pytest.mark.skip(
         reason="Superseded by #280 / v1.1.0 — see class docstring."
     )
@@ -253,6 +259,7 @@ class TestAC5_NoYfinanceImportsInAnyFile:
 
         assert violations == [], "yfinance imports found:\n" + "\n".join(violations)
 
+    @pytest.mark.unit
     @pytest.mark.skip(
         reason="Superseded by #280 / v1.1.0 — see class docstring."
     )
@@ -275,6 +282,7 @@ class TestAC5_NoYfinanceImportsInAnyFile:
 class TestAC6_EnvExampleDocumentsAllVars:
     """AC: .env.example documents all 4 new env vars with setup instructions."""
 
+    @pytest.mark.unit
     def test_env_example_has_required_vars(self):
         env_example_path = BACKEND_ROOT.parent / ".env.example"
         content = env_example_path.read_text()

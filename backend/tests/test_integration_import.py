@@ -65,10 +65,12 @@ def mock_schwab():
 
 
 class TestImportPreview:
+    @pytest.mark.integration
     def test_preview_invalid_date_format(self, client):
         resp = client.get("/api/journal/import/preview", params={"start_date": "not-a-date", "end_date": "2025-03-31"})
         assert resp.status_code == 422
 
+    @pytest.mark.integration
     def test_preview_success(self, client, mock_schwab):
         resp = client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
         assert resp.status_code == 200
@@ -82,6 +84,7 @@ class TestImportPreview:
         assert data["trades"][0]["trade_type"] == "sell_put"
         assert data["trades"][1]["ticker"] == "MSFT"
 
+    @pytest.mark.integration
     def test_preview_no_auth_returns_401(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
@@ -91,6 +94,7 @@ class TestImportPreview:
 
 
 class TestImportExecute:
+    @pytest.mark.integration
     def test_import_invalid_date_format(self, client):
         resp = client.post("/api/journal/import", json={
             "start_date": "March 1",
@@ -98,6 +102,7 @@ class TestImportExecute:
         })
         assert resp.status_code == 422
 
+    @pytest.mark.integration
     def test_import_creates_trades(self, client, mock_schwab):
         # Body omits ``position_strategy`` — the field is deprecated under
         # issue #131 and the recomputer derives the label from state.
@@ -125,6 +130,7 @@ class TestImportExecute:
         assert labels["AAPL"] == "csp"
         assert labels["MSFT"] == "cc"
 
+    @pytest.mark.integration
     def test_import_accepts_legacy_strategy_field_but_ignores_it(self, client, mock_schwab):
         """Backwards-compat: old clients sending ``position_strategy`` still
         get a 200, but the value is ignored and the recomputer wins."""
@@ -140,6 +146,7 @@ class TestImportExecute:
         assert labels["AAPL"] == "csp"
         assert labels["MSFT"] == "cc"
 
+    @pytest.mark.integration
     def test_import_skips_duplicates(self, client, mock_schwab):
         # First import
         client.post("/api/journal/import", json={
@@ -157,6 +164,7 @@ class TestImportExecute:
         assert data["skipped_duplicates"] == 2
         assert data["positions_created"] == 0
 
+    @pytest.mark.integration
     def test_import_reuses_existing_position(self, client, mock_schwab):
         # Create a position for AAPL first.
         # ``strategy`` is no longer accepted on PositionCreate (#131); it
@@ -180,6 +188,7 @@ class TestImportExecute:
 class TestImportDateRangeValidation:
     """Tests for date range validation (issue #73)."""
 
+    @pytest.mark.integration
     def test_preview_rejects_range_over_365_days(self, client):
         resp = client.get("/api/journal/import/preview", params={
             "start_date": "2024-01-01",
@@ -188,6 +197,7 @@ class TestImportDateRangeValidation:
         assert resp.status_code == 422
         assert "365" in resp.json()["detail"]
 
+    @pytest.mark.integration
     def test_preview_accepts_range_at_365_days(self, client, mock_schwab):
         resp = client.get("/api/journal/import/preview", params={
             "start_date": "2024-01-01",
@@ -195,6 +205,7 @@ class TestImportDateRangeValidation:
         })
         assert resp.status_code == 200
 
+    @pytest.mark.integration
     def test_import_rejects_range_over_365_days(self, client):
         resp = client.post("/api/journal/import", json={
             "start_date": "2024-01-01",
@@ -203,6 +214,7 @@ class TestImportDateRangeValidation:
         assert resp.status_code == 422
         assert "365" in resp.json()["detail"]
 
+    @pytest.mark.integration
     def test_import_accepts_range_at_365_days(self, client, mock_schwab):
         resp = client.post("/api/journal/import", json={
             "start_date": "2024-01-01",
@@ -214,6 +226,7 @@ class TestImportDateRangeValidation:
 class TestImportAuthErrors:
     """Tests for improved auth error messages and logging (issue #69)."""
 
+    @pytest.mark.integration
     def test_preview_expired_token_returns_specific_detail(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
@@ -225,6 +238,7 @@ class TestImportAuthErrors:
         assert "expired" in resp.json()["detail"].lower()
         assert "Settings" in resp.json()["detail"]
 
+    @pytest.mark.integration
     def test_preview_no_token_returns_not_connected(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
@@ -235,6 +249,7 @@ class TestImportAuthErrors:
         assert resp.status_code == 401
         assert "not connected" in resp.json()["detail"].lower()
 
+    @pytest.mark.integration
     def test_preview_not_configured_returns_setup_message(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
@@ -245,6 +260,7 @@ class TestImportAuthErrors:
         assert resp.status_code == 401
         assert "not configured" in resp.json()["detail"].lower()
 
+    @pytest.mark.integration
     def test_import_expired_token_returns_specific_detail(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
@@ -258,6 +274,7 @@ class TestImportAuthErrors:
         assert resp.status_code == 401
         assert "expired" in resp.json()["detail"].lower()
 
+    @pytest.mark.integration
     def test_generic_auth_error_returns_fallback_detail(self, client):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
@@ -268,6 +285,7 @@ class TestImportAuthErrors:
         assert resp.status_code == 401
         assert resp.json()["detail"] == "Schwab authentication failed. Please re-authorize in Settings."
 
+    @pytest.mark.integration
     def test_auth_error_is_logged(self, client, caplog):
         from app.services.schwab_auth import SchwabAuthCode, SchwabAuthError
         with patch("app.services.schwab_import.SchwabClient") as mock_cls:
@@ -278,6 +296,7 @@ class TestImportAuthErrors:
                 client.get("/api/journal/import/preview", params={"start_date": "2025-03-01", "end_date": "2025-03-31"})
         assert any("Schwab auth failed" in r.message for r in caplog.records)
 
+    @pytest.mark.unit
     def test_schwab_auth_detail_maps_all_codes(self):
         """Verify _schwab_auth_detail returns expected strings for each code."""
         from app.routers.journal import _schwab_auth_detail

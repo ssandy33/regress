@@ -134,6 +134,7 @@ def no_axiom_token(monkeypatch):
 class TestHandlerAttachment:
     """AC: an ``AxiomHandler`` is attached iff ``AXIOM_API_TOKEN`` is set."""
 
+    @pytest.mark.unit
     def test_handler_attached_when_token_set(
         self, isolated_root_logger, mock_axiom_token
     ):
@@ -150,6 +151,7 @@ class TestHandlerAttachment:
             f"expected exactly one AxiomHandler, got {len(axiom_handlers)}"
         )
 
+    @pytest.mark.unit
     def test_no_handler_when_token_unset(
         self, isolated_root_logger, no_axiom_token
     ):
@@ -180,12 +182,14 @@ class TestHandlerAttachment:
             "setup_logging() must not spawn an axiom-log-worker when the token is unset"
         )
 
+    @pytest.mark.unit
     def test_build_handler_returns_none_when_token_blank(self, monkeypatch):
         from app import config as cfg
 
         monkeypatch.setattr(cfg.settings, "axiom_api_token", "", raising=False)
         assert build_axiom_handler() is None
 
+    @pytest.mark.unit
     def test_build_handler_returns_none_when_token_none(self, monkeypatch):
         from app import config as cfg
 
@@ -201,6 +205,7 @@ class TestHandlerAttachment:
 class TestNeverRaises:
     """AC: any failure in the Axiom path is swallowed; the app keeps logging."""
 
+    @pytest.mark.unit
     def test_emit_swallows_exception_from_record_serialization(self, capsys):
         handler = AxiomHandler(token="t", dataset="d")
         try:
@@ -215,6 +220,7 @@ class TestNeverRaises:
         finally:
             _stop_handler(handler)
 
+    @pytest.mark.unit
     def test_http_error_in_flush_does_not_propagate(self, capsys):
         handler = AxiomHandler(token="t", dataset="d")
         try:
@@ -232,6 +238,7 @@ class TestNeverRaises:
         finally:
             _stop_handler(handler)
 
+    @pytest.mark.unit
     def test_logger_remains_functional_after_axiom_failure(
         self, isolated_root_logger, mock_axiom_token
     ):
@@ -256,6 +263,7 @@ class TestNeverRaises:
 class TestRequestIdPropagation:
     """AC: the contextvar request_id appears in events sent to Axiom."""
 
+    @pytest.mark.unit
     def test_request_id_present_in_queued_event(self):
         handler = AxiomHandler(token="t", dataset="d")
         # Halt the worker immediately so events stay on the queue for inspection.
@@ -283,6 +291,7 @@ class TestRequestIdPropagation:
         assert events[0]["request_id"] == "test-id-789"
         assert events[0]["message"] == "propagation test"
 
+    @pytest.mark.unit
     def test_request_id_defaults_to_dash_when_filter_missing(self):
         handler = AxiomHandler(token="t", dataset="d")
         handler._worker.stop()
@@ -309,6 +318,7 @@ class TestLoopGuard:
     another POST — an amplification loop.
     """
 
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "logger_name",
         ["httpx", "httpx._client", "httpx._trace", "httpcore", "httpcore.http11"],
@@ -335,6 +345,7 @@ class TestLoopGuard:
         )
         assert handler.dropped == 0, "loop-guard drops are NOT counted as overflow"
 
+    @pytest.mark.unit
     def test_application_loggers_still_enqueue(self):
         handler = AxiomHandler(token="t", dataset="d")
         handler._worker.stop()
@@ -348,6 +359,7 @@ class TestLoopGuard:
 class TestQueueOverflow:
     """AC: when the queue is full, oldest events drop and a single warning is emitted."""
 
+    @pytest.mark.unit
     def test_queue_full_drops_silently_and_warns_once(self, monkeypatch, capsys):
         # Shrink the queue so the test is cheap and deterministic.
         monkeypatch.setattr(logging_axiom, "QUEUE_MAX", 3)
@@ -391,6 +403,7 @@ class TestQueueOverflow:
 class TestHttpErrorHandling:
     """4xx / 5xx responses must produce a status-only stderr warning and no exception."""
 
+    @pytest.mark.unit
     def test_4xx_response_warns_but_does_not_raise(self, capsys):
         handler = AxiomHandler(token="t", dataset="d")
         try:
@@ -427,6 +440,7 @@ class TestHttpErrorHandling:
 class TestRecordSerialization:
     """``_record_to_event`` must handle weird ``extra`` values gracefully."""
 
+    @pytest.mark.unit
     def test_non_serializable_extra_is_reprd(self):
         sentinel = object()
         record = _make_record(
@@ -438,6 +452,7 @@ class TestRecordSerialization:
         assert "weird" in event
         assert event["weird"].startswith("<object object")
 
+    @pytest.mark.unit
     def test_serializable_extras_are_kept_as_is(self):
         record = _make_record(
             message="nice extras",
@@ -448,6 +463,7 @@ class TestRecordSerialization:
         assert event["count"] == 42
         assert event["user"] == "alice"
 
+    @pytest.mark.unit
     def test_event_round_trips_through_json(self):
         record = _make_record(
             message="round trip",
@@ -461,6 +477,7 @@ class TestRecordSerialization:
         assert round_tripped["request_id"] == "abc"
         assert round_tripped["nested"] == {"k": [1, 2, 3]}
 
+    @pytest.mark.unit
     def test_exception_info_is_formatted_into_event(self):
         try:
             raise ValueError("test exc")
@@ -491,6 +508,7 @@ class TestRecordSerialization:
 class TestTimestamp:
     """``_time`` must reflect emit-time so queued events keep their original order."""
 
+    @pytest.mark.unit
     def test_event_time_uses_record_created(self):
         record = _make_record(request_id="-")
         # Force a known created time well in the past.
@@ -510,6 +528,7 @@ class TestTimestamp:
 class TestWarnThrottled:
     """``_warn_throttled`` rate-limits per-key, not globally."""
 
+    @pytest.mark.unit
     def test_throttles_repeats_of_same_key(self, capsys, monkeypatch):
         monkeypatch.setattr(logging_axiom, "WARN_THROTTLE_S", 60.0)
         state: dict[str, float] = {}
@@ -522,6 +541,7 @@ class TestWarnThrottled:
         assert len(lines) == 1
         assert "first" in lines[0]
 
+    @pytest.mark.unit
     def test_different_keys_warn_independently(self, capsys):
         state: dict[str, float] = {}
         _warn_throttled(state, "a", "alpha")
@@ -532,6 +552,7 @@ class TestWarnThrottled:
         ]
         assert len(lines) == 2
 
+    @pytest.mark.unit
     def test_throttle_window_elapses(self, capsys, monkeypatch):
         # Use a tiny throttle window and step time forward.
         monkeypatch.setattr(logging_axiom, "WARN_THROTTLE_S", 0.0)
@@ -554,6 +575,7 @@ class TestWarnThrottled:
 class TestWorkerBatching:
     """The worker batches multiple events into a single POST."""
 
+    @pytest.mark.unit
     def test_drain_batch_returns_empty_when_queue_idle(self, monkeypatch):
         # Make the batch timeout near-instant.
         monkeypatch.setattr(logging_axiom, "BATCH_TIMEOUT_S", 0.01)
@@ -565,6 +587,7 @@ class TestWorkerBatching:
         finally:
             worker.stop()
 
+    @pytest.mark.unit
     def test_drain_batch_pulls_up_to_batch_max(self, monkeypatch):
         monkeypatch.setattr(logging_axiom, "BATCH_TIMEOUT_S", 0.5)
         monkeypatch.setattr(logging_axiom, "BATCH_MAX", 5)
@@ -594,6 +617,7 @@ class TestFlushBookkeepingIssue274:
     exception) publishes the expected sanitized state on the handler.
     """
 
+    @pytest.mark.unit
     def test_successful_flush_sets_last_flush_at_clears_error(self):
         handler = AxiomHandler(token="t", dataset="d")
         try:
@@ -616,6 +640,7 @@ class TestFlushBookkeepingIssue274:
         finally:
             _stop_handler(handler)
 
+    @pytest.mark.unit
     def test_4xx_flush_sets_sanitized_error_only_status(self, capsys):
         handler = AxiomHandler(token="t", dataset="d")
         try:
@@ -635,6 +660,7 @@ class TestFlushBookkeepingIssue274:
         finally:
             _stop_handler(handler)
 
+    @pytest.mark.unit
     def test_transport_error_records_exception_class_name_only(self):
         handler = AxiomHandler(token="t", dataset="d")
         try:
@@ -650,6 +676,7 @@ class TestFlushBookkeepingIssue274:
         finally:
             _stop_handler(handler)
 
+    @pytest.mark.unit
     def test_generic_exception_records_exception_class_name_only(self):
         handler = AxiomHandler(token="t", dataset="d")
         try:
@@ -663,6 +690,7 @@ class TestFlushBookkeepingIssue274:
         finally:
             _stop_handler(handler)
 
+    @pytest.mark.unit
     def test_worker_without_handler_back_reference_is_a_noop_on_bookkeeping(self):
         """A worker constructed without a handler back-ref must not crash."""
         # Build a worker directly (no handler) — the production code always
