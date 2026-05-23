@@ -55,6 +55,10 @@ def _build_schwab_status() -> tuple[dict, bool]:
     """Return (status_dict, is_configured). Skips the live HTTP probe — the
     detail card can call /api/settings/health/schwab if the user wants live
     validation. Returning early keeps p95 dashboard latency low.
+
+    The ``error`` field is initialised to ``None`` and overwritten by
+    :func:`build_dashboard_payload` when ``schwab_failed`` flips after the
+    parallel quote / option-chain fan-out (issue #277).
     """
     mgr = SchwabTokenManager()
     configured = mgr.is_configured()
@@ -63,6 +67,7 @@ def _build_schwab_status() -> tuple[dict, bool]:
             "configured": configured,
             "valid": configured,  # static fallback; see plan §4.5 / risk #2
             "expires_at": mgr.get_refresh_token_expiry(),
+            "error": None,
         },
         configured,
     )
@@ -731,6 +736,18 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         schwab_failed
         or cache_status["stale"] + cache_status["very_stale"] > 0
     )
+
+    # Issue #277: reconcile the Schwab pill with the live-call outcome.
+    # ``_build_schwab_status`` reports the token-row state only (configured +
+    # refresh-token expiry); it has no visibility into whether the parallel
+    # quote / option-chain fans actually succeeded. When ``schwab_failed`` is
+    # set we downgrade ``valid`` to ``False`` and surface a frozen ``error``
+    # string so the frontend can disambiguate "token expiring" from "calls
+    # failing this load". The string is the discriminator only — the visible
+    # pill label is built by the frontend.
+    if schwab_failed and schwab_status.get("valid"):
+        schwab_status["valid"] = False
+        schwab_status["error"] = "Schwab API calls failing this load"
 
     return {
         "generated_at": now,

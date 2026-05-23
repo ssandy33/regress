@@ -311,4 +311,67 @@ test.describe('Dashboard route', () => {
     await expect(header.getByRole('link', { name: 'Dashboard', exact: true })).toBeVisible();
     await expect(header.getByRole('link', { name: 'Analysis', exact: true })).toBeVisible();
   });
+
+  // Issue #277: when live Schwab calls fail mid-load, the pill must show
+  // ``Schwab calls failing`` (yellow warn) instead of the previous false
+  // ``Schwab connected`` green or the unrelated ``Schwab token expiring``.
+  // The backend signal is ``status.schwab.error`` being a non-null string;
+  // the visible label is the discriminator the frontend renders.
+  test('Schwab pill shows "Schwab calls failing" when status.schwab.error is set', async ({ page }) => {
+    const CALLS_FAILING_PAYLOAD = {
+      ...POPULATED_PAYLOAD,
+      status: {
+        ...POPULATED_PAYLOAD.status,
+        schwab: {
+          configured: true,
+          valid: false,
+          expires_at: '2026-05-12T00:00:00+00:00',
+          error: 'Schwab API calls failing this load',
+        },
+      },
+      data_meta: {
+        is_stale: true,
+        fetched_at: '2026-05-05T13:42:00+00:00',
+        sources_unavailable: ['schwab'],
+      },
+    };
+
+    await mockDashboard(page, CALLS_FAILING_PAYLOAD);
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const pill = page.getByTestId('status-pill-schwab');
+    await expect(pill).toContainText('Schwab calls failing');
+    await expect(pill).not.toContainText('Schwab token expiring');
+    await expect(pill).not.toContainText('Schwab connected');
+    // The warn dot uses bg-yellow-500 (StatusPill.jsx STATE_CLASSES.warn).
+    await expect(pill.locator('.bg-yellow-500')).toBeVisible();
+  });
+
+  // Issue #277 regression guard: when ``status.schwab.error`` is null but the
+  // refresh token is expiring (``valid: false``), the existing
+  // ``Schwab token expiring`` label still renders. Confirms the new branch
+  // does not regress the legacy warn case.
+  test('Schwab pill still shows "Schwab token expiring" when error is null and valid is false', async ({ page }) => {
+    const TOKEN_EXPIRING_PAYLOAD = {
+      ...POPULATED_PAYLOAD,
+      status: {
+        ...POPULATED_PAYLOAD.status,
+        schwab: {
+          configured: true,
+          valid: false,
+          expires_at: '2026-05-12T00:00:00+00:00',
+          error: null,
+        },
+      },
+    };
+
+    await mockDashboard(page, TOKEN_EXPIRING_PAYLOAD);
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const pill = page.getByTestId('status-pill-schwab');
+    await expect(pill).toContainText('Schwab token expiring');
+    await expect(pill).not.toContainText('Schwab calls failing');
+  });
 });

@@ -592,6 +592,12 @@ class DashboardSchwabStatus(BaseModel):
     configured: bool
     valid: bool
     expires_at: Optional[str] = None
+    # Issue #277: non-null when live Schwab calls (quotes / option chains)
+    # failed during this dashboard load. The frontend uses this as a
+    # discriminator to render "Schwab calls failing" vs the legacy
+    # "Schwab token expiring" warn label. Optional + defaulted so older
+    # callers / tests that omit the field still validate.
+    error: Optional[str] = None
 
 
 class DashboardFredStatus(BaseModel):
