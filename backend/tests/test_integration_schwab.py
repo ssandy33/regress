@@ -23,9 +23,8 @@ def reset_singleton():
     SchwabTokenManager._instance = None
 
 
-@pytest.mark.integration
 @pytest.fixture()
-def test_session_local(client):
+def session_local(client):
     """Patch SessionLocal so SchwabTokenManager uses the test DB."""
     from app.main import app
 
@@ -77,7 +76,7 @@ class TestSettingsEndpointSchwab:
     """GET /api/settings — schwab_configured and schwab_token_expires fields."""
 
     @pytest.mark.integration
-    def test_unconfigured_returns_false(self, client, test_session_local):
+    def test_unconfigured_returns_false(self, client, session_local):
         resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
@@ -85,8 +84,8 @@ class TestSettingsEndpointSchwab:
         assert data["schwab_token_expires"] is None
 
     @pytest.mark.integration
-    def test_configured_returns_true_with_expiry(self, client, test_session_local):
-        _insert_tokens(test_session_local)
+    def test_configured_returns_true_with_expiry(self, client, session_local):
+        _insert_tokens(session_local)
         resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
@@ -96,7 +95,7 @@ class TestSettingsEndpointSchwab:
         assert expires_dt > datetime.now(timezone.utc)
 
     @pytest.mark.integration
-    def test_other_settings_still_present(self, client, test_session_local):
+    def test_other_settings_still_present(self, client, session_local):
         """Schwab fields don't break existing settings response."""
         resp = client.get("/api/settings")
         data = resp.json()
@@ -109,7 +108,7 @@ class TestSchwabHealthEndpoint:
     """GET /api/settings/health/schwab — configured/valid/error fields."""
 
     @pytest.mark.integration
-    def test_unconfigured(self, client, test_session_local):
+    def test_unconfigured(self, client, session_local):
         resp = client.get("/api/settings/health/schwab")
         assert resp.status_code == 200
         data = resp.json()
@@ -118,8 +117,8 @@ class TestSchwabHealthEndpoint:
         assert data["error"] is None
 
     @pytest.mark.integration
-    def test_configured_and_valid(self, client, test_session_local):
-        _insert_tokens(test_session_local)
+    def test_configured_and_valid(self, client, session_local):
+        _insert_tokens(session_local)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.raise_for_status = MagicMock()
@@ -133,8 +132,8 @@ class TestSchwabHealthEndpoint:
         assert data["error"] is None
 
     @pytest.mark.integration
-    def test_configured_but_api_returns_401(self, client, test_session_local):
-        _insert_tokens(test_session_local)
+    def test_configured_but_api_returns_401(self, client, session_local):
+        _insert_tokens(session_local)
         mock_resp = MagicMock()
         mock_resp.status_code = 401
         mock_resp.raise_for_status.side_effect = _httpx.HTTPStatusError(
@@ -150,8 +149,8 @@ class TestSchwabHealthEndpoint:
         assert data["error"] == "HTTP 401"
 
     @pytest.mark.integration
-    def test_configured_but_connection_fails(self, client, test_session_local):
-        _insert_tokens(test_session_local)
+    def test_configured_but_connection_fails(self, client, session_local):
+        _insert_tokens(session_local)
 
         with patch("httpx.get", side_effect=_httpx.ConnectError("refused")):
             resp = client.get("/api/settings/health/schwab")
@@ -162,9 +161,9 @@ class TestSchwabHealthEndpoint:
         assert data["error"] == "Connection failed"
 
     @pytest.mark.integration
-    def test_configured_but_token_expired(self, client, test_session_local):
+    def test_configured_but_token_expired(self, client, session_local):
         """Expired access + expired refresh returns valid=False."""
-        _insert_tokens(test_session_local, access_minutes=-5, refresh_days=-1)
+        _insert_tokens(session_local, access_minutes=-5, refresh_days=-1)
 
         with patch("app.services.schwab_auth.get_schwab_credentials",
                     return_value=("test_app_key", "test_app_secret")):
@@ -187,7 +186,7 @@ class TestSourcesEndpointSchwab:
         )
 
     @pytest.mark.integration
-    def test_unconfigured_shows_unavailable(self, client, test_session_local):
+    def test_unconfigured_shows_unavailable(self, client, session_local):
         p1, p2, p3 = self._patch_other_sources()
         with p1, p2, p3:
             resp = client.get("/api/health/sources")
@@ -198,8 +197,8 @@ class TestSourcesEndpointSchwab:
         assert data["schwab"]["error"] == "Not configured"
 
     @pytest.mark.integration
-    def test_configured_and_available(self, client, test_session_local):
-        _insert_tokens(test_session_local)
+    def test_configured_and_available(self, client, session_local):
+        _insert_tokens(session_local)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
@@ -213,7 +212,7 @@ class TestSourcesEndpointSchwab:
         assert data["all_down"] is False
 
     @pytest.mark.integration
-    def test_all_down_includes_schwab(self, client, test_session_local):
+    def test_all_down_includes_schwab(self, client, session_local):
         """all_down is True when all sources including schwab are down."""
         with patch("app.routers.health._check_alpha_vantage", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_fred", return_value={"available": False, "error": "down"}), \
@@ -226,9 +225,9 @@ class TestSourcesEndpointSchwab:
         assert data["all_down"] is True
 
     @pytest.mark.integration
-    def test_not_all_down_when_schwab_available(self, client, test_session_local):
+    def test_not_all_down_when_schwab_available(self, client, session_local):
         """all_down is False if only schwab is up."""
-        _insert_tokens(test_session_local)
+        _insert_tokens(session_local)
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
