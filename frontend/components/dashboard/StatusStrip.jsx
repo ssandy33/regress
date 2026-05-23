@@ -12,7 +12,15 @@ function schwabPill(schwab) {
     return { state: 'error', label: 'Schwab not connected' };
   }
   if (!schwab.valid) {
-    return { state: 'warn', label: 'Schwab token expiring' };
+    // Issue #277: ``schwab.error`` is non-null when the parallel quote /
+    // option-chain fans failed during this dashboard load. Both branches
+    // stay on the existing ``warn`` (yellow) state — the visual language is
+    // already correct; only the label needs to disambiguate "token
+    // expiring" from "live calls failing".
+    return {
+      state: 'warn',
+      label: schwab.error ? 'Schwab calls failing' : 'Schwab token expiring',
+    };
   }
   return { state: 'ok', label: 'Schwab connected' };
 }

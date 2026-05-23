@@ -758,3 +758,154 @@ def test_dashboard_profit_take_card_matches_leg_verdict(client, monkeypatch):
     assert len(cards) == 1
     assert cards[0]["tone"] == "opportunity"
     assert cards[0]["priority"] == "P1"
+
+
+# -- Issue #277: Schwab pill honesty -----------------------------------------
+#
+# The token-row check in ``_build_schwab_status`` cannot detect that *live*
+# Schwab calls failed during this dashboard load. Issue #277 anchors the
+# fix: ``build_dashboard_payload`` reconciles ``status.schwab`` with the
+# ``schwab_failed`` flag already produced by ``_fetch_quotes_parallel`` and
+# ``_fetch_option_chains_parallel``. These tests pin the new contract.
+
+
+def test_schwab_pill_downgrades_to_invalid_when_quotes_fail(client, monkeypatch):
+    """When the live quote fan returns ``schwab_failed=True`` the dashboard
+    must downgrade ``status.schwab.valid`` to ``False`` and surface the
+    frozen ``error`` discriminator (issue #277).
+    """
+    from app.services.schwab_client import SchwabClientError
+
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    def fake_get_quote(self, ticker):
+        raise SchwabClientError("simulated outage")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote", fake_get_quote
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    schwab = data["status"]["schwab"]
+    assert schwab["configured"] is True
+    assert schwab["valid"] is False
+    assert schwab["error"] == "Schwab API calls failing this load"
+
+
+def test_schwab_pill_stays_valid_on_success(client, monkeypatch):
+    """Happy path: live calls succeed, ``status.schwab`` stays
+    ``{valid: True, error: None}`` (issue #277 regression guard).
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 174.0},
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *args, **kwargs: {
+            "putExpDateMap": {
+                "2026-05-08:3": {
+                    "175.0": [{"strikePrice": 175.0, "mark": 0.90}],
+                }
+            }
+        },
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    schwab = data["status"]["schwab"]
+    assert schwab["configured"] is True
+    assert schwab["valid"] is True
+    assert schwab["error"] is None
+
+
+def test_schwab_pill_downgrades_when_chains_fail_but_quotes_succeed(
+    client, monkeypatch
+):
+    """A failed option-chain fetch (quotes still OK) must still downgrade
+    the pill to ``valid=False`` with the frozen error string (issue #277).
+    The existing graceful-degradation behaviour (sources_unavailable) is
+    preserved.
+    """
+    from app.services.schwab_client import SchwabClientError
+
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 174.0},
+    )
+
+    def fake_get_option_chain(self, ticker, *args, **kwargs):
+        raise SchwabClientError("simulated chain outage")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        fake_get_option_chain,
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    schwab = data["status"]["schwab"]
+    assert schwab["valid"] is False
+    assert schwab["error"] == "Schwab API calls failing this load"
+    # Existing graceful-degradation behaviour is preserved.
+    assert "schwab" in data["data_meta"]["sources_unavailable"]
+    assert data["data_meta"]["is_stale"] is True
+
+
+def test_schwab_pill_error_field_absent_when_schwab_not_configured(
+    client, monkeypatch
+):
+    """When Schwab is not configured the pill stays in its existing
+    ``not connected`` state and ``error`` is ``None`` (no live call was
+    attempted, so no live failure to surface). Regression guard for
+    issue #277.
+    """
+    _patch_status(monkeypatch, schwab_configured=False, fred_key="")
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    schwab = data["status"]["schwab"]
+    assert schwab["configured"] is False
+    assert schwab["valid"] is False
+    assert schwab["error"] is None
+
