@@ -37,6 +37,91 @@ def check_sources():
     return results
 
 
+@router.get("")
+def health_check() -> dict:
+    """Top-level health probe with optional Axiom logging self-monitoring.
+
+    Replaces the legacy inline ``GET /api/health`` handler in ``app.main``
+    (issue #274). The endpoint is intentionally cheap — no outbound HTTP,
+    no Axiom API calls, no DB hits. It reads in-process state only.
+
+    Response shape is unconditional: when Axiom is disabled, the
+    ``logging`` block still renders with zeroed counters and ``null``
+    timestamps so frontend/operator consumers see a stable schema.
+    """
+    return {"status": "ok", "logging": _build_logging_stats()}
+
+
+def _get_axiom_handler():
+    """Return the first :class:`AxiomHandler` attached to the root logger, or ``None``.
+
+    Imported lazily to avoid pulling ``httpx`` (a transitive of
+    :mod:`app.logging_axiom`) into the import graph of any caller that
+    only needs the legacy ``/sources`` probe. Also avoids a circular
+    import on cold start.
+    """
+    from app.logging_axiom import AxiomHandler
+
+    for h in logging.getLogger().handlers:
+        if isinstance(h, AxiomHandler):
+            return h
+    return None
+
+
+def _safe_get(handler, attr: str, default):
+    """Read ``handler.<attr>`` with a try/except fallback.
+
+    A logging-internal hiccup (e.g. a non-thread-safe ``qsize()`` raising
+    under contention on some platforms) must not be allowed to 500 the
+    health endpoint. We log at debug level and fall back to the schema's
+    documented default per #274.
+    """
+    try:
+        return getattr(handler, attr)
+    except Exception as e:  # noqa: BLE001 — health must never bubble logging errors
+        logger.debug("axiom handler attr %s raised %s", attr, type(e).__name__)
+        return default
+
+
+def _build_logging_stats() -> dict:
+    """Build the ``logging`` subsection of the ``/api/health`` payload.
+
+    Schema is frozen by the v1.0.10 plan §2.3:
+
+    - ``axiom_enabled`` — true iff ``settings.axiom_api_token`` is truthy.
+    - ``queue_depth`` — current in-process queue depth (approximate per
+      :py:meth:`queue.Queue.qsize`).
+    - ``queue_capacity`` — configured max queue size (default 1000).
+    - ``dropped_total`` — process-lifetime overflow count (handler.dropped).
+    - ``last_flush_at`` — RFC3339 timestamp of the last 2xx ingest, or null.
+    - ``last_flush_error`` — sanitized error message, or null.
+
+    When the Axiom handler is not attached (token unset, init failure), the
+    block renders with the same shape and zero/null defaults so consumers
+    never need to branch on presence.
+    """
+    from app.config import settings
+
+    handler = _get_axiom_handler()
+    if handler is None:
+        return {
+            "axiom_enabled": bool(getattr(settings, "axiom_api_token", None)),
+            "queue_depth": 0,
+            "queue_capacity": 1000,
+            "dropped_total": 0,
+            "last_flush_at": None,
+            "last_flush_error": None,
+        }
+    return {
+        "axiom_enabled": True,
+        "queue_depth": _safe_get(handler, "queue_depth", 0),
+        "queue_capacity": _safe_get(handler, "queue_capacity", 1000),
+        "dropped_total": _safe_get(handler, "dropped", 0),
+        "last_flush_at": _safe_get(handler, "last_flush_at", None),
+        "last_flush_error": _safe_get(handler, "last_flush_error", None),
+    }
+
+
 def _check_alpha_vantage() -> dict:
     """Check Alpha Vantage API availability."""
     try:

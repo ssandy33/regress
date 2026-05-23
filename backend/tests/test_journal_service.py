@@ -144,3 +144,111 @@ def test_clear_all_journal_data_returns_counts(db_session):
 def test_clear_all_journal_data_empty_db(db_session):
     result = clear_all_journal_data(db_session)
     assert result == {"deleted_positions": 0, "deleted_trades": 0}
+
+
+# --- Issue #278: caller-side guard against compute_min_cc_strike log spam ---
+
+
+def test_build_position_response_no_warning_for_shares_zero(db_session, caplog):
+    """``_build_position_response`` must not emit the noisy ``shares=0`` WARNING.
+
+    Issue #278: ``_build_position_response`` is the hot-path caller that runs
+    once per position on every dashboard load. Closed/cleared positions with
+    ``shares=0`` were producing one identical WARNING per load per position,
+    which dominated Axiom ingest. The caller-side guard skips
+    :func:`compute_min_cc_strike` entirely when shares <= 0 so the function's
+    defensive WARNING never fires for the legitimate short-circuit case.
+    """
+    from app.services.journal import _build_position_response
+
+    closed = Position(
+        id=str(uuid.uuid4()),
+        ticker="AAPL",
+        shares=0,
+        broker_cost_basis=0.0,
+        status="closed",
+        strategy="csp",
+        opened_at="2025-01-01T00:00:00Z",
+    )
+    db_session.add(closed)
+    db_session.commit()
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="app.services.journal"):
+        result = _build_position_response(closed)
+
+    assert "compute_min_cc_strike called with shares=" not in caplog.text
+    assert result["min_compliant_cc_strike"] == 0.0
+    assert result["shares"] == 0
+
+
+def test_build_position_response_still_computes_for_positive_shares(db_session, caplog):
+    """Positive-shares path is unchanged: real call, no warning, real value."""
+    from app.services.journal import _build_position_response
+
+    open_pos = Position(
+        id=str(uuid.uuid4()),
+        ticker="MSFT",
+        shares=100,
+        broker_cost_basis=10_000.0,
+        status="open",
+        strategy="csp",
+        opened_at="2025-01-01T00:00:00Z",
+    )
+    db_session.add(open_pos)
+    db_session.commit()
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="app.services.journal"):
+        result = _build_position_response(open_pos)
+
+    assert "compute_min_cc_strike called with shares=" not in caplog.text
+    # 10_000 / 100 * 1.10 = 110.0
+    assert result["min_compliant_cc_strike"] == 110.0
+
+
+def test_compute_min_cc_strike_direct_call_still_warns_for_zero_shares(caplog):
+    """Direct calls to :func:`compute_min_cc_strike` still emit the defensive WARNING.
+
+    The fix in #278 is caller-side only — the function's own guard remains in
+    place so accidental direct callers (or any future caller that does not
+    pre-filter) still see the warning at the def site.
+    """
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="app.services.journal"):
+        result = compute_min_cc_strike(1000.0, 0)
+    assert result == 0.0
+    assert "compute_min_cc_strike called with shares=0" in caplog.text
+
+
+def test_build_position_response_warns_for_negative_shares(db_session, caplog):
+    """Negative-shares (data corruption) still reaches the defensive WARNING path.
+
+    CodeRabbit triage on PR #279: the issue #278 caller-side guard was
+    initially written as ``if position.shares > 0`` which also swallowed the
+    ``shares < 0`` case, contradicting the comment that says negative shares
+    should still hit :func:`compute_min_cc_strike`'s defensive warning. The
+    guard was tightened to ``if position.shares == 0`` — this test locks in
+    the negative-shares contract so the regression cannot recur.
+    """
+    from app.services.journal import _build_position_response
+
+    corrupt = Position(
+        id=str(uuid.uuid4()),
+        ticker="BAD",
+        shares=-10,
+        broker_cost_basis=1_000.0,
+        status="open",
+        strategy="csp",
+        opened_at="2025-01-01T00:00:00Z",
+    )
+    db_session.add(corrupt)
+    db_session.commit()
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="app.services.journal"):
+        result = _build_position_response(corrupt)
+
+    assert "compute_min_cc_strike called with shares=-10" in caplog.text
+    assert result["min_compliant_cc_strike"] == 0.0
+    assert result["shares"] == -10

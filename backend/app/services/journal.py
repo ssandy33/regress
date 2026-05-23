@@ -81,7 +81,20 @@ def _build_position_response(position: Position) -> dict:
     adjusted_cost_basis = compute_adjusted_basis(
         position.broker_cost_basis, premiums_for_adjusted_basis
     )
-    min_compliant_cc_strike = compute_min_cc_strike(adjusted_cost_basis, position.shares)
+    # Issue #278: caller-side guard avoids the noisy WARNING the function
+    # emits for the legitimate ``shares=0`` short-circuit case (one closed
+    # position would otherwise log once per dashboard load). The function's
+    # own guard stays in place for accidental direct callers and for any
+    # ``shares<0`` data-integrity surprise that still warrants a warning.
+    # Guard short-circuits ONLY ``shares == 0`` so negative-shares (data
+    # corruption) still reach :func:`compute_min_cc_strike` and trigger the
+    # defensive WARNING — see test_build_position_response_warns_for_negative_shares.
+    if position.shares == 0:
+        min_compliant_cc_strike = 0.0
+    else:
+        min_compliant_cc_strike = compute_min_cc_strike(
+            adjusted_cost_basis, position.shares
+        )
 
     return {
         "id": position.id,
