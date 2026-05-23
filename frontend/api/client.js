@@ -400,4 +400,57 @@ export async function getCoveredCallView(positionId) {
   return data;
 }
 
+
+// --- Stock Research page (v1.1.0, issue #280) ---
+//
+// Five GET endpoints + one PUT for the per-position `/positions/{id}/review`
+// screen. Sections A, B+C, D, E, F all hang off this prefix; the page hook
+// fans them out with `Promise.allSettled` so a single endpoint failure
+// degrades to a per-section tile instead of failing the whole page (NFR-3).
+
+export async function getResearchBusiness(positionId) {
+  const { data } = await api.get(
+    `/api/positions/${encodeURIComponent(positionId)}/research/business`,
+  );
+  return data;
+}
+
+export async function getResearchPriceHistory(positionId, window = '1Y') {
+  const { data } = await api.get(
+    `/api/positions/${encodeURIComponent(positionId)}/research/price-history`,
+    { params: { window } },
+  );
+  return data;
+}
+
+export async function getResearchFinancials(positionId) {
+  const { data } = await api.get(
+    `/api/positions/${encodeURIComponent(positionId)}/research/financials`,
+  );
+  return data;
+}
+
+export async function getResearchRegression(positionId, window = '1Y') {
+  const { data } = await api.get(
+    `/api/positions/${encodeURIComponent(positionId)}/research/regression`,
+    { params: { window } },
+  );
+  return data;
+}
+
+export async function getResearchThesis(positionId) {
+  const { data } = await api.get(
+    `/api/positions/${encodeURIComponent(positionId)}/research/thesis`,
+  );
+  return data;
+}
+
+export async function putResearchThesis(positionId, thesis) {
+  const { data } = await api.put(
+    `/api/positions/${encodeURIComponent(positionId)}/research/thesis`,
+    { thesis },
+  );
+  return data;
+}
+
 export default api;

@@ -1191,3 +1191,95 @@ class CoveredCallView(BaseModel):
     )
     applicability: COVERED_CALL_APPLICABILITY
     disclaimer: Optional[str] = None
+
+
+# --- Research (#280) ---
+
+
+# Maximum thesis body length per the issue #280 plan §4.3 (locked decision 4
+# from the user). Enforced both via the Pydantic field constraint on the PUT
+# request and on the response-shaping path so the cap is never side-stepped.
+THESIS_MAX_BODY_LENGTH: int = 4000
+
+
+class ThesisPutRequest(BaseModel):
+    """Request body for ``PUT /api/positions/{id}/research/thesis``.
+
+    ``thesis`` is the freeform note body. Empty strings are explicitly
+    allowed (they clear the note) — the plan does not forbid empty bodies.
+    Pydantic enforces the 4000-character ceiling at request validation
+    time; oversize bodies return ``422`` automatically. The router layer
+    re-validates server-side for defence in depth, so callers that bypass
+    the model still get a sanitized 422.
+    """
+
+    thesis: str = Field(default="", max_length=THESIS_MAX_BODY_LENGTH)
+
+
+class ThesisResponse(BaseModel):
+    """Response shape for thesis GET + PUT (issue #280 PRD §F).
+
+    When no row exists yet the endpoint returns ``thesis=None``,
+    ``updated_at=None``, and ``version=0`` — the spec calls for an
+    empty-state shape rather than a 404 so the frontend can render the
+    editor immediately.
+    """
+
+    thesis: Optional[str] = None
+    updated_at: Optional[str] = None
+    version: int = 0
+
+class BusinessResponse(BaseModel):
+    """Response shape for ``GET /api/positions/{id}/research/business``.
+
+    The payload is composed by :func:`app.services.research_business.
+    build_business_payload`. Every yfinance field is ``Optional`` because the
+    upstream is known for missing keys on foreign listings / newly-listed
+    tickers (plan §8 risk #1). The router never propagates a yfinance error
+    string — see :class:`app.services.research_business.
+    ResearchSourceUnavailable` for the sanitized 502 detail.
+    """
+
+    ticker: str
+    name: Optional[str] = None
+    summary: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    market_cap: Optional[float] = None
+    employees: Optional[int] = None
+    source: str
+    fetched_at: str
+
+
+class FinancialQuarter(BaseModel):
+    """One quarter of normalized fundamentals on the Section D scorecard.
+
+    Margins (``gross_margin`` / ``operating_margin``) are derived ratios in
+    [0, 1]; ``revenue`` and ``eps`` flow through verbatim from the upstream.
+    Any individual field can be ``None`` when the source omits the underlying
+    value — the frontend renders ``—`` rather than fabricating a zero
+    (per :func:`app.services.research_financials._safe_float`).
+    """
+
+    period_end: Optional[str] = None
+    revenue: Optional[float] = None
+    eps: Optional[float] = None
+    gross_margin: Optional[float] = None
+    operating_margin: Optional[float] = None
+
+
+class FinancialsResponse(BaseModel):
+    """Response shape for ``GET /api/positions/{id}/research/financials``.
+
+    ``source`` is ``"alphavantage"`` on the primary path and ``"yfinance"``
+    on the fallback path. The frontend renders provenance via Section D's
+    source caption ("Source: alphavantage · refreshed …" or "Source:
+    yfinance (alphavantage rate-limited) · refreshed …"). Up to 8 quarters
+    are returned, newest first — see plan §4.2.
+    """
+
+    ticker: str
+    quarters: list[FinancialQuarter] = Field(default_factory=list)
+    source: str
+    fetched_at: str
+

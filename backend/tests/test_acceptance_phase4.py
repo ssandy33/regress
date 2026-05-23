@@ -191,9 +191,32 @@ class TestAC3_ScannerCompletesWhenAlphaVantageReturnsNone:
         assert len(result["recommendations"]) >= 1
 
 
-class TestAC4_YfinanceRemovedFromRequirements:
-    """AC: yfinance fully removed from requirements.txt."""
+# NOTE (issue #280 / v1.1.0): the original Phase-4 milestone removed
+# yfinance from the *earnings-date* path and replaced it with Alpha
+# Vantage. That goal is preserved — see ``test_alpha_vantage_client.py``
+# and ``app/services/alpha_vantage_client.py``. The v1.1.0 PRD
+# (Discussion #282, "Technical Decisions (Resolved)" §1 and §"API
+# Contracts → A") authorizes re-introducing yfinance for the per-position
+# research surface (``app/services/yfinance_client.py``). The two test
+# classes below pinned the *blanket* yfinance ban from the old milestone
+# and are now superseded by the narrower invariant ("yfinance must not
+# be used for earnings dates", which is tested directly via the AV
+# earnings client suite). They are skipped here for the audit trail.
 
+
+class TestAC4_YfinanceRemovedFromRequirements:
+    """AC (superseded): yfinance fully removed from requirements.txt.
+
+    Superseded by issue #280 — yfinance is the v1 source for the
+    research/business endpoint (PRD §"API Contracts → A").
+    """
+
+    @pytest.mark.skip(
+        reason="Superseded by #280 / v1.1.0 PRD — yfinance is the v1 "
+        "source for /api/positions/{id}/research/business. The "
+        "Phase-4 invariant (no yfinance for earnings dates) is "
+        "preserved and tested via the AV earnings client suite."
+    )
     def test_requirements_has_no_yfinance(self):
         requirements_path = BACKEND_ROOT / "requirements.txt"
         content = requirements_path.read_text()
@@ -201,8 +224,15 @@ class TestAC4_YfinanceRemovedFromRequirements:
 
 
 class TestAC5_NoYfinanceImportsInAnyFile:
-    """AC: No remaining yfinance imports in any file (verified by CI)."""
+    """AC (superseded): No remaining yfinance imports in any file.
 
+    Superseded by issue #280 — :mod:`app.services.yfinance_client` is the
+    new, scoped yfinance integration for the research surface.
+    """
+
+    @pytest.mark.skip(
+        reason="Superseded by #280 / v1.1.0 — see class docstring."
+    )
     def test_no_yfinance_imports_in_any_python_file(self):
         """Walk all .py files under backend/app/ and assert no yfinance imports."""
         violations = []
@@ -223,6 +253,9 @@ class TestAC5_NoYfinanceImportsInAnyFile:
 
         assert violations == [], "yfinance imports found:\n" + "\n".join(violations)
 
+    @pytest.mark.skip(
+        reason="Superseded by #280 / v1.1.0 — see class docstring."
+    )
     def test_no_yf_name_references_in_source(self):
         """No 'yf.' usage pattern in any source file."""
         violations = []
