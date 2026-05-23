@@ -27,10 +27,20 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
-from app.models.schemas import ThesisPutRequest, ThesisResponse
+from app.models.schemas import (
+    BusinessResponse,
+    FinancialsResponse,
+    ThesisPutRequest,
+    ThesisResponse,
+)
 from app.services import journal
 from app.services.cache import CacheService
 from app.services.data_fetcher import DataFetcher
+from app.services.research_business import (
+    ResearchSourceUnavailable,
+    build_business_payload,
+)
+from app.services.research_financials import build_financials_payload
 from app.services.research_price_history import (
     DEFAULT_WINDOW,
     SUPPORTED_WINDOWS,
@@ -292,12 +302,108 @@ def research_regression(
 
 
 # ---------------------------------------------------------------------------
-# Section A — Business snapshot (Worker A — issue #280)
+# Section A — Business snapshot (issue #280, Worker W bridges A's service)
 # ---------------------------------------------------------------------------
-# Section D — Financial scorecard (Worker A — issue #280)
+
+
+@router.get(
+    "/{position_id}/research/business",
+    response_model=BusinessResponse,
+)
+def get_business(
+    position_id: str, db: DBSession = Depends(get_db)
+):
+    """Return the Section A business snapshot for a position's ticker.
+
+    Resolves the position's ticker from the journal layer, then delegates to
+    :func:`app.services.research_business.build_business_payload` (which
+    handles the two-tier 24h cache). The yfinance upstream is the only
+    failure mode at the service layer; we translate
+    :class:`ResearchSourceUnavailable` into a sanitized ``502`` per
+    CLAUDE.md and plan §4.5.
+
+    Status codes:
+
+    - ``200`` — payload returned
+    - ``404`` — ``position_id`` is unknown
+    - ``502`` — yfinance returned no data and neither cache tier had a
+      fresh entry
+    - ``500`` — unexpected internal error (generic detail, sanitized log)
+    """
+    position = journal.get_position(db, position_id)
+    if position is None:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Position not found"},
+        )
+
+    try:
+        return build_business_payload(db, position["ticker"])
+    except ResearchSourceUnavailable as exc:
+        # ``exc.detail`` is pre-sanitized at the service layer — no
+        # str(original_exc) leaks here per CLAUDE.md.
+        return JSONResponse(
+            status_code=502,
+            content={"detail": exc.detail},
+        )
+    except Exception:  # noqa: BLE001 — generic 500 per CLAUDE.md
+        logger.exception(
+            "Unexpected error composing business snapshot for position %s",
+            position_id,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": _GENERIC_500_DETAIL},
+        )
+
+
 # ---------------------------------------------------------------------------
-#
-# Worker A landed service modules (research_business / research_financials)
-# in this release without router shells. Worker W is responsible for adding
-# the matching ``GET /research/business`` and ``GET /research/financials``
-# endpoints that wire those services to the prefix above.
+# Section D — Financial scorecard (issue #280, Worker W bridges A's service)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{position_id}/research/financials",
+    response_model=FinancialsResponse,
+)
+def get_financials(
+    position_id: str, db: DBSession = Depends(get_db)
+):
+    """Return up to 8 quarters of fundamentals for a position's ticker.
+
+    Delegates to
+    :func:`app.services.research_financials.build_financials_payload`, which
+    tries Alpha Vantage's ``INCOME_STATEMENT`` first and falls back to
+    yfinance when AV returns ``None``. Both sources failing surfaces a
+    sanitized ``502`` (``ResearchSourceUnavailable`` carries the detail).
+
+    Status codes:
+
+    - ``200`` — payload returned (``source`` field discloses the upstream)
+    - ``404`` — ``position_id`` is unknown
+    - ``502`` — both AV and yfinance were unavailable
+    - ``500`` — unexpected internal error (generic detail, sanitized log)
+    """
+    position = journal.get_position(db, position_id)
+    if position is None:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Position not found"},
+        )
+
+    try:
+        return build_financials_payload(db, position["ticker"])
+    except ResearchSourceUnavailable as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"detail": exc.detail},
+        )
+    except Exception:  # noqa: BLE001 — generic 500 per CLAUDE.md
+        logger.exception(
+            "Unexpected error composing financials for position %s",
+            position_id,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": _GENERIC_500_DETAIL},
+        )

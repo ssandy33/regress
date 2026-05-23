@@ -67,8 +67,15 @@ function nextActionCta(action, ticker, positionId) {
         label: 'Cover',
         href: `/options?ticker=${encodeURIComponent(ticker)}`,
       };
-    case 'Roll':
     case 'Review':
+      // Issue #280: Review CTA routes to the per-position Stock Research
+      // page, not the journal. The other two actions in this branch
+      // continue to land in the ledger.
+      return {
+        label: action,
+        href: `/positions/${encodeURIComponent(positionId)}/review`,
+      };
+    case 'Roll':
     case 'Manage':
       return {
         label: action,

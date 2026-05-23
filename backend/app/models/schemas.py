@@ -1228,3 +1228,58 @@ class ThesisResponse(BaseModel):
     thesis: Optional[str] = None
     updated_at: Optional[str] = None
     version: int = 0
+
+class BusinessResponse(BaseModel):
+    """Response shape for ``GET /api/positions/{id}/research/business``.
+
+    The payload is composed by :func:`app.services.research_business.
+    build_business_payload`. Every yfinance field is ``Optional`` because the
+    upstream is known for missing keys on foreign listings / newly-listed
+    tickers (plan §8 risk #1). The router never propagates a yfinance error
+    string — see :class:`app.services.research_business.
+    ResearchSourceUnavailable` for the sanitized 502 detail.
+    """
+
+    ticker: str
+    name: Optional[str] = None
+    summary: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    market_cap: Optional[float] = None
+    employees: Optional[int] = None
+    source: str
+    fetched_at: str
+
+
+class FinancialQuarter(BaseModel):
+    """One quarter of normalized fundamentals on the Section D scorecard.
+
+    Margins (``gross_margin`` / ``operating_margin``) are derived ratios in
+    [0, 1]; ``revenue`` and ``eps`` flow through verbatim from the upstream.
+    Any individual field can be ``None`` when the source omits the underlying
+    value — the frontend renders ``—`` rather than fabricating a zero
+    (per :func:`app.services.research_financials._safe_float`).
+    """
+
+    period_end: Optional[str] = None
+    revenue: Optional[float] = None
+    eps: Optional[float] = None
+    gross_margin: Optional[float] = None
+    operating_margin: Optional[float] = None
+
+
+class FinancialsResponse(BaseModel):
+    """Response shape for ``GET /api/positions/{id}/research/financials``.
+
+    ``source`` is ``"alphavantage"`` on the primary path and ``"yfinance"``
+    on the fallback path. The frontend renders provenance via Section D's
+    source caption ("Source: alphavantage · refreshed …" or "Source:
+    yfinance (alphavantage rate-limited) · refreshed …"). Up to 8 quarters
+    are returned, newest first — see plan §4.2.
+    """
+
+    ticker: str
+    quarters: list[FinancialQuarter] = Field(default_factory=list)
+    source: str
+    fetched_at: str
+

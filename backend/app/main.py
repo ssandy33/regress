@@ -168,7 +168,6 @@ app.include_router(positions.router, dependencies=[Depends(get_current_user)])
 app.include_router(research.router, dependencies=[Depends(get_current_user)])
 app.include_router(legs.router, dependencies=[Depends(get_current_user)])
 app.include_router(covered_call.router, dependencies=[Depends(get_current_user)])
-app.include_router(research.router, dependencies=[Depends(get_current_user)])
 
 
 # --- Exception handlers ---
