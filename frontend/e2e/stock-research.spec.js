@@ -473,3 +473,135 @@ test.describe('Dashboard Positions Card — Review CTA', () => {
     );
   });
 });
+
+// --- Section E · unknown factor bucket (#285) -------------------------------
+
+function regressionPayloadWithFactors(factors, overrides = {}) {
+  return {
+    ticker: 'SOFI',
+    window: '1Y',
+    summary: 'Synthetic payload exercising the unknown-factor bucket.',
+    sector_omitted: false,
+    basket: factors.map((f) => f.name),
+    sample_size: 252,
+    r_squared: 0.83,
+    idiosyncratic_share: 0.17,
+    factors,
+    source: 'composite',
+    fetched_at: '2026-05-22T17:30:00Z',
+    ...overrides,
+  };
+}
+
+async function mockAllSectionsWithRegression(page, regression) {
+  await mockPosition(page, positionPayload());
+  await mockResearchEndpoint(page, 'business', businessPayload());
+  await mockResearchEndpoint(page, 'price-history', priceHistoryPayload());
+  await mockResearchEndpoint(page, 'financials', financialsPayload());
+  await mockResearchEndpoint(page, 'regression', regression);
+  await mockResearchEndpoint(page, 'thesis', thesisPayload());
+}
+
+test.describe('Section E · unknown factor bucket (#285)', () => {
+  test('single unknown factor (VIX) renders a row + wedge', async ({ page }) => {
+    const regression = regressionPayloadWithFactors([
+      { name: 'SPY', beta: 1.42, p_value: 0.001, share: 0.55 },
+      { name: 'XLF', beta: 0.78, p_value: 0.04, share: 0.18 },
+      { name: 'DGS10', beta: -0.61, p_value: 0.02, share: 0.1 },
+      { name: 'VIX', beta: 0.12, p_value: 0.03, share: 0.05 },
+    ]);
+    await mockAllSectionsWithRegression(page, regression);
+    await openResearchPage(page);
+
+    const unknownRow = page.getByTestId('research-e-row-unknown');
+    await expect(unknownRow).toHaveCount(1);
+    await expect(unknownRow).toBeVisible();
+    await expect(unknownRow).toContainText('VIX');
+
+    const unknownWedge = page.getByTestId('factor-bucket-unknown');
+    await expect(unknownWedge).toHaveCount(1);
+    await expect(unknownWedge).toBeVisible();
+  });
+
+  test('known factors only produce zero unknown rows + wedges', async ({
+    page,
+  }) => {
+    await mockAllSectionsHappy(page);
+    await openResearchPage(page);
+
+    await expect(page.getByTestId('research-e')).toBeVisible();
+    await expect(page.getByTestId('research-e-row-unknown')).toHaveCount(0);
+    await expect(page.getByTestId('factor-bucket-unknown')).toHaveCount(0);
+  });
+
+  test('role:sector override on a non-XL* name routes to sector, not unknown', async ({
+    page,
+  }) => {
+    const regression = regressionPayloadWithFactors([
+      { name: 'SPY', beta: 1.42, p_value: 0.001, share: 0.55 },
+      { name: 'XYZ', role: 'sector', beta: 0.3, p_value: 0.04, share: 0.18 },
+      { name: 'DGS10', beta: -0.61, p_value: 0.02, share: 0.1 },
+    ]);
+    await mockAllSectionsWithRegression(page, regression);
+    await openResearchPage(page);
+
+    await expect(page.getByTestId('research-e-row-sector')).toBeVisible();
+    await expect(page.getByTestId('research-e-row-sector')).toContainText('XYZ');
+    await expect(page.getByTestId('research-e-row-unknown')).toHaveCount(0);
+    await expect(page.getByTestId('factor-bucket-unknown')).toHaveCount(0);
+  });
+
+  test('two unknown factors (VIX, CRYPTO) render two rows + two wedges', async ({
+    page,
+  }) => {
+    const regression = regressionPayloadWithFactors([
+      { name: 'SPY', beta: 1.42, p_value: 0.001, share: 0.5 },
+      { name: 'XLF', beta: 0.78, p_value: 0.04, share: 0.15 },
+      { name: 'DGS10', beta: -0.61, p_value: 0.02, share: 0.08 },
+      { name: 'VIX', beta: 0.12, p_value: 0.03, share: 0.05 },
+      { name: 'CRYPTO', beta: 0.22, p_value: 0.01, share: 0.05 },
+    ]);
+    await mockAllSectionsWithRegression(page, regression);
+    await openResearchPage(page);
+
+    await expect(page.getByTestId('research-e-row-unknown')).toHaveCount(2);
+    await expect(page.getByTestId('factor-bucket-unknown')).toHaveCount(2);
+  });
+
+  test('unknown wedge uses slate-500 (#64748b) stroke', async ({ page }) => {
+    const regression = regressionPayloadWithFactors([
+      { name: 'SPY', beta: 1.42, p_value: 0.001, share: 0.55 },
+      { name: 'XLF', beta: 0.78, p_value: 0.04, share: 0.18 },
+      { name: 'DGS10', beta: -0.61, p_value: 0.02, share: 0.1 },
+      { name: 'VIX', beta: 0.12, p_value: 0.03, share: 0.05 },
+    ]);
+    await mockAllSectionsWithRegression(page, regression);
+    await openResearchPage(page);
+
+    const wedge = page.getByTestId('factor-bucket-unknown');
+    await expect(wedge).toHaveAttribute('stroke', '#64748b');
+  });
+
+  test('console.warn fires for unknown factor types', async ({ page }) => {
+    const warnings = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'warning') {
+        warnings.push(msg.text());
+      }
+    });
+
+    const regression = regressionPayloadWithFactors([
+      { name: 'SPY', beta: 1.42, p_value: 0.001, share: 0.55 },
+      { name: 'XLF', beta: 0.78, p_value: 0.04, share: 0.18 },
+      { name: 'DGS10', beta: -0.61, p_value: 0.02, share: 0.1 },
+      { name: 'VIX', beta: 0.12, p_value: 0.03, share: 0.05 },
+    ]);
+    await mockAllSectionsWithRegression(page, regression);
+    await openResearchPage(page);
+
+    await expect(page.getByTestId('research-e-row-unknown')).toBeVisible();
+    expect(
+      warnings.some((w) => w.includes('Unknown factor type')),
+    ).toBeTruthy();
+  });
+});
