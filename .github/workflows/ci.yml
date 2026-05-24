@@ -45,6 +45,15 @@ jobs:
           path: backend/coverage-unit.xml
           if-no-files-found: ignore
 
+      # Quality v1 — Wave 2 (#269): block PR merges that leave a tdd_red
+      # marker behind. Diff-based grep over .py files added/modified on
+      # this PR relative to its base SHA. Skipped on push-to-main runs
+      # (no pull_request context exists).
+      - name: tdd_red gate (PR diff scan)
+        id: tdd_red_gate
+        if: github.event_name == 'pull_request'
+        run: python -m scripts.check_tdd_red --diff-base ${{ github.event.pull_request.base.sha }}
+
   backend-integration:
     name: Backend tests (integration)
     runs-on: ubuntu-latest
