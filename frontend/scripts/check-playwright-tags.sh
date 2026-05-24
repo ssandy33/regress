@@ -52,7 +52,7 @@ for spec in "${specs[@]}"; do
 
   # awk scans the file once and emits "<lineno>" for each TOP-LEVEL (unindented,
   # column-zero) test.describe(...) or test(...) call whose first string-literal
-  # argument lacks @smoke and @e2e on its opening line OR the next line.
+  # argument lacks @smoke and @e2e in the TITLE STRING only.
   #
   # Why top-level only:
   # - Playwright concatenates parent-describe + nested-describe + test titles
@@ -64,11 +64,29 @@ for spec in "${specs[@]}"; do
   # - Bare `test('…', …)` calls at column 0 (storybook.spec.js post-skip-wrap)
   #   also count.
   #
+  # Title-only check (CodeRabbit triage on PR #300): we MUST NOT count a tag
+  # that appears in a trailing comment or elsewhere outside the title string
+  # literal. We isolate the first '...' or "..." string literal after the
+  # opening `(`, looking on the opening line first and then the next line
+  # (multi-line title form), and check ONLY that string for the tag.
+  #
   # We match call openings at word boundaries to avoid stray substring hits.
   # `test.describe.skip(` / `test.only(` etc. count too.
   bad_lines=$(awk '
     function has_tag(s) {
       return (index(s, "@smoke") > 0 || index(s, "@e2e") > 0)
+    }
+    # Extract the first single- or double-quoted string literal in s and
+    # return its inner content. Returns "" if none found.
+    function extract_title(s,    m, rest, q, end) {
+      # Find the first single or double quote.
+      m = match(s, /[\x27"]/)
+      if (m == 0) return ""
+      q = substr(s, RSTART, 1)
+      rest = substr(s, RSTART + 1)
+      end = index(rest, q)
+      if (end == 0) return ""
+      return substr(rest, 1, end - 1)
     }
     {
       lines[NR] = $0
@@ -81,9 +99,17 @@ for spec in "${specs[@]}"; do
         # Skip the no-op test.describe.configure(...) — a config call, not a
         # test wrapper.
         if (line ~ /^test\.describe\.configure[[:space:]]*\(/) continue
-        combined = line
-        if (i < NR) combined = combined " " lines[i + 1]
-        if (!has_tag(combined)) {
+        # Strip everything up to and including the first "(" so extract_title
+        # ignores any quotes that might appear inside the callee path (none
+        # exist today, but be defensive).
+        paren = index(line, "(")
+        after = (paren > 0) ? substr(line, paren + 1) : line
+        title = extract_title(after)
+        # Multi-line title form: title literal lives on the next line.
+        if (title == "" && i < NR) {
+          title = extract_title(lines[i + 1])
+        }
+        if (!has_tag(title)) {
           print i
         }
       }

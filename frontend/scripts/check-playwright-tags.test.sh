@@ -126,6 +126,19 @@ test('bare test no tags', async ({ page }) => {});
 EOF
 )"
 
+# Regression fixture for CodeRabbit triage on PR #300:
+# A tag injected via a comment after the title must NOT count — only the
+# title string literal counts.
+run_case "comment_tag_should_not_count_fail" 1 "demo.spec.js" "$(cat <<'EOF'
+import { test, expect } from '@playwright/test';
+test.describe('Demo flow no tags', // @e2e
+  () => {
+    test('renders', async ({ page }) => {});
+  }
+);
+EOF
+)"
+
 echo
 echo "Results: ${pass_count} passed, ${fail_count} failed"
 

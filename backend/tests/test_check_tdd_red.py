@@ -232,7 +232,7 @@ def test_multiple_offenders_lists_all(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_removed_marker_does_not_flag(tmp_path: Path, monkeypatch) -> None:
+def test_removed_marker_does_not_flag(tmp_path: Path) -> None:
     """In diff mode, a marker REMOVED on the feature branch is not flagged.
 
     Concretely: a real git history where the previous commit had
@@ -505,6 +505,27 @@ def test_scan_file_skips_non_py(tmp_path: Path) -> None:
         _DEC + "\n",
     )
     assert check_tdd_red.scan_file(txt) == []
+
+
+@pytest.mark.unit
+def test_unreadable_file_fails_closed(tmp_path: Path, capsys) -> None:
+    """An undecodable ``.py`` file makes the gate exit non-zero (fail-closed).
+
+    Regression guard for the CodeRabbit triage on PR #300: previously the
+    scanner caught ``(OSError, UnicodeDecodeError)`` and returned ``[]``,
+    letting the gate pass even though a changed file was never actually
+    scanned. A policy gate must fail closed, not open.
+    """
+    bad = tmp_path / "test_garbled.py"
+    # Write invalid UTF-8 bytes so .read_text(encoding="utf-8") raises.
+    bad.write_bytes(b"\xff\xfe\xfd not valid utf-8 \xc3\x28")
+
+    exit_code = check_tdd_red.main(["--files", str(bad)])
+
+    err = capsys.readouterr().err
+    assert exit_code == 1
+    assert "could not read" in err
+    assert str(bad) in err
 
 
 # ---------------------------------------------------------------------------

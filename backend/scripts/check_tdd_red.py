@@ -50,10 +50,24 @@ import logging
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+class TddRedGateReadError(Exception):
+    """Raised when a changed ``.py`` file cannot be read in gate mode.
+
+    The gate is fail-closed: an unreadable file is a policy failure, not a
+    silently-skipped scan. ``main()`` catches this and exits non-zero with a
+    clear error message identifying the unreadable file.
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(str(path))
+        self.path = path
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +136,11 @@ def scan_file(path: Path) -> list[Offense]:
 
     Returns an empty list on:
       - missing files (the diff listed a file that's been deleted),
-      - non-``.py`` paths (defensive — the caller should filter),
-      - files that fail to decode as UTF-8 (unexpected for a Python source
-        tree but handled gracefully).
+      - non-``.py`` paths (defensive — the caller should filter).
+
+    Raises :class:`TddRedGateReadError` when a present ``.py`` file fails to
+    open or decode. This is a fail-closed policy gate: an unreadable file is
+    propagated up so the gate exits non-zero rather than silently passing.
     """
     if path.suffix != ".py":
         return []
@@ -132,13 +148,14 @@ def scan_file(path: Path) -> list[Offense]:
         return []
     try:
         text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError) as exc:
+        # Keep the warning for diagnostics, then fail-closed by raising.
         logger.warning(
-            "tdd_red_gate: failed to read %s — skipping",
+            "tdd_red_gate: failed to read %s — failing closed",
             path,
-            extra={"event": "tdd_red_gate.read_error", "file": str(path)},
+            extra={"event": "tdd_red_gate.read_error", "outcome": "failed"},
         )
-        return []
+        raise TddRedGateReadError(path) from exc
 
     offences: list[Offense] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
@@ -277,12 +294,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    # ADR #292 observability: `.complete` and `.failed` lifecycle events carry
+    # `outcome` + `duration_ms`. Start the clock here so we report end-to-end
+    # gate latency, not just scan time.
+    started = time.perf_counter()
+    event_prefix = (
+        "tdd_red_gate.diff_mode" if args.diff_base else "tdd_red_gate.file_mode"
+    )
+
     logger.info(
         "tdd_red_gate starting",
-        extra={
-            "event": "tdd_red_gate.start",
-            "mode": "diff" if args.diff_base else "files",
-        },
+        extra={"event": f"{event_prefix}.start"},
     )
 
     if args.files is not None:
@@ -291,14 +313,36 @@ def main(argv: list[str] | None = None) -> int:
         repo_root = (args.repo_root or _repo_root()).resolve()
         paths = _changed_py_files(args.diff_base, repo_root)
 
-    offences = scan_files(paths)
+    try:
+        offences = scan_files(paths)
+    except TddRedGateReadError as exc:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        logger.error(
+            "tdd_red_gate failed: could not read %s",
+            exc.path,
+            extra={
+                "event": f"{event_prefix}.failed",
+                "outcome": "failed",
+                "duration_ms": duration_ms,
+                "error_class": "TddRedGateReadError",
+            },
+        )
+        print(
+            f"tdd_red_gate: could not read {exc.path} — failing closed.",
+            file=sys.stderr,
+        )
+        return 1
 
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    outcome = "failed" if offences else "success"
     logger.info(
-        "tdd_red_gate complete",
+        "tdd_red_gate complete: scanned %d file(s), %d offence(s)",
+        len(paths),
+        len(offences),
         extra={
-            "event": "tdd_red_gate.complete",
-            "files_scanned": len(paths),
-            "offences": len(offences),
+            "event": f"{event_prefix}.complete",
+            "outcome": outcome,
+            "duration_ms": duration_ms,
         },
     )
 
