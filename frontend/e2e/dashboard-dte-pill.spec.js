@@ -115,7 +115,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('OpenLegsCard — urgency-aware DTE pill (issue #248)', () => {
+test.describe('OpenLegsCard — urgency-aware DTE pill (issue #248) @e2e', () => {
   test('dte 5 → red urgency tier', async ({ page }) => {
     const leg = makeLeg({ dte: 5 });
     await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });

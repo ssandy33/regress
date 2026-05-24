@@ -36,7 +36,7 @@ async function bgLuminance(locator) {
   });
 }
 
-test.describe('Dark mode toggle (#117)', () => {
+test.describe('Dark mode toggle (#117) @e2e', () => {
   test('toggles every dark: variant when OS prefers light', async ({ browser }) => {
     const ctx = await browser.newContext({ colorScheme: 'light' });
     const page = await ctx.newPage();

@@ -85,7 +85,7 @@ function fetchDashboard(request, suffix = '') {
   return request.get(`/dashboard${suffix}`, { maxRedirects: 0 });
 }
 
-test.describe('Nonce-based CSP (#33)', () => {
+test.describe('Nonce-based CSP (#33) @e2e', () => {
   test('script-src uses a nonce, drops unsafe-inline, keeps wasm-unsafe-eval', async ({
     request,
   }) => {

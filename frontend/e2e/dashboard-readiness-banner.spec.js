@@ -65,7 +65,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('DataReadinessBanner', () => {
+test.describe('DataReadinessBanner @e2e', () => {
   test('hidden when all sources healthy', async ({ page }) => {
     await mockDashboard(page, BASE_PAYLOAD);
     await page.goto('/dashboard');

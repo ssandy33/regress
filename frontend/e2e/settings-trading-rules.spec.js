@@ -99,7 +99,7 @@ async function openTradingRulesTab(page) {
   await expect(page.getByTestId('settings-rules-form')).toBeVisible();
 }
 
-test.describe('Settings → Trading Rules — page & tabs', () => {
+test.describe('Settings → Trading Rules — page & tabs @smoke @e2e', () => {
   test('tab bar exposes General and Trading Rules tabs', async ({ page }) => {
     await mockRulesEndpoint(page);
     await page.goto('/settings');
@@ -129,7 +129,7 @@ test.describe('Settings → Trading Rules — page & tabs', () => {
   });
 });
 
-test.describe('Settings → Trading Rules — deep link (issue #235)', () => {
+test.describe('Settings → Trading Rules — deep link (issue #235) @smoke @e2e', () => {
   test('/settings?tab=rules opens the Trading Rules tab without a click', async ({
     page,
   }) => {
@@ -178,7 +178,7 @@ test.describe('Settings → Trading Rules — deep link (issue #235)', () => {
   });
 });
 
-test.describe('Settings → Trading Rules — field render', () => {
+test.describe('Settings → Trading Rules — field render @smoke @e2e', () => {
   test('a field renders with its label, helper text and value', async ({
     page,
   }) => {
@@ -239,7 +239,7 @@ test.describe('Settings → Trading Rules — field render', () => {
   });
 });
 
-test.describe('Settings → Trading Rules — Optional fields', () => {
+test.describe('Settings → Trading Rules — Optional fields @smoke @e2e', () => {
   test('an unset Optional field renders empty with a non-numeric placeholder', async ({
     page,
   }) => {
@@ -306,7 +306,7 @@ test.describe('Settings → Trading Rules — Optional fields', () => {
   });
 });
 
-test.describe('Settings → Trading Rules — validation', () => {
+test.describe('Settings → Trading Rules — validation @smoke @e2e', () => {
   test('an inverted range (min >= max) shows an inline error and blocks save', async ({
     page,
   }) => {
@@ -377,7 +377,7 @@ test.describe('Settings → Trading Rules — validation', () => {
   });
 });
 
-test.describe('Settings → Trading Rules — save lifecycle', () => {
+test.describe('Settings → Trading Rules — save lifecycle @smoke @e2e', () => {
   test('edit → save → reload → value persists', async ({ page }) => {
     await mockRulesEndpoint(page);
     await openTradingRulesTab(page);
@@ -446,7 +446,7 @@ test.describe('Settings → Trading Rules — save lifecycle', () => {
   });
 });
 
-test.describe('Settings → Trading Rules — load failure', () => {
+test.describe('Settings → Trading Rules — load failure @smoke @e2e', () => {
   test('a failed config GET shows a generic error block with Retry', async ({
     page,
   }) => {
@@ -483,7 +483,7 @@ test.describe('Settings → Trading Rules — load failure', () => {
   });
 });
 
-test.describe('Settings → Trading Rules — accessibility', () => {
+test.describe('Settings → Trading Rules — accessibility @smoke @e2e', () => {
   test('every input is associated with a label', async ({ page }) => {
     await mockRulesEndpoint(page);
     await openTradingRulesTab(page);
@@ -650,7 +650,7 @@ function mockMigrationDismiss(page) {
   return state;
 }
 
-test.describe('Sizing cap percent — V1.0.7 (#234)', () => {
+test.describe('Sizing cap percent — V1.0.7 (#234) @smoke @e2e', () => {
   test('field renders with % suffix and default 25', async ({ page }) => {
     mockRulesEndpointWithCapture(page);
     mockAccountValueEndpoints(page, {

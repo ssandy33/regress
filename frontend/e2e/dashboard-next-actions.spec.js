@@ -75,7 +75,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('NextActionsSection', () => {
+test.describe('NextActionsSection @e2e', () => {
   test('section is always visible (even when empty)', async ({ page }) => {
     await mockDashboard(page, BASE_PAYLOAD);
     await page.goto('/dashboard');

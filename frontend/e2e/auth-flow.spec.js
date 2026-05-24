@@ -32,7 +32,7 @@ async function isAuthEnforced(page) {
   return page.url().includes('/auth/signin');
 }
 
-test.describe('Auth redirect flow (auth configured)', () => {
+test.describe('Auth redirect flow (auth configured) @smoke @e2e', () => {
   test.beforeEach(async ({ page }) => {
     const enforced = await isAuthEnforced(page);
     if (!enforced) {
@@ -61,7 +61,7 @@ test.describe('Auth redirect flow (auth configured)', () => {
   });
 });
 
-test.describe('Sign-in page', () => {
+test.describe('Sign-in page @smoke @e2e', () => {
   test('shows GitHub sign-in button', async ({ page }) => {
     await page.goto('/auth/signin');
     await page.waitForLoadState('networkidle');
@@ -89,7 +89,7 @@ test.describe('Sign-in page', () => {
   });
 });
 
-test.describe('Auth disabled (no env vars)', () => {
+test.describe('Auth disabled (no env vars) @smoke @e2e', () => {
   test.beforeEach(async ({ page }) => {
     const enforced = await isAuthEnforced(page);
     if (enforced) {
@@ -127,7 +127,7 @@ test.describe('Auth disabled (no env vars)', () => {
  *   2. Only NEXTAUTH_SECRET set → auth enabled (Issue #80 key scenario)
  *   3. All three vars set → auth enabled
  */
-test.describe('Issue #80: NEXTAUTH_SECRET-only auth enablement', () => {
+test.describe('Issue #80: NEXTAUTH_SECRET-only auth enablement @smoke @e2e', () => {
   test('auth enforcement is consistent — either redirects or passes through', async ({ page }) => {
     // Verify the middleware behaves consistently: when auth is enforced,
     // all protected routes redirect; when not, none do. This confirms the

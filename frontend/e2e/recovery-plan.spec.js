@@ -327,7 +327,7 @@ async function openRecoveryPlan(page) {
 
 // --- Tests ------------------------------------------------------------------
 
-test.describe('Recovery Plan panel', () => {
+test.describe('Recovery Plan panel @e2e', () => {
   test('flagged position renders 3-4 path cards with values', async ({ page }) => {
     await mockRecoveryPlan(page, populatedPayload());
     await openRecoveryPlan(page);
@@ -606,7 +606,7 @@ test.describe('Recovery Plan panel', () => {
 // #237 PR, which also appends to this file, resolves only a trivial conflict.
 // ---------------------------------------------------------------------------
 
-test.describe('Recovery Plan — target yield (issue #207)', () => {
+test.describe('Recovery Plan — target yield (issue #207) @e2e', () => {
   /** A payload where Sell & redeploy is suppressed for an unset target yield —
    * the exact state the recovery "Set target yield →" CTA exists to fix. */
   function targetYieldSuppressedPayload() {
@@ -697,7 +697,7 @@ test.describe('Recovery Plan — target yield (issue #207)', () => {
 // text surfaces "unenforceable" so the user sees the gap honestly.
 // ---------------------------------------------------------------------------
 
-test.describe('Recovery Plan — sizing-cap percent (issue #234)', () => {
+test.describe('Recovery Plan — sizing-cap percent (issue #234) @e2e', () => {
   /** A populated payload whose okr block carries the v2 fields (sizing_cap_pct,
    * total_capital, resolved_sizing_cap_dollars, account_id_masked,
    * capital_status) and whose assumptions panel renders the formatted

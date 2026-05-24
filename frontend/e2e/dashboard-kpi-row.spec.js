@@ -100,7 +100,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('KPI row (V0.5 — 7 tiles)', () => {
+test.describe('KPI row (V0.5 — 7 tiles) @e2e', () => {
   test('renders all seven tiles when populated', async ({ page }) => {
     await mockDashboard(page, { ...BASE_PAYLOAD, kpis: POPULATED_KPIS });
     await page.goto('/dashboard');

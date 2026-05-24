@@ -79,7 +79,7 @@ async function openObjectivesTab(page) {
   await expect(page.getByTestId('settings-objectives-section')).toBeVisible();
 }
 
-test.describe('Settings → Trading Objectives — tab & deep link', () => {
+test.describe('Settings → Trading Objectives — tab & deep link @e2e', () => {
   test('the tab bar exposes a third "Trading Objectives" tab', async ({
     page,
   }) => {
@@ -126,7 +126,7 @@ test.describe('Settings → Trading Objectives — tab & deep link', () => {
   });
 });
 
-test.describe('Settings → Trading Objectives — field render', () => {
+test.describe('Settings → Trading Objectives — field render @e2e', () => {
   test('the Target Yield field renders inside settings-objectives-section, not a rules group', async ({
     page,
   }) => {
@@ -182,7 +182,7 @@ test.describe('Settings → Trading Objectives — field render', () => {
   });
 });
 
-test.describe('Settings → Trading Objectives — save lifecycle', () => {
+test.describe('Settings → Trading Objectives — save lifecycle @e2e', () => {
   test('enter a value → save → reload → value persists', async ({ page }) => {
     await mockSettingsEndpoint(page, { initial: null });
     await openObjectivesTab(page);
@@ -253,7 +253,7 @@ test.describe('Settings → Trading Objectives — save lifecycle', () => {
   });
 });
 
-test.describe('Settings → Trading Objectives — validation', () => {
+test.describe('Settings → Trading Objectives — validation @e2e', () => {
   test('an out-of-bounds value shows an inline error and blocks Save', async ({
     page,
   }) => {
@@ -305,7 +305,7 @@ test.describe('Settings → Trading Objectives — validation', () => {
   });
 });
 
-test.describe('Settings → Trading Objectives — load failure', () => {
+test.describe('Settings → Trading Objectives — load failure @e2e', () => {
   test('a failed settings GET shows a generic error block with Retry', async ({
     page,
   }) => {

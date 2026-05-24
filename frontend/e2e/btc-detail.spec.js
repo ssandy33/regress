@@ -213,7 +213,7 @@ function mockDashboard(page, card) {
 
 // --- Tests: route renders + states -----------------------------------------
 
-test.describe('BTC detail screen — route + states', () => {
+test.describe('BTC detail screen — route + states @e2e', () => {
   test('renders the populated page for a valid leg', async ({ page }) => {
     await mockBtcDetail(page, populatedPayload());
     await openBtcDetail(page);
@@ -348,7 +348,7 @@ test.describe('BTC detail screen — route + states', () => {
 
 // --- Tests: CTA navigation from the dashboard action cards ------------------
 
-test.describe('BTC detail screen — reachable from dashboard card CTA', () => {
+test.describe('BTC detail screen — reachable from dashboard card CTA @e2e', () => {
   test('"Review buy-to-close →" on a profit-take card navigates to the BTC route', async ({
     page,
   }) => {
@@ -456,7 +456,7 @@ async function mockJournalPositions(page, positions) {
   });
 }
 
-test.describe('BTC detail — journal close-leg pre-fill (issue #244)', () => {
+test.describe('BTC detail — journal close-leg pre-fill (issue #244) @e2e', () => {
   test('"Buy to close" CTA points at the close-leg journal deep-link', async ({
     page,
   }) => {

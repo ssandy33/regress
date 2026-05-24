@@ -99,7 +99,7 @@ function setupMocks(page) {
   ]);
 }
 
-test.describe('Journal page', () => {
+test.describe('Journal page @e2e', () => {
   test('renders positions table with data', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/journal');

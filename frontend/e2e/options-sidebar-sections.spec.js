@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Options sidebar section grouping', () => {
+test.describe('Options sidebar section grouping @e2e', () => {
   test.skip('light and dark mode styling is correct', async () => {
     // Manual verification required: section headers, dividers, and input styling
     // should be visually correct in both light and dark themes.
