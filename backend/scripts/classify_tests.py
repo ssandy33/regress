@@ -30,18 +30,30 @@ the actual ``@pytest.mark.<tier>`` decorators by hand (Wave 1 issue
 
 Heuristics (REPORT mode only — never decides for CHECK mode):
 
+Per-test (NOT file-level) — issue #298 upgrade:
+
 - A test is suggested **integration** when ANY of:
-    * The file imports ``fastapi.testclient.TestClient`` directly.
-    * A test function takes the ``client`` fixture parameter (the
+    * The test function/method takes the ``client`` fixture parameter (the
       conftest-provided TestClient) — even transitively through another
       fixture that consumes ``client``.
-    * The file imports ``app.main.app`` for direct mounting.
-- Otherwise the test is suggested **unit**.
+    * The test function's body directly calls ``client.<verb>(...)`` for
+      ``verb in {get, post, put, delete, patch}``, OR instantiates
+      ``TestClient(...)`` in-body.
+- Otherwise the test is suggested **unit** — *even if the surrounding file
+  imports ``fastapi.testclient.TestClient`` or ``app.main``*.
 
 This is deliberately conservative: tests that drive in-memory SQLite
 *without* the FastAPI app (e.g. ``test_rules_config.py``'s ``db`` fixture
 that builds its own engine) stay **unit** because the marker definition
 says integration = full backend stack (TestClient + routers + services + ORM).
+
+Wave 1 used a file-level heuristic — a single ``TestClient`` import in a
+mixed file poisoned every test in the file. The Wave 3 upgrade (issue
+#298) walks each test's AST body so a class calling only private helpers
+stays ``unit`` even when a sibling class in the same module uses the
+``client`` fixture. File-level import flags (``has_testclient_import``,
+``has_app_main_import``) are still captured on ``FileScan`` for the
+report's per-file table — but they no longer drive the per-test verdict.
 
 The classifier is intentionally pytest + stdlib only; no third-party deps.
 """
@@ -72,6 +84,13 @@ NON_CLASSIFIER_MARKERS: frozenset[str] = frozenset(
 # ---------------------------------------------------------------------------
 
 
+# HTTP verbs we look for on a ``client.<verb>(...)`` call inside a test body.
+# These are the canonical FastAPI ``TestClient`` instance methods.
+CLIENT_HTTP_VERBS: frozenset[str] = frozenset(
+    {"get", "post", "put", "delete", "patch", "options", "head", "request"}
+)
+
+
 @dataclass(frozen=True)
 class TestRecord:
     """A single discovered ``test_*`` function with its classifier markers."""
@@ -81,6 +100,8 @@ class TestRecord:
     lineno: int
     markers: tuple[str, ...]  # only classifier markers, in source order
     suggested_tier: str  # heuristic suggestion for REPORT mode
+    test_uses_client_fixture: bool = False  # signature takes ``client`` or transitive
+    test_body_uses_client: bool = False  # body calls client.<verb>(...) or TestClient(...)
 
 
 @dataclass
@@ -173,6 +194,71 @@ def _is_pytest_fixture(decorators: list[ast.expr]) -> bool:
     return False
 
 
+def _test_body_uses_app_or_client(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True iff the test body directly drives the FastAPI app via TestClient.
+
+    Per #298: walks every ``Call`` node in the function's body and returns True
+    if ANY of these in-body patterns are found:
+
+    - ``client.<verb>(...)`` where ``verb`` is an HTTP method (get/post/put/...).
+      Matches both ``client.get(...)`` directly and ``self.client.get(...)``.
+    - ``TestClient(...)`` instantiation.
+
+    This is a per-test, in-file walk. No cross-function call-graph analysis —
+    per #298's out-of-scope clause. The walk descends through nested blocks
+    (``with``, ``for``, ``if``, etc.) so a request inside a ``with patch(...)``
+    block still counts.
+    """
+    for node in ast.walk(func):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = node.func
+        # ``TestClient(...)`` — bare Name call
+        if isinstance(callee, ast.Name) and callee.id == "TestClient":
+            return True
+        # ``client.get(...)``, ``self.client.post(...)``, etc.
+        if isinstance(callee, ast.Attribute) and callee.attr in CLIENT_HTTP_VERBS:
+            target = callee.value
+            if isinstance(target, ast.Name) and target.id == "client":
+                return True
+            if (
+                isinstance(target, ast.Attribute)
+                and target.attr == "client"
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+            ):
+                return True
+    return False
+
+
+def _suggest_tier_for_test(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    known_client_fixtures: set[str],
+) -> tuple[str, bool, bool]:
+    """Decide the per-test suggested tier and the two contributing signals.
+
+    Returns ``(tier, uses_client_fixture, body_uses_client)``.
+
+    Heuristic precedence (locked by Wave 3 plan §9, derived from #298 ACs):
+      1. If the body calls ``client.<verb>(...)`` or instantiates
+         ``TestClient(...)`` → integration.
+      2. Else if the signature consumes the ``client`` fixture (or a known
+         transitive fixture) → integration.
+      3. Else → unit.
+
+    The file-level ``has_testclient_import`` / ``has_app_main_import`` flags
+    are no longer part of this decision (they were the Wave 1 over-flagging
+    source). They remain on ``FileScan`` for the per-file report table only.
+    """
+    body_uses_client = _test_body_uses_app_or_client(func)
+    uses_client_fixture = any(
+        arg.arg in known_client_fixtures for arg in func.args.args
+    )
+    if body_uses_client or uses_client_fixture:
+        return "integration", uses_client_fixture, body_uses_client
+    return "unit", uses_client_fixture, body_uses_client
+
+
 def _walk_test_functions(tree: ast.Module):
     """Yield ``(qualname, FunctionDef)`` pairs for every ``test_*`` def.
 
@@ -228,15 +314,16 @@ def scan_file(path: Path) -> FileScan:
     scan.fixtures_using_client = known_client_fixtures - {"client"}
 
     # Second pass: collect every test_* with its classifier markers.
+    # Per #298: the suggested-tier decision is now per-test (body walk + signature),
+    # not file-level. A test_* function decorated with @pytest.fixture is NOT
+    # a real test — skip it to match pytest's own collection behavior.
     for qualname, func in _walk_test_functions(tree):
+        if _is_pytest_fixture(func.decorator_list):
+            continue
         markers = tuple(_classifier_markers(func.decorator_list))
-        uses_client = any(
-            arg.arg in known_client_fixtures for arg in func.args.args
+        suggested, uses_fixture, body_uses_client = _suggest_tier_for_test(
+            func, known_client_fixtures
         )
-        if scan.has_testclient_import or scan.has_app_main_import or uses_client:
-            suggested = "integration"
-        else:
-            suggested = "unit"
         scan.tests.append(
             TestRecord(
                 file=path,
@@ -244,6 +331,8 @@ def scan_file(path: Path) -> FileScan:
                 lineno=func.lineno,
                 markers=markers,
                 suggested_tier=suggested,
+                test_uses_client_fixture=uses_fixture,
+                test_body_uses_client=body_uses_client,
             )
         )
     return scan
@@ -340,11 +429,16 @@ def write_report(scans: list[FileScan], out_path: Path) -> None:
     lines.append("## Heuristics")
     lines.append("")
     lines.append(
-        "- **integration** if the file imports `fastapi.testclient.TestClient`, "
-        "imports `app.main`, or a test takes the `client` fixture "
+        "- **integration** if the test body calls `client.<verb>(...)` "
+        "(get/post/put/delete/patch) or instantiates `TestClient(...)`, "
+        "OR the test signature takes the `client` fixture "
         "(or any fixture transitively consuming `client`)."
     )
-    lines.append("- **unit** otherwise.")
+    lines.append(
+        "- **unit** otherwise — including tests in files that import "
+        "`TestClient` or `app.main` for sibling tests (per-test heuristic, "
+        "issue #298)."
+    )
     lines.append("")
     lines.append("## Distribution")
     lines.append("")
