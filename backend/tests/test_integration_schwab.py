@@ -76,7 +76,8 @@ class TestSettingsEndpointSchwab:
     """GET /api/settings — schwab_configured and schwab_token_expires fields."""
 
     @pytest.mark.integration
-    def test_unconfigured_returns_false(self, client, session_local):
+    @pytest.mark.usefixtures("session_local")
+    def test_unconfigured_returns_false(self, client):
         resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
@@ -95,7 +96,8 @@ class TestSettingsEndpointSchwab:
         assert expires_dt > datetime.now(timezone.utc)
 
     @pytest.mark.integration
-    def test_other_settings_still_present(self, client, session_local):
+    @pytest.mark.usefixtures("session_local")
+    def test_other_settings_still_present(self, client):
         """Schwab fields don't break existing settings response."""
         resp = client.get("/api/settings")
         data = resp.json()
@@ -108,7 +110,8 @@ class TestSchwabHealthEndpoint:
     """GET /api/settings/health/schwab — configured/valid/error fields."""
 
     @pytest.mark.integration
-    def test_unconfigured(self, client, session_local):
+    @pytest.mark.usefixtures("session_local")
+    def test_unconfigured(self, client):
         resp = client.get("/api/settings/health/schwab")
         assert resp.status_code == 200
         data = resp.json()
@@ -186,7 +189,8 @@ class TestSourcesEndpointSchwab:
         )
 
     @pytest.mark.integration
-    def test_unconfigured_shows_unavailable(self, client, session_local):
+    @pytest.mark.usefixtures("session_local")
+    def test_unconfigured_shows_unavailable(self, client):
         p1, p2, p3 = self._patch_other_sources()
         with p1, p2, p3:
             resp = client.get("/api/health/sources")
@@ -212,7 +216,8 @@ class TestSourcesEndpointSchwab:
         assert data["all_down"] is False
 
     @pytest.mark.integration
-    def test_all_down_includes_schwab(self, client, session_local):
+    @pytest.mark.usefixtures("session_local")
+    def test_all_down_includes_schwab(self, client):
         """all_down is True when all sources including schwab are down."""
         with patch("app.routers.health._check_alpha_vantage", return_value={"available": False, "error": "down"}), \
              patch("app.routers.health._check_fred", return_value={"available": False, "error": "down"}), \

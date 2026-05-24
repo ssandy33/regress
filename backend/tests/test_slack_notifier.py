@@ -127,7 +127,7 @@ class TestSlackNotifierFallback:
 
     @pytest.mark.unit
     @patch("app.services.slack_notifier.get_slack_webhook_url", return_value="")
-    def test_fallback_to_config_empty(self, mock_get_url):
+    def test_fallback_to_config_empty(self, _mock_get_url):
         """Notifier falls back to config when no URL is provided."""
         notifier = SlackNotifier()
         assert notifier.is_configured is False

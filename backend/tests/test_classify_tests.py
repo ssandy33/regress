@@ -169,7 +169,8 @@ def test_classifier_rejects_double_marked(tmp_path, capsys):
     assert rc == 1
     assert "double-marked" in out
     assert "test_two_marks" in out
-    assert "unit" in out and "integration" in out
+    assert "unit" in out
+    assert "integration" in out
 
 
 @pytest.mark.unit
@@ -242,7 +243,7 @@ def test_classifier_ignores_parametrize_and_skip(tmp_path):
 
 
 @pytest.mark.unit
-def test_classifier_exit_code_clean_repo(tmp_path, capsys):
+def test_classifier_exit_code_clean_repo(capsys):
     """check() against an empty FileScan list exits 0 with zero counts."""
     rc = classify_tests.check([])
     out = capsys.readouterr().out
@@ -256,7 +257,7 @@ def test_classifier_exit_code_clean_repo(tmp_path, capsys):
 
 
 @pytest.mark.unit
-def test_report_mode_writes_sample_to_default_path(tmp_path, monkeypatch):
+def test_report_mode_writes_sample_to_default_path(tmp_path):
     """--report writes a markdown file at the provided path."""
     # Build a fake tests dir with one unit + one integration file.
     tests_dir = tmp_path / "tests"
@@ -369,6 +370,7 @@ def _run_pytest(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         env=env,
+        check=False,
     )
 
 

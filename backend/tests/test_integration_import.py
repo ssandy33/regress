@@ -198,7 +198,8 @@ class TestImportDateRangeValidation:
         assert "365" in resp.json()["detail"]
 
     @pytest.mark.integration
-    def test_preview_accepts_range_at_365_days(self, client, mock_schwab):
+    @pytest.mark.usefixtures("mock_schwab")
+    def test_preview_accepts_range_at_365_days(self, client):
         resp = client.get("/api/journal/import/preview", params={
             "start_date": "2024-01-01",
             "end_date": "2024-12-31",  # exactly 365 days

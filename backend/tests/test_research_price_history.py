@@ -168,7 +168,7 @@ def _clear_price_history_cache():
 class TestTradeEventMapping:
     """:func:`_trade_events_from_position` correctly normalizes legacy types."""
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_normalizes_buy_put_close_to_buy_close(self):
         events = svc._trade_events_from_position(
             {
@@ -187,7 +187,7 @@ class TestTradeEventMapping:
         assert events[0].date == "2025-02-15"
         assert events[0].strike == 26.0
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_normalizes_buy_call_close_to_buy_close(self):
         events = svc._trade_events_from_position(
             {
@@ -203,7 +203,7 @@ class TestTradeEventMapping:
         )
         assert events[0].type == "buy_close"
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_passes_through_v1_vocabulary_unchanged(self):
         for raw in ("sell_put", "sell_call", "assignment", "called_away", "expired"):
             events = svc._trade_events_from_position(
@@ -220,7 +220,7 @@ class TestTradeEventMapping:
             )
             assert events and events[0].type == raw, raw
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_skips_unknown_trade_types(self):
         events = svc._trade_events_from_position(
             {
@@ -241,7 +241,7 @@ class TestTradeEventMapping:
         )
         assert [e.type for e in events] == ["sell_put"]
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_skips_rows_without_opened_at(self):
         events = svc._trade_events_from_position(
             {
@@ -251,7 +251,7 @@ class TestTradeEventMapping:
         )
         assert events == []
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_sorts_events_by_date(self):
         events = svc._trade_events_from_position(
             {
@@ -269,14 +269,14 @@ class TestTradeEventMapping:
 class TestWindowResolution:
     """:func:`_window_dates` returns a sensible (start, end) range."""
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_default_window_is_one_year(self):
         start, end = svc._window_dates("1Y")
         # The window is 365 days; allow ±1 day for the day-boundary edge.
         delta = (date.fromisoformat(end) - date.fromisoformat(start)).days
         assert 364 <= delta <= 366
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     @pytest.mark.parametrize("window,min_days,max_days", [
         ("6M", 182, 184),
         ("1Y", 364, 366),
@@ -287,7 +287,7 @@ class TestWindowResolution:
         delta = (date.fromisoformat(end) - date.fromisoformat(start)).days
         assert min_days <= delta <= max_days
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_unsupported_window_raises(self):
         with pytest.raises(svc.InvalidWindowError):
             svc._window_dates("3D")

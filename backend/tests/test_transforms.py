@@ -63,7 +63,7 @@ class TestAlignDatasets:
     def test_align_single_dataset(self):
         """Single DataFrame returns one-column result with all rows."""
         df = _make_df("2023-01-01", 20)
-        combined, notes = align_datasets({"only": df})
+        combined, _notes = align_datasets({"only": df})
         assert len(combined) == 20
         assert list(combined.columns) == ["only"]
 

@@ -330,7 +330,7 @@ class TestPreviewImportReceiveAndDeliver:
     when the Schwab response includes RECEIVE_AND_DELIVER transactions.
     """
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     @patch("app.services.schwab_import.SchwabClient")
     def test_assignment_and_called_away_appear_in_preview(self, mock_client_cls, db_session):
         """RECEIVE_DELIVER PUT and CALL transactions map to assignment + called_away."""
@@ -430,7 +430,7 @@ class TestPositionLifecycleOnImport:
     import finalizer.
     """
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_ac1_called_away_closes_position(self, db_session):
         """AC #1: full wheel cycle ending in called_away → status=closed."""
         mapped = [
@@ -450,7 +450,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 0
         assert position.closed_at == "2026-03-20"
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_ac1_expired_closes_position(self, db_session):
         """AC #1: sell_put → expired → status=closed (no shares acquired)."""
         mapped = [
@@ -467,7 +467,7 @@ class TestPositionLifecycleOnImport:
         assert position.broker_cost_basis == 0.0
         assert position.closed_at == "2026-04-17"
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_ac2_assignment_sets_broker_cost_basis(self, db_session):
         """AC #2: after assignment, broker_cost_basis = strike * shares."""
         mapped = [
@@ -482,7 +482,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 100
         assert position.broker_cost_basis == pytest.approx(13.50 * 100)
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_ac3_double_assignment_aggregates_shares_and_basis(self, db_session):
         """AC #3: a second assignment increments shares (no silent no-op)."""
         mapped = [
@@ -500,7 +500,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 200
         assert position.broker_cost_basis == pytest.approx(2800.0 + 3000.0)
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_ac4_buy_to_close_closes_position(self, db_session):
         """AC #4: sell_put → buy_to_close (no reopen) → status=closed."""
         mapped = [
@@ -515,7 +515,7 @@ class TestPositionLifecycleOnImport:
         assert position.shares == 0
         assert position.closed_at == "2026-03-25"
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_reopen_after_close_creates_new_position(
         self, db_session, monkeypatch
     ):
@@ -553,7 +553,7 @@ class TestPositionLifecycleOnImport:
         assert positions[0].status == "closed"
         assert positions[1].status == "open"
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_ghost_open_positions_no_longer_appear_after_called_away(self, db_session):
         """Regression for the real-world repro in issue #127 (Schwab ****885).
 
