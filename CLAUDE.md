@@ -2,14 +2,86 @@
 
 ## Testing Requirements
 
+Test methodology and pyramid are governed by [PRD #261 — Quality v1: TDD Adoption + Test Pyramid](https://github.com/ssandy33/regress/discussions/261). PRD #261 is the historical *why*; this section is the operational *what*.
+
 - Every issue must have automated test coverage for all its acceptance criteria before the PR is merged.
 - Tests must be written as part of the implementation, not as a separate follow-up step.
 - If an AC is a manual/infrastructure step (e.g., "create an OAuth app"), document it in the test file as a skipped test or comment explaining why it's not automatable.
-- Backend tests: `backend/tests/` using pytest (in-memory SQLite via conftest fixtures).
-- Frontend tests: `frontend/e2e/` using Playwright for integration/e2e flows.
-- Run backend tests: `cd backend && python -m pytest`
-- Run frontend tests: `cd frontend && npx playwright test`
-- CI runs both backend tests and frontend lint/build on every PR.
+
+### Test pyramid (R1)
+
+| Layer | Runner | Definition | Speed budget |
+|---|---|---|---|
+| **Unit** | pytest + `@pytest.mark.unit` | A single function or class in isolation. No FastAPI app, no `TestClient`, no DB session, no network. | < 1s/test; suite < 30s |
+| **Integration** | pytest + `@pytest.mark.integration` | Full backend stack: FastAPI `TestClient` + in-memory SQLite (`conftest.py` fixture) + routers + services + ORM. | < 2s/test; suite < 2min |
+| **E2E** | Playwright (`frontend/e2e/*.spec.js`) | Real browser + a running app. Frontend is the system under test. | < 30s/test; suite < 10min |
+
+Frontend has no unit / integration tier in v1 — Playwright is the only frontend test runner.
+
+### Per-AC test spread (R2)
+
+Every AC defaults to:
+
+- **0–1 E2E** test (one if the AC is a rendered user flow; zero if backend-only).
+- **1–3 integration** tests (always ≥1 — proves wiring).
+- **3–10 unit** tests (branches, edge cases, error paths).
+
+Deviations are explicit and justified in the plan file's Test List, not silent.
+
+### File-naming + marker convention (R3)
+
+**Backend** — marker is the source of truth; filename is a hint:
+
+| Layer | Filename hint | Marker |
+|---|---|---|
+| Unit | `test_<module>.py` | `@pytest.mark.unit` |
+| Integration | `test_<router>_router.py` or `test_<feature>_integration.py` | `@pytest.mark.integration` |
+| In-flight Red | any | `@pytest.mark.tdd_red` |
+
+Markers are registered in `backend/pytest.ini` with `--strict-markers`. A test missing a classifier marker fails `backend/scripts/classify_tests.py --check` (CI step in `backend-unit`).
+
+**Frontend** — specs live in `frontend/e2e/<feature>.spec.js`; tagging via `@smoke` and/or `@e2e` in `test.describe()` / `test()` titles (see *Playwright tagging* below).
+
+### Pragmatic TDD rhythm (R4)
+
+Adopt the up-front-Test-List flavor, NOT strict one-cycle-per-assertion Beck-style TDD:
+
+1. **Test List** — enumerate test cases in the plan file before any implementation.
+2. **Write the tests** in their target layer (Red — they fail because impl doesn't exist).
+3. **Implement** the smallest change that turns the tests Green.
+4. **Refactor** without changing behavior; tests stay Green.
+
+### tdd_red marker discipline (R4/R5)
+
+In-flight Red tests carry `@pytest.mark.tdd_red`. The default pytest invocation (`pytest`, `pytest -m unit`, etc.) excludes them — `addopts` in `pytest.ini` sets `-m "not tdd_red"`. Run `pytest -m tdd_red` to exercise them explicitly during development.
+
+**The PR merge gate (`tdd_red_gate` step in CI `backend-unit` job) fails if any `@pytest.mark.tdd_red` decorator or `pytestmark = pytest.mark.tdd_red` line survives in a PR's changed `.py` files.** A Red test must either be deleted or converted to passing before merge. Local check: `python -m scripts.check_tdd_red --diff-base origin/main`.
+
+### Playwright tagging — @smoke / @e2e (R6)
+
+Every `frontend/e2e/*.spec.js` carries `@smoke` and/or `@e2e` in its top-level `test.describe()` title (or each `test()` title for spec files without a top-level describe).
+
+- **`@smoke`** — critical-path subset; runs first in CI; failure short-circuits the e2e run.
+- **`@e2e`** — broader E2E set; runs after smoke passes.
+- A test may carry both (e.g., `'Dashboard renders @smoke @e2e'`).
+
+CI step `playwright_tag_check` (in `frontend-playwright` job) fails if any spec has neither tag. Run locally: `cd frontend && bash scripts/check-playwright-tags.sh`. Two npm scripts: `npm run test:smoke` and `npm run test:e2e:tags`.
+
+`.prod.spec.js` files (run under `playwright.prod.config.js`) are exempt — they're excluded by the default Playwright config.
+
+### Test List section requirement (R7)
+
+Every plan file (`<spec>-plan.md`) includes a `## Test List` section enumerating each test by name + layer + AC. The planner-architect or CTO rejects plans without it.
+
+### Where these rules apply
+
+These rules govern **new tests on new issues**. The Quality v1 Wave 1 tagging pass (#266) classified the existing 63 backend test files; it did NOT rewrite them. Existing tests are correctly classified; they were not refactored to fit the new layer definitions retroactively.
+
+- Backend tests live in `backend/tests/` (pytest, in-memory SQLite via conftest).
+- Frontend tests live in `frontend/e2e/` (Playwright; `npx playwright test`).
+- Run backend tests: `cd backend && python -m pytest`.
+- Run frontend tests: `cd frontend && npm run test:e2e` (all), `npm run test:smoke` (smoke only).
+- CI runs the three-job matrix on every PR: `backend-unit` (with classifier + tdd_red gate), `backend-integration`, `frontend-playwright` (with tag check + smoke-then-e2e).
 
 ## Code Quality
 
