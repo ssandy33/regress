@@ -77,6 +77,21 @@ class Trade(Base):
     closed_at = Column(String, nullable=True)
     close_reason = Column(String, nullable=True)  # "fifty_pct_target" | "full_expiration" | "rolled" | "closed_early" | "assigned" | "called_away"
     position = relationship("Position", back_populates="trades")
+    # One-to-one child row (issue #160). When the trade is deleted (via
+    # ``delete_trade``) the compliance row is removed in the same
+    # transaction — the row is a snapshot keyed by ``trade_id`` and has no
+    # independent existence. ``passive_deletes`` defaults to False because
+    # the project does not enable ``PRAGMA foreign_keys=ON``, so the
+    # SQL-level ``ondelete="CASCADE"`` would silently no-op; the ORM-level
+    # cascade is what we rely on. ``clear_all_journal_data`` does a bulk
+    # delete that bypasses ORM cascade entirely — it wipes the child table
+    # explicitly first (see :func:`app.services.journal.clear_all_journal_data`).
+    entry_compliance = relationship(
+        "TradeEntryCompliance",
+        back_populates="trade",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 class PositionNote(Base):
@@ -150,7 +165,11 @@ class TradeEntryCompliance(Base):
 
     __tablename__ = "trade_entry_compliance"
 
-    trade_id = Column(String, ForeignKey("trades.id"), primary_key=True)
+    trade_id = Column(
+        String,
+        ForeignKey("trades.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
     evaluated_at = Column(String, nullable=False)  # ISO datetime
     dte_at_entry = Column(Integer, nullable=False)
     delta_at_entry = Column(Float, nullable=True)
@@ -159,6 +178,7 @@ class TradeEntryCompliance(Base):
     compliant = Column(Integer, nullable=False)  # 0/1 — SQLite boolean idiom
     failed_rules = Column(Text, nullable=False)  # JSON-encoded array of strings
     entry_rules_snapshot = Column(Text, nullable=False)  # JSON-encoded object
+    trade = relationship("Trade", back_populates="entry_compliance")
 
 
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})

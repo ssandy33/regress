@@ -303,13 +303,17 @@ def record_trade_compliance(
         outcome = "degraded"
     else:
         outcome = "success"
+    # ADR #292 canonical fields only — ``trade_id`` is NOT in the canonical
+    # vocabulary, so it lives in the human-readable message body where it
+    # stays Axiom-searchable via full-text search but does not pollute the
+    # structured-field schema.
     logger.info(
-        "trade_entry_compliance.evaluated",
+        "trade_entry_compliance.evaluated for trade %s",
+        trade.id,
         extra={
             "event": "trade_entry_compliance.evaluated",
             "outcome": outcome,
             "duration_ms": duration_ms,
-            "trade_id": trade.id,
             "position_id": trade.position_id,
             "ticker": getattr(trade.position, "ticker", None) if trade.position else None,
         },
@@ -322,11 +326,12 @@ def compute_rolling_compliance(
     rules: RulesConfig,  # noqa: ARG001 — accepted for API symmetry; consumers may want rules-aware reads
     *,
     window_days: int = 30,
+    now: datetime | None = None,
 ) -> EntryComplianceSummary:
     """Compute the rolling-window KR-5 summary.
 
     "Rolling N days" = trades whose ``opened_at`` falls within
-    ``[now() - N days, now()]`` in UTC. We pick UTC explicitly for simplicity
+    ``[now - N days, now]`` in UTC. We pick UTC explicitly for simplicity
     in this wave; #157 (OKR engine) will harmonize the timezone convention
     when it lands.
 
@@ -336,22 +341,32 @@ def compute_rolling_compliance(
             API symmetry with the evaluator and the future OKR engine; the
             current implementation does not branch on rules content.
         window_days: Rolling window length in days. Defaults to 30.
+        now: Optional pinned "now" timestamp (UTC). When the caller already
+            snapshotted ``now`` for its own filter logic (e.g. the OKRs
+            router's parallel non-compliant query) it MUST pass the same
+            value here so the two halves of the response agree on the window
+            boundary. Defaults to ``datetime.now(timezone.utc)``.
 
     Returns:
         :class:`EntryComplianceSummary` with ``compliant_pct`` set to
         ``None`` whenever the denominator (``total - unknown_only``) is 0.
     """
     started = time.perf_counter()
-    now = datetime.now(timezone.utc)
+    if now is None:
+        now = datetime.now(timezone.utc)
     cutoff_iso = (now - timedelta(days=window_days)).isoformat()
+    now_iso = now.isoformat()
 
     # Join compliance rows back to trades to filter by opened_at window. We
     # iterate (instead of a SQL aggregate) because the failed_rules JSON
     # text needs Python-side decoding for the unknown-only check.
+    # The upper bound excludes future-dated ``opened_at`` values that would
+    # otherwise inflate ``total`` and skew KR-5 (CodeRabbit triage on PR #301).
     rows = (
         db.query(TradeEntryCompliance, Trade)
         .join(Trade, TradeEntryCompliance.trade_id == Trade.id)
         .filter(Trade.opened_at >= cutoff_iso)
+        .filter(Trade.opened_at <= now_iso)
         .all()
     )
 

@@ -217,3 +217,58 @@ def test_get_okrs_entry_compliance_empty_corpus_returns_zero_summary(client):
     assert body["summary"]["unknown_only"] == 0
     assert body["summary"]["compliant_pct"] is None
     assert body["non_compliant"] == []
+
+
+# ---------------------------------------------------------------------------
+# CodeRabbit triage on PR #301 — Fix #2: _hint bounds validation.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_post_trade_rejects_negative_dte_hint(client):
+    """Fix #2: negative ``dte_at_entry_hint`` -> HTTP 422 (cannot be < 0)."""
+    pos = _create_position(client).json()
+    resp = _create_trade(client, pos["id"], dte_at_entry_hint=-1)
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
+def test_post_trade_rejects_negative_earnings_buffer_hint(client):
+    """Fix #2: negative ``earnings_buffer_days_hint`` -> HTTP 422."""
+    pos = _create_position(client).json()
+    resp = _create_trade(client, pos["id"], earnings_buffer_days_hint=-1)
+    assert resp.status_code == 422
+
+
+@pytest.mark.integration
+def test_post_trade_rejects_non_finite_delta_hint():
+    """Fix #2: NaN / inf in ``delta_at_entry_hint`` -> ValidationError.
+
+    Non-finite floats silently bypass band comparisons and would record a
+    misleading verdict; reject at the schema layer instead.
+
+    Direct schema construction here (rather than POSTing literal ``NaN``
+    JSON, which would be rejected at the JSON-parse layer with a 400 before
+    Pydantic ever sees it). The schema layer is the one that ships the new
+    ``allow_inf_nan=False`` rule.
+    """
+    import math
+
+    from pydantic import ValidationError
+
+    from app.models.schemas import TradeCreate
+
+    base_kwargs = {
+        "position_id": "pos-1",
+        "trade_type": "sell_put",
+        "strike": 100.0,
+        "expiration": "2026-02-15",
+        "premium": 2.50,
+        "fees": 0.65,
+        "quantity": 1,
+        "opened_at": "2026-01-15T10:00:00+00:00",
+    }
+    with pytest.raises(ValidationError):
+        TradeCreate(**base_kwargs, delta_at_entry_hint=math.nan)
+    with pytest.raises(ValidationError):
+        TradeCreate(**base_kwargs, delta_at_entry_hint=math.inf)

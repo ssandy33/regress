@@ -398,9 +398,16 @@ class TradeCreate(BaseModel):
     # are used verbatim by the entry-compliance evaluator. The ``_hint``
     # suffix is deliberate: these are user-asserted snapshots, not computed
     # values; the evaluator records them as the historical truth.
-    dte_at_entry_hint: Optional[int] = None
-    delta_at_entry_hint: Optional[float] = None
-    earnings_buffer_days_hint: Optional[int] = None
+    #
+    # Bounds (CodeRabbit triage on PR #301):
+    # - DTE / earnings-buffer hints reject negatives — the evaluator clamps
+    #   DTE to 1 for monthly-return math, which would inflate the return on
+    #   a negative input.
+    # - Delta hint rejects non-finite floats (NaN / +-inf) — they bypass the
+    #   delta-band comparisons silently.
+    dte_at_entry_hint: Optional[int] = Field(default=None, ge=0)
+    delta_at_entry_hint: Optional[float] = Field(default=None, allow_inf_nan=False)
+    earnings_buffer_days_hint: Optional[int] = Field(default=None, ge=0)
 
 
 class TradeUpdate(BaseModel):

@@ -1,9 +1,10 @@
 import logging
+import time
 import uuid
 
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.database import Position, Trade
+from app.models.database import Position, Trade, TradeEntryCompliance
 from app.models.schemas import PositionCreate, PositionUpdate, TradeCreate, TradeUpdate
 from app.services.positions import compute_assignment_netting
 
@@ -231,6 +232,7 @@ def create_trade(db: Session, data: TradeCreate) -> dict | None:
         from app.services.entry_compliance import record_trade_compliance
         from app.services.rules_config import load_rules_config
 
+        compliance_started = time.perf_counter()
         try:
             rules = load_rules_config(db)
             record_trade_compliance(
@@ -241,18 +243,22 @@ def create_trade(db: Session, data: TradeCreate) -> dict | None:
                 delta_hint=data.delta_at_entry_hint,
                 earnings_buffer_hint=data.earnings_buffer_days_hint,
             )
-        except Exception:
+        except Exception as e:
             # Compliance is best-effort; never block the trade POST on a
             # compliance write failure. Generic log message per CLAUDE.md
-            # (no str(e) leak).
+            # (no str(e) leak). ADR #292: ``.failed`` events carry both
+            # ``outcome`` and ``duration_ms``; ``trade_id`` is non-canonical
+            # so it travels in the message body, not ``extra``.
+            duration_ms = int((time.perf_counter() - compliance_started) * 1000)
             logger.warning(
                 "Failed to record trade_entry_compliance for trade %s",
                 trade.id,
                 extra={
                     "event": "trade_entry_compliance.failed",
                     "outcome": "failed",
-                    "trade_id": trade.id,
-                    "error_class": "ComplianceWriteError",
+                    "duration_ms": duration_ms,
+                    "error_class": type(e).__name__,
+                    "position_id": trade.position_id,
                 },
             )
             db.rollback()
@@ -330,6 +336,12 @@ def clear_all_journal_data(db: Session) -> dict:
     position_count = db.query(Position).count()
 
     try:
+        # Issue #160: ``trade_entry_compliance`` is a child of trades — wipe it
+        # FIRST so the bulk Trade delete below doesn't violate the FK (the SQL-
+        # level ``ondelete=CASCADE`` only fires when ``PRAGMA foreign_keys=ON``
+        # is set, which the project does not enable; bulk ORM deletes also
+        # bypass the ``cascade="all, delete-orphan"`` relationship semantics).
+        db.query(TradeEntryCompliance).delete(synchronize_session=False)
         db.query(Trade).delete(synchronize_session=False)
         db.query(Position).delete(synchronize_session=False)
         db.commit()

@@ -1,16 +1,19 @@
-"""Unit tests for per-trade entry-rule compliance tagging (#160).
+"""Unit + integration tests for per-trade entry-rule compliance tagging (#160).
 
 This file is the Worker A pilot of pragmatic-TDD on Quality v1 Wave 3 (#271).
 Tests are organised in the same order as the plan's Test List:
 
 1. Schema model — round-trips through SQLite, unique-per-trade, JSON fields.
+   (``@pytest.mark.integration`` — these tests own a real SQLAlchemy session.)
 2. Evaluation logic — pure-function checks against the failed_rules vocabulary
-   locked in the Wave 3 plan §V1-Freeze-3.
+   locked in the Wave 3 plan §V1-Freeze-3. (``@pytest.mark.unit`` — no DB.)
 3. KR-5 rolling-window summary — denominator excludes unknown_only trades.
+   (``@pytest.mark.integration`` — owns a real SQLAlchemy session.)
 
-All tests are ``@pytest.mark.unit`` per the Quality v1 pyramid (R1) — the
-schema test creates an isolated in-memory engine (no FastAPI app, no TestClient)
-to stay in the unit tier per the conftest's no-shared-app rule.
+The "no DB session" rule in PRD #261 / Quality v1 R3 means an in-memory
+SQLAlchemy session still classifies as integration even when there is no
+FastAPI app or TestClient — CodeRabbit caught this on the pilot's own tests
+during PR #301 triage. See the Wave 3 lessons-learned subsection in CLAUDE.md.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import sqlalchemy.exc
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -90,7 +94,7 @@ def _seed_trade(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 def test_trade_entry_compliance_model_persists_all_fields():
     """Schema AC-1: every column survives a write + read cycle."""
     db = _make_in_memory_session()
@@ -125,7 +129,7 @@ def test_trade_entry_compliance_model_persists_all_fields():
     assert json.loads(fetched.entry_rules_snapshot) == {"schema_version": 2}
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 def test_trade_entry_compliance_unique_per_trade():
     """Schema AC-1: ``trade_id`` is the primary key — only one row per trade."""
     db = _make_in_memory_session()
@@ -160,11 +164,11 @@ def test_trade_entry_compliance_unique_per_trade():
             entry_rules_snapshot=json.dumps({}),
         )
     )
-    with pytest.raises(Exception):  # IntegrityError from SQLite PK violation
+    with pytest.raises(sqlalchemy.exc.IntegrityError):
         db.commit()
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 def test_trade_entry_compliance_jsonb_fields_round_trip():
     """Schema AC-1: JSON-encoded fields survive write/read with nested shapes."""
     db = _make_in_memory_session()
@@ -430,7 +434,7 @@ def test_evaluate_failed_rules_lists_all_violations_when_multiple_fail():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 def test_compute_rolling_compliance_excludes_unknowns_from_denominator():
     """KR-5 AC: ``compliant_pct = compliant / (total - unknown_only)``.
 
@@ -543,7 +547,7 @@ def test_compute_rolling_compliance_excludes_unknowns_from_denominator():
     assert summary.window_days == 30
 
 
-@pytest.mark.unit
+@pytest.mark.integration
 def test_compute_rolling_compliance_returns_none_when_denominator_zero():
     """KR-5 AC: ``compliant_pct`` is ``None`` when (total - unknown_only) == 0."""
     db = _make_in_memory_session()
@@ -554,3 +558,94 @@ def test_compute_rolling_compliance_returns_none_when_denominator_zero():
     assert summary.unknown_only == 0
     assert summary.compliant == 0
     assert summary.compliant_pct is None
+
+
+# ---------------------------------------------------------------------------
+# CodeRabbit triage on PR #301 — regression coverage for the 9 fixes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_deleting_trade_cascade_deletes_entry_compliance_row():
+    """Fix #1: ``trade_entry_compliance`` is a child of ``trades``.
+
+    When the parent trade is deleted via the ORM, the compliance row is
+    removed in the same transaction (``cascade="all, delete-orphan"`` on
+    ``Trade.entry_compliance``). Without this the compliance row would
+    orphan (or block the delete with a FK violation when pragma is on).
+    """
+    db = _make_in_memory_session()
+    _seed_position(db)
+    _seed_trade(db)
+
+    db.add(
+        TradeEntryCompliance(
+            trade_id="trade-1",
+            evaluated_at="2026-01-15T10:00:00+00:00",
+            dte_at_entry=31,
+            delta_at_entry=0.25,
+            monthly_return_pct=2.4,
+            earnings_buffer_days=21,
+            compliant=1,
+            failed_rules=json.dumps([]),
+            entry_rules_snapshot=json.dumps({}),
+        )
+    )
+    db.commit()
+    assert db.query(TradeEntryCompliance).count() == 1
+
+    trade = db.query(Trade).filter_by(id="trade-1").one()
+    db.delete(trade)
+    db.commit()
+
+    assert db.query(Trade).filter_by(id="trade-1").first() is None
+    assert db.query(TradeEntryCompliance).count() == 0
+
+
+@pytest.mark.integration
+def test_compute_rolling_compliance_excludes_future_dated_trades():
+    """Fix #6: ``opened_at`` strictly in the future is excluded from total.
+
+    Without the upper bound, future-dated trades inflate ``total`` and skew
+    ``compliant_pct``. With it, a trade dated ``now + 1 day`` is NOT counted.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    db = _make_in_memory_session()
+    _seed_position(db)
+    now = datetime.now(timezone.utc)
+    future = (now + timedelta(days=1)).isoformat()
+
+    db.add(
+        Trade(
+            id="t-future",
+            position_id="pos-1",
+            trade_type="sell_put",
+            strike=100.0,
+            expiration="2026-12-15",
+            premium=2.50,
+            fees=0.0,
+            quantity=1,
+            opened_at=future,
+        )
+    )
+    db.add(
+        TradeEntryCompliance(
+            trade_id="t-future",
+            evaluated_at=future,
+            dte_at_entry=31,
+            delta_at_entry=0.25,
+            monthly_return_pct=2.4,
+            earnings_buffer_days=21,
+            compliant=1,
+            failed_rules=json.dumps([]),
+            entry_rules_snapshot=json.dumps({}),
+        )
+    )
+    db.commit()
+
+    summary = compute_rolling_compliance(
+        db, DEFAULT_RULES_CONFIG, window_days=30
+    )
+    assert summary.total == 0
+    assert summary.compliant == 0
