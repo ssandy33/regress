@@ -23,6 +23,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Need PR base SHA available locally for the tdd_red diff scan below
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
