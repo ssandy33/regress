@@ -4,10 +4,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session as DBSession
 
-from app.models.database import get_db
+from app.models.database import TradeEntryCompliance, get_db
 from app.models.schemas import (
     POSITION_STATUS,
     ClearJournalResponse,
+    EntryComplianceResponse,
     ImportPreviewResponse,
     ImportRequest,
     ImportResultResponse,
@@ -123,6 +124,51 @@ def delete_existing_trade(trade_id: str, db: DBSession = Depends(get_db)):
     """Remove a trade."""
     if not delete_trade(db, trade_id):
         raise HTTPException(status_code=404, detail="Trade not found")
+
+
+@router.get(
+    "/trades/{trade_id}/compliance",
+    response_model=EntryComplianceResponse,
+)
+def get_trade_compliance(trade_id: str, db: DBSession = Depends(get_db)):
+    """Return the entry-rule compliance row for a single trade (issue #160).
+
+    404 when the trade has no compliance row — this covers both the
+    unknown-trade and the out-of-scope-trade-type case (e.g. a
+    ``buy_put_close`` row, which the evaluator never writes). The trade-
+    not-found vs no-compliance-row distinction is collapsed to a single
+    404 because the compliance API is downstream of the trade itself —
+    consumers checking the compliance endpoint already know the trade
+    exists; if they don't, they look it up on ``GET /trades/{id}`` first.
+    """
+    row = (
+        db.query(TradeEntryCompliance)
+        .filter(TradeEntryCompliance.trade_id == trade_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="Compliance row not found for trade"
+        )
+    import json as _json
+
+    return EntryComplianceResponse(
+        trade_id=row.trade_id,
+        evaluated_at=row.evaluated_at,
+        dte_at_entry=row.dte_at_entry,
+        delta_at_entry=row.delta_at_entry,
+        monthly_return_pct=row.monthly_return_pct,
+        earnings_buffer_days=row.earnings_buffer_days,
+        compliant=bool(row.compliant),
+        failed_rules=(
+            _json.loads(row.failed_rules) if row.failed_rules else []
+        ),
+        entry_rules_snapshot=(
+            _json.loads(row.entry_rules_snapshot)
+            if row.entry_rules_snapshot
+            else {}
+        ),
+    )
 
 
 @router.delete("/all", response_model=ClearJournalResponse)

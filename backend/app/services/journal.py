@@ -181,7 +181,23 @@ def update_position(db: Session, position_id: str, data: PositionUpdate) -> dict
 
 
 def create_trade(db: Session, data: TradeCreate) -> dict | None:
-    """Create a new trade. Returns None if position_id is invalid."""
+    """Create a new trade. Returns None if position_id is invalid.
+
+    Side effect (issue #160 / Quality v1 Wave 3): for ``sell_put`` /
+    ``sell_call`` trades, after the trade row is persisted, an entry-rule
+    compliance row is written via
+    :func:`app.services.entry_compliance.record_trade_compliance`. The
+    optional ``dte_at_entry_hint`` / ``delta_at_entry_hint`` /
+    ``earnings_buffer_days_hint`` fields on :class:`TradeCreate` propagate
+    into the evaluator verbatim; Schwab-imported trades that never carry
+    hints record with ``delta_unknown`` + ``earnings_buffer_unknown``.
+
+    A compliance failure does not block trade creation — the trade row is
+    already committed at that point, and the OKR engine (#157, deferred)
+    consumes the compliance verdict downstream. Any persistence error in
+    the compliance write is logged at WARNING and swallowed so the trade
+    POST stays atomic from the caller's POV.
+    """
     position = db.query(Position).filter(Position.id == data.position_id).first()
     if position is None:
         return None
@@ -207,6 +223,40 @@ def create_trade(db: Session, data: TradeCreate) -> dict | None:
         raise
     db.refresh(trade)
     logger.info("Created trade %s for position %s", trade.id, trade.position_id)
+
+    # Compliance side effect (issue #160). Imported lazily to avoid a circular
+    # import at module load (entry_compliance imports schemas; schemas is the
+    # consumer of this module's responses).
+    if data.trade_type in {"sell_put", "sell_call"}:
+        from app.services.entry_compliance import record_trade_compliance
+        from app.services.rules_config import load_rules_config
+
+        try:
+            rules = load_rules_config(db)
+            record_trade_compliance(
+                db,
+                trade,
+                rules,
+                dte_hint=data.dte_at_entry_hint,
+                delta_hint=data.delta_at_entry_hint,
+                earnings_buffer_hint=data.earnings_buffer_days_hint,
+            )
+        except Exception:
+            # Compliance is best-effort; never block the trade POST on a
+            # compliance write failure. Generic log message per CLAUDE.md
+            # (no str(e) leak).
+            logger.warning(
+                "Failed to record trade_entry_compliance for trade %s",
+                trade.id,
+                extra={
+                    "event": "trade_entry_compliance.failed",
+                    "outcome": "failed",
+                    "trade_id": trade.id,
+                    "error_class": "ComplianceWriteError",
+                },
+            )
+            db.rollback()
+
     return _build_trade_response(trade)
 
 

@@ -14,8 +14,6 @@ v1 pyramid (R1).
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 
@@ -161,22 +159,35 @@ def test_get_trade_compliance_returns_404_when_no_compliance_row(client):
 def test_get_okrs_entry_compliance_returns_summary_and_non_compliant_list(
     client,
 ):
-    """Happy path: summary + non_compliant array populated."""
-    pos = _create_position(client).json()
+    """Happy path: summary + non_compliant array populated.
 
-    # 1 compliant trade
+    Uses a recent ``opened_at`` so the trades fall inside the rolling 30d
+    window (the endpoint filters by ``opened_at >= now - 30d`` in UTC per
+    the Wave 3 plan §Edge-Cases-6).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    pos = _create_position(client).json()
+    recent = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    far_exp = (datetime.now(timezone.utc) + timedelta(days=30)).date().isoformat()
+    near_exp = (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()
+
+    # 1 compliant trade — 30 DTE, default delta band, hinted earnings buffer
     _create_trade(
         client,
         pos["id"],
+        opened_at=recent,
+        expiration=far_exp,
         dte_at_entry_hint=30,
         delta_at_entry_hint=0.25,
         earnings_buffer_days_hint=21,
     )
-    # 1 non-compliant trade (DTE = 7, below the min of 21)
+    # 1 non-compliant trade — 7 DTE (below the min of 21)
     _create_trade(
         client,
         pos["id"],
-        expiration="2026-01-22",  # 7 DTE
+        opened_at=recent,
+        expiration=near_exp,
         dte_at_entry_hint=7,
         delta_at_entry_hint=0.25,
         earnings_buffer_days_hint=21,
