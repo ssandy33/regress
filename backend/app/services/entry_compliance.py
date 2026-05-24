@@ -74,6 +74,21 @@ _EVALUATED_TRADE_TYPES: frozenset[str] = frozenset({"sell_put", "sell_call"})
 _DAYS_PER_MONTH: float = 30.0
 
 
+def _classify_failed_rules(failed_rules: list[str]) -> tuple[bool, bool]:
+    """Return ``(has_real_violation, has_unknown)`` for a failed_rules list.
+
+    Shared by :func:`evaluate_trade_compliance` (for the compliant bool),
+    :func:`record_trade_compliance` (for the success/degraded outcome), and
+    :func:`compute_rolling_compliance` (for the unknown_only bucket). The
+    ``*_unknown`` suffix convention is part of the locked vocabulary in plan
+    §V1-Freeze-3 — keeping this single helper means the suffix rule lives in
+    one place.
+    """
+    has_real_violation = any(not r.endswith("_unknown") for r in failed_rules)
+    has_unknown = any(r.endswith("_unknown") for r in failed_rules)
+    return has_real_violation, has_unknown
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -211,9 +226,10 @@ def evaluate_trade_compliance(
     elif earnings_buffer_hint < entry.earnings_buffer_days:
         failed_rules.append("earnings_buffer_too_short")
 
-    # Compliance bool: True iff every entry is an unknown-bucket marker.
-    real_violations = [r for r in failed_rules if not r.endswith("_unknown")]
-    compliant = len(real_violations) == 0
+    # Compliance bool: True iff no real-rule violation fired (unknown markers
+    # do not block compliance per plan §V1-Freeze-3).
+    has_real_violation, _ = _classify_failed_rules(failed_rules)
+    compliant = not has_real_violation
 
     return {
         "trade_id": trade.id,
@@ -280,10 +296,9 @@ def record_trade_compliance(
     duration_ms = int((time.perf_counter() - started) * 1000)
     # Unknown-only is a degraded outcome from the trader's POV: the row was
     # recorded but they can't audit the verdict against real values yet.
-    has_real_violation = any(
-        not r.endswith("_unknown") for r in payload["failed_rules"]
+    has_real_violation, has_unknown = _classify_failed_rules(
+        payload["failed_rules"]
     )
-    has_unknown = any(r.endswith("_unknown") for r in payload["failed_rules"])
     if has_unknown and not has_real_violation:
         outcome = "degraded"
     else:
@@ -350,11 +365,10 @@ def compute_rolling_compliance(
             # Defensive: corrupt row counts toward total but not toward any
             # other bucket; the trader sees the discrepancy on the audit page.
             continue
-        real_violations = [r for r in failed_rules if not r.endswith("_unknown")]
-        has_unknown = any(r.endswith("_unknown") for r in failed_rules)
-        if comp.compliant == 1 and not real_violations and has_unknown:
+        has_real_violation, has_unknown = _classify_failed_rules(failed_rules)
+        if comp.compliant == 1 and not has_real_violation and has_unknown:
             unknown_only_count += 1
-        if comp.compliant == 1 and not has_unknown and not real_violations:
+        if comp.compliant == 1 and not has_unknown and not has_real_violation:
             compliant_count += 1
 
     denominator = total - unknown_only_count
