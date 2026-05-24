@@ -155,6 +155,7 @@ def _full_rules_config(**overrides) -> str:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_scan_no_stored_row_uses_catalog_defaults(client):
     """With no ``rules_config`` row, the catalog defaults are backfilled.
 
@@ -174,6 +175,7 @@ def test_scan_no_stored_row_uses_catalog_defaults(client):
     assert req.min_iv_rank == 30.0
 
 
+@pytest.mark.integration
 def test_scan_covered_call_uses_cc_delta_band(client):
     """A covered-call scan with no delta override gets the CC band (0.20-0.35)."""
     req = _scan(
@@ -183,6 +185,7 @@ def test_scan_covered_call_uses_cc_delta_band(client):
     assert req.min_delta == 0.20 and req.max_delta == 0.35
 
 
+@pytest.mark.integration
 def test_scan_stored_config_is_honored(client):
     """A stored ``rules_config`` is backfilled onto the request."""
     _seed_setting(
@@ -200,6 +203,7 @@ def test_scan_stored_config_is_honored(client):
     assert req.min_return_pct == 3.0
 
 
+@pytest.mark.integration
 def test_scan_explicit_per_request_value_overrides_stored_config(client):
     """An explicit per-request rule value wins over the stored config."""
     _seed_setting(
@@ -222,6 +226,7 @@ def test_scan_explicit_per_request_value_overrides_stored_config(client):
     assert req.min_return_pct == 2.0  # not overridden → from config
 
 
+@pytest.mark.integration
 def test_fresh_db_yields_working_scan_no_migration(client):
     """Rollout AC: a fresh DB with no ``rules_config`` row still scans.
 
@@ -282,6 +287,7 @@ def _schwab_call_chain(strike: float, *, oi: int, dte: int = 30):
     }
 
 
+@pytest.mark.integration
 def test_cc_scan_surfaces_below_cost_basis_reason(client):
     """A CC strike below cost basis is flagged ``below_cost_basis``, not dropped."""
     # Strike $14 sits below the $20 cost basis.
@@ -306,6 +312,7 @@ def test_cc_scan_surfaces_below_cost_basis_reason(client):
     assert any("cost-basis floor" in s for s in below[0]["human_reasons"])
 
 
+@pytest.mark.integration
 def test_cc_scan_below_cost_basis_suppressed_when_floor_disabled(client):
     """``cost_basis_floor_enabled=False`` suppresses the ``below_cost_basis`` reason."""
     chain = _schwab_call_chain(14.0, oi=500)
@@ -330,6 +337,7 @@ def test_cc_scan_below_cost_basis_suppressed_when_floor_disabled(client):
     )
 
 
+@pytest.mark.integration
 def test_scan_min_open_interest_rejects_thin_strike(client):
     """A stored ``min_open_interest`` of 1000 rejects a 600-OI strike.
 
@@ -364,6 +372,7 @@ def test_scan_min_open_interest_rejects_thin_strike(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_recovery_endpoint_honors_stored_sizing_cap(client):
     """The recovery endpoint resolves its sizing cap from ``rules_config``.
 
@@ -394,6 +403,7 @@ def test_recovery_endpoint_honors_stored_sizing_cap(client):
     assert avg["eligibility"] == "suppressed"
 
 
+@pytest.mark.integration
 def test_recovery_endpoint_default_sizing_cap_with_no_rules_row(client):
     """With no ``rules_config`` row the recovery endpoint uses the $5,000 default."""
     _seed_position(client, broker_cost_basis=3800.0)
@@ -410,6 +420,7 @@ def test_recovery_endpoint_default_sizing_cap_with_no_rules_row(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("loss_review_threshold_pct", "pl_pct"),
     [
@@ -461,6 +472,7 @@ def test_flag_gate_and_largest_loser_card_agree(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @pytest.mark.skip(
     reason="iv_rank has no data source — the gate is plumbed but inert (ADR-002 OQ4). "
     "Wiring a real IV-rank feed is a data-pipeline change beyond #156."
@@ -514,6 +526,7 @@ def _itm_short_dte_ids(rules: RulesConfig) -> list[str]:
     return [a["action_id"] for a in actions]
 
 
+@pytest.mark.integration
 def test_action_engine_default_threshold_excludes_10dte_itm_leg():
     """With the default 7-day window, a 10-DTE ITM leg is outside the warning.
 
@@ -523,6 +536,7 @@ def test_action_engine_default_threshold_excludes_10dte_itm_leg():
     assert "expiration.itm_short_dte" not in _itm_short_dte_ids(DEFAULT_RULES_CONFIG)
 
 
+@pytest.mark.integration
 def test_action_engine_honors_non_default_expiration_warning_days():
     """A stored ``expiration_warning_days`` of 14 shifts the ITM/short-DTE boundary.
 
@@ -548,6 +562,7 @@ def test_action_engine_honors_non_default_expiration_warning_days():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_okr_response_includes_capital_status_field(client, monkeypatch):
     """The recovery endpoint's OKR inputs match the V1 ``RecoveryOkrInputs``
     contract — sizing_cap_pct, total_capital, resolved_sizing_cap_dollars,

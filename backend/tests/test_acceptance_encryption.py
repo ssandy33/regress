@@ -35,6 +35,7 @@ class TestAC1_SchwabValuesEncryptedAtRest:
     """Verify that writing via _upsert_setting encrypts, and reading via
     _read_setting decrypts, through a real SQLite DB."""
 
+    @pytest.mark.integration
     def test_upsert_stores_encrypted_values_in_db(self, client):
         """Values written via _upsert_setting are encrypted in the raw DB."""
         from app.main import app
@@ -65,6 +66,7 @@ class TestAC1_SchwabValuesEncryptedAtRest:
 
         db.close()
 
+    @pytest.mark.integration
     def test_read_setting_returns_decrypted_values(self, client):
         """Values read via _read_setting are transparently decrypted."""
         from app.main import app
@@ -92,6 +94,7 @@ class TestAC1_SchwabValuesEncryptedAtRest:
 
         db.close()
 
+    @pytest.mark.integration
     def test_non_sensitive_keys_stored_as_plaintext(self, client):
         """Timestamp keys are NOT encrypted."""
         from app.main import app
@@ -117,6 +120,7 @@ class TestAC1_SchwabValuesEncryptedAtRest:
 
         db.close()
 
+    @pytest.mark.integration
     def test_all_four_sensitive_keys_are_covered(self):
         """ENCRYPTED_SETTING_KEYS covers exactly the 4 sensitive schwab_* keys."""
         expected = {
@@ -127,6 +131,7 @@ class TestAC1_SchwabValuesEncryptedAtRest:
         }
         assert ENCRYPTED_SETTING_KEYS == expected
 
+    @pytest.mark.integration
     def test_migration_encrypts_existing_plaintext(self, client):
         """On startup migration, existing plaintext tokens become encrypted."""
         from app.main import app
@@ -167,6 +172,7 @@ class TestAC1_SchwabValuesEncryptedAtRest:
 class TestAC2_FailClosedWithoutEncryptionKey:
     """App must refuse to start when Schwab tokens exist but key is missing."""
 
+    @pytest.mark.integration
     def test_startup_raises_when_tokens_exist_without_key(self):
         """_run_security_checks raises EncryptionKeyMissing when tokens
         exist in DB but SCHWAB_ENCRYPTION_KEY is not set."""
@@ -184,6 +190,7 @@ class TestAC2_FailClosedWithoutEncryptionKey:
             with pytest.raises(EncryptionKeyMissing, match="SCHWAB_ENCRYPTION_KEY"):
                 _run_security_checks()
 
+    @pytest.mark.integration
     def test_startup_ok_when_no_tokens_and_no_key(self):
         """No error when there are no Schwab tokens and no key (fresh install)."""
         from app.main import _run_security_checks
@@ -200,6 +207,7 @@ class TestAC2_FailClosedWithoutEncryptionKey:
             # Should not raise
             _run_security_checks()
 
+    @pytest.mark.integration
     def test_startup_ok_when_tokens_exist_with_key(self):
         """No error when tokens exist and encryption key is set."""
         from app.main import _run_security_checks
@@ -216,6 +224,7 @@ class TestAC2_FailClosedWithoutEncryptionKey:
             # Should not raise
             _run_security_checks()
 
+    @pytest.mark.integration
     def test_schwab_tokens_exist_detects_stored_tokens(self, client):
         """schwab_tokens_exist returns True when tokens are in DB."""
         from app.main import app
@@ -247,6 +256,7 @@ class TestAC2_FailClosedWithoutEncryptionKey:
 class TestAC3_StartupWarnsOnBadDbPermissions:
     """Startup must log a warning when the DB file is group/world readable."""
 
+    @pytest.mark.integration
     def test_warns_on_group_readable_db(self, tmp_path):
         """_run_security_checks logs a warning for group-readable DB file."""
         from app.main import _run_security_checks
@@ -275,6 +285,7 @@ class TestAC3_StartupWarnsOnBadDbPermissions:
                 f"Expected permission warning, got: {warning_calls}"
             )
 
+    @pytest.mark.integration
     def test_warns_on_world_readable_db(self, tmp_path):
         """_run_security_checks logs a warning for world-readable DB file."""
         from app.main import _run_security_checks
@@ -300,6 +311,7 @@ class TestAC3_StartupWarnsOnBadDbPermissions:
             ]
             assert any("chmod 600" in w for w in warning_calls)
 
+    @pytest.mark.integration
     def test_no_warning_on_secure_permissions(self, tmp_path):
         """No permission warning when DB file has 0600."""
         from app.main import _run_security_checks
@@ -334,6 +346,7 @@ class TestAC3_StartupWarnsOnBadDbPermissions:
 class TestAC5_EncryptDecryptRoundtripAndMissingKey:
     """Verify core encrypt/decrypt round-trip and missing-key behavior."""
 
+    @pytest.mark.integration
     def test_encrypt_decrypt_roundtrip_all_sensitive_keys(self):
         """Each sensitive key type encrypts and decrypts correctly."""
         for key_name in ENCRYPTED_SETTING_KEYS:
@@ -342,6 +355,7 @@ class TestAC5_EncryptDecryptRoundtripAndMissingKey:
             assert encrypted != value
             assert decrypt_value(encrypted, key=TEST_KEY) == value
 
+    @pytest.mark.integration
     def test_missing_key_raises_on_encrypt(self):
         """encrypt_value raises EncryptionKeyMissing without a key."""
         with patch("app.services.encryption.settings") as mock_settings:
@@ -349,6 +363,7 @@ class TestAC5_EncryptDecryptRoundtripAndMissingKey:
             with pytest.raises(EncryptionKeyMissing):
                 encrypt_value("secret")
 
+    @pytest.mark.integration
     def test_missing_key_raises_on_decrypt(self):
         """decrypt_value raises EncryptionKeyMissing without a key."""
         ciphertext = encrypt_value("secret", key=TEST_KEY)
@@ -357,6 +372,7 @@ class TestAC5_EncryptDecryptRoundtripAndMissingKey:
             with pytest.raises(EncryptionKeyMissing):
                 decrypt_value(ciphertext)
 
+    @pytest.mark.integration
     def test_health_endpoint_includes_token_expiry(self, client):
         """GET /api/settings/health/schwab returns token_expiry field."""
         from app.services.schwab_auth import SchwabTokenManager
@@ -382,6 +398,7 @@ class TestAC5_EncryptDecryptRoundtripAndMissingKey:
         assert data["token_expiry"]["expired"] is False
         assert "hours_remaining" in data["token_expiry"]
 
+    @pytest.mark.integration
     def test_health_endpoint_token_expiry_null_when_not_configured(self, client):
         """GET /api/settings/health/schwab returns token_expiry=null when unconfigured."""
         from app.services.schwab_auth import SchwabTokenManager

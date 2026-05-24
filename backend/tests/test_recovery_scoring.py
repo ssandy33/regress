@@ -105,6 +105,7 @@ def _make_path(
 
 
 class TestCanonicalShape:
+    @pytest.mark.unit
     def test_response_has_required_top_level_keys(self):
         paths = _sofi_paths()
         rec = score_recovery_paths(paths, {})
@@ -118,6 +119,7 @@ class TestCanonicalShape:
             "disclaimer",
         }
 
+    @pytest.mark.unit
     def test_disclaimer_is_canonical_text(self):
         rec = score_recovery_paths(_sofi_paths(), {})
         assert rec["disclaimer"] == DISCLAIMER_TEXT
@@ -127,6 +129,7 @@ class TestCanonicalShape:
                 f"disclaimer leaks prescriptive verb '{verb}'"
             )
 
+    @pytest.mark.unit
     def test_tie_epsilon_matches_module_constant(self):
         rec = score_recovery_paths(_sofi_paths(), {})
         assert rec["tie_epsilon"] == TIE_EPSILON == 1.0
@@ -138,6 +141,7 @@ class TestCanonicalShape:
 
 
 class TestLeaderPerCriterion:
+    @pytest.mark.unit
     def test_unique_leader_collects_full_weight(self):
         # Path A is the unique leader on fastest_breakeven.
         paths = [
@@ -163,6 +167,7 @@ class TestLeaderPerCriterion:
         assert cells["sell-redeploy"]["points"] == 0
         assert cells["hold-monitor"]["points"] == 0
 
+    @pytest.mark.unit
     def test_exact_tie_splits_points_among_leaders(self):
         # All three paths have $0 capital — the AC example: all three get +3.
         paths = [
@@ -194,6 +199,7 @@ class TestLeaderPerCriterion:
 
 
 class TestTieWithinEpsilon:
+    @pytest.mark.unit
     def test_top_two_within_epsilon_yields_no_clear_best_fit(self):
         # Construct two paths that score 5 and 5 on totals → tied.
         paths = [
@@ -218,6 +224,7 @@ class TestTieWithinEpsilon:
         assert rec["ranked_paths"][0]["score"] == 6
         assert rec["ranked_paths"][1]["score"] == 5
 
+    @pytest.mark.unit
     def test_gap_larger_than_epsilon_recommends_single_path(self):
         # wheel-cc dominates: +3 (fastest) +3 (capital) +2 (opp_cost) = 8.
         # hold-monitor: capital ties (+3 if tied) but otherwise 0.
@@ -245,6 +252,7 @@ class TestTieWithinEpsilon:
 
 
 class TestSuppressedHandling:
+    @pytest.mark.unit
     def test_suppressed_path_with_winning_metrics_is_not_recommended(self):
         # Force a suppressed path that *would* dominate the metrics.
         paths = [
@@ -273,6 +281,7 @@ class TestSuppressedHandling:
         assert suppressed_entry["rank"] is None
         assert "sizing cap" in (suppressed_entry["suppression_reason"] or "")
 
+    @pytest.mark.unit
     def test_all_paths_suppressed_yields_no_eligible_path(self):
         paths = [
             _make_path(
@@ -307,6 +316,7 @@ class TestSuppressedHandling:
 
 
 class TestStrategyPreferenceBonus:
+    @pytest.mark.unit
     def test_unset_preference_keeps_bonus_row_with_all_zero_cells(self):
         # V0.5.8 default — strategy_preference unset.
         rec = score_recovery_paths(_sofi_paths(), {})
@@ -319,6 +329,7 @@ class TestStrategyPreferenceBonus:
                 "unset preference must not contribute points"
             )
 
+    @pytest.mark.unit
     def test_set_preference_awards_bonus_to_matching_path(self):
         rec = score_recovery_paths(
             _sofi_paths(), {"strategy_preference": "income-first"}
@@ -332,6 +343,7 @@ class TestStrategyPreferenceBonus:
         )
         assert wheel_cell["points"] == WEIGHT_STRATEGY_PREFERENCE
 
+    @pytest.mark.unit
     def test_unknown_preference_defaults_to_no_bonus(self):
         rec = score_recovery_paths(
             _sofi_paths(), {"strategy_preference": "definitely-not-real"}
@@ -341,6 +353,7 @@ class TestStrategyPreferenceBonus:
         )
         assert all(c["points"] == 0 for c in bonus_row["ranking"])
 
+    @pytest.mark.unit
     def test_passive_preference_yields_no_bonus(self):
         rec = score_recovery_paths(
             _sofi_paths(), {"strategy_preference": "passive"}
@@ -350,6 +363,7 @@ class TestStrategyPreferenceBonus:
         )
         assert all(c["points"] == 0 for c in bonus_row["ranking"])
 
+    @pytest.mark.unit
     def test_label_uses_neutral_template_when_preference_unset(self):
         rec = score_recovery_paths(_sofi_paths(), {})
         if rec["recommended_path_id"] is not None:
@@ -359,6 +373,7 @@ class TestStrategyPreferenceBonus:
                 "Best fit on capital efficiency and breakeven"
             )
 
+    @pytest.mark.unit
     def test_strategy_mapping_locked(self):
         # If this assertion ever fails, dependent #156/#157 work and the
         # design spec §4.5 need updating together.
@@ -375,6 +390,7 @@ class TestStrategyPreferenceBonus:
 
 
 class TestPathScoresMatrix:
+    @pytest.mark.unit
     def test_one_row_per_criterion_in_canonical_order(self):
         rec = score_recovery_paths(_sofi_paths(), {})
         criteria = [r["criterion"] for r in rec["path_scores"]]
@@ -385,6 +401,7 @@ class TestPathScoresMatrix:
             "strategy_preference_bonus",
         ]
 
+    @pytest.mark.unit
     def test_each_row_has_one_cell_per_eligible_path(self):
         paths = _sofi_paths()
         eligible = [p for p in paths if p["eligibility"] == "eligible"]
@@ -395,6 +412,7 @@ class TestPathScoresMatrix:
                 p["path_id"] for p in eligible
             }
 
+    @pytest.mark.unit
     def test_each_cell_has_raw_value_points_rank(self):
         rec = score_recovery_paths(_sofi_paths(), {})
         for row in rec["path_scores"]:
@@ -427,11 +445,13 @@ class TestRecommendationReasons:
         ]
         return score_recovery_paths(paths, {})
 
+    @pytest.mark.unit
     def test_reasons_length_2_to_4_on_happy_path(self):
         rec = self._happy_path_recommendation()
         assert rec["recommended_path_id"] == "wheel-cc"
         assert 2 <= len(rec["recommendation_reasons"]) <= 4
 
+    @pytest.mark.unit
     def test_all_reasons_come_from_templates_on_happy_path(self):
         rec = self._happy_path_recommendation()
         # Every reason must look like one of the frozen templates with the
@@ -448,6 +468,7 @@ class TestRecommendationReasons:
                 f"reason '{reason}' did not match any template prefix"
             )
 
+    @pytest.mark.unit
     def test_reasons_avoid_prescriptive_advice_wording(self):
         # Cover both code paths — happy + degraded — so the advice-framing
         # audit runs against every emitted reason.
@@ -468,12 +489,14 @@ class TestRecommendationReasons:
 
 
 class TestReproducibility:
+    @pytest.mark.unit
     def test_byte_identical_recommendation_object(self):
         paths = _sofi_paths()
         a = score_recovery_paths(paths, {})
         b = score_recovery_paths(paths, {})
         assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
 
+    @pytest.mark.unit
     def test_byte_identical_with_strategy_preference(self):
         paths = _sofi_paths()
         a = score_recovery_paths(paths, {"strategy_preference": "income-first"})
@@ -489,6 +512,7 @@ class TestReproducibility:
 class TestNoExternalCalls:
     FORBIDDEN = {"httpx", "requests", "openai", "anthropic", "urllib", "socket"}
 
+    @pytest.mark.unit
     def test_scoring_module_imports_are_pure(self):
         path = (
             Path(__file__).resolve().parents[1]
@@ -547,12 +571,15 @@ class TestTemplateSnapshots:
         "within_sizing_cap": "Within your per-position sizing cap",
     }
 
+    @pytest.mark.unit
     def test_label_templates_frozen(self):
         assert LABEL_TEMPLATES == self.EXPECTED_LABEL_TEMPLATES
 
+    @pytest.mark.unit
     def test_reason_templates_frozen(self):
         assert REASON_TEMPLATES == self.EXPECTED_REASON_TEMPLATES
 
+    @pytest.mark.unit
     def test_disclaimer_text_frozen(self):
         assert DISCLAIMER_TEXT == (
             "This is a fit recommendation based on your configured "
@@ -567,6 +594,7 @@ class TestTemplateSnapshots:
 
 
 class TestEdgeCases:
+    @pytest.mark.unit
     def test_single_eligible_path_is_always_recommended(self):
         paths = [
             _make_path(
@@ -579,12 +607,14 @@ class TestEdgeCases:
         # has nothing to compare to.
         assert rec["recommended_path_id"] == "hold-monitor"
 
+    @pytest.mark.unit
     def test_empty_okr_settings_treated_as_unset(self):
         rec_a = score_recovery_paths(_sofi_paths(), None)
         rec_b = score_recovery_paths(_sofi_paths(), {})
         # Different empty containers, identical output.
         assert json.dumps(rec_a, sort_keys=True) == json.dumps(rec_b, sort_keys=True)
 
+    @pytest.mark.unit
     def test_hold_monitor_null_breakeven_treated_as_worst_tier(self):
         rec = score_recovery_paths(_sofi_paths(), {})
         row = next(

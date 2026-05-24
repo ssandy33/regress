@@ -107,6 +107,7 @@ def _seed_position_with_full_cycle(db) -> Position:
 
 
 class TestReconcileService:
+    @pytest.mark.unit
     def test_empty_journal_returns_zero_aggregates(self, db_session):
         """With no positions, all aggregates are zero and the diff list is empty."""
         result = reconcile(db_session, apply=False)
@@ -121,6 +122,7 @@ class TestReconcileService:
         assert result.errors == 0
         assert result.per_position == []
 
+    @pytest.mark.unit
     def test_dry_run_does_not_mutate_db(self, db_session):
         pos = _seed_position_with_full_cycle(db_session)
         original_id = pos.id
@@ -147,6 +149,7 @@ class TestReconcileService:
         for trade in reloaded.trades:
             assert trade.closed_at == before_closes[trade.id]
 
+    @pytest.mark.unit
     def test_apply_persists_position_and_trade_writes(self, db_session):
         pos = _seed_position_with_full_cycle(db_session)
         original_id = pos.id
@@ -170,6 +173,7 @@ class TestReconcileService:
         # ``trades_stamped`` aggregate matches the count of actual writes.
         assert result.trades_stamped == len(stamped)
 
+    @pytest.mark.unit
     def test_diff_shape_includes_all_fields(self, db_session):
         _seed_position_with_full_cycle(db_session)
 
@@ -192,6 +196,7 @@ class TestReconcileService:
         assert diff.closed_at_after == "2026-03-20"
         assert diff.legs_consumed >= 2
 
+    @pytest.mark.unit
     def test_no_op_when_state_already_correct(self, db_session, monkeypatch):
         """When stored state matches the ledger, ``changed`` is zero."""
         # Freeze the recomputer's clock so the calendar fallback doesn't
@@ -234,6 +239,7 @@ class TestReconcileService:
         assert result.strategy_changes == 0
         assert result.trades_stamped == 0
 
+    @pytest.mark.unit
     def test_legs_consumed_counts_only_new_writes(self, db_session, monkeypatch):
         """Pre-stamped Trade.closed_at rows do not inflate ``legs_consumed``."""
         # Set today so the calendar fallback does fire on the past leg.

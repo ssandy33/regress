@@ -47,6 +47,7 @@ def _sofi_position(**overrides) -> dict:
 
 
 class TestCanonicalShape:
+    @pytest.mark.unit
     def test_returns_four_paths_in_canonical_order(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -58,6 +59,7 @@ class TestCanonicalShape:
         assert [p["path_id"] for p in paths] == list(canonical_path_order())
         assert len(paths) == 4
 
+    @pytest.mark.unit
     def test_every_path_has_required_fields(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -91,6 +93,7 @@ class TestCanonicalShape:
             assert isinstance(p["assumptions"], list)
             assert all(isinstance(s, str) for s in p["assumptions"])
 
+    @pytest.mark.unit
     def test_no_irr_field_anywhere(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -109,6 +112,7 @@ class TestCanonicalShape:
 
 
 class TestSellRedeployPath:
+    @pytest.mark.unit
     def test_suppressed_when_target_yield_missing(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -123,6 +127,7 @@ class TestSellRedeployPath:
         assert sell["capital_tied_up"] is None
         assert sell["opportunity_cost_vs_baseline"] is None
 
+    @pytest.mark.unit
     def test_eligible_when_target_yield_set(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -151,6 +156,7 @@ class TestSellRedeployPath:
 
 
 class TestWheelCcPath:
+    @pytest.mark.unit
     def test_premium_pct_in_assumptions(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -167,6 +173,7 @@ class TestWheelCcPath:
         assert pct_str in assumption_blob
         assert "heuristic" in assumption_blob.lower()
 
+    @pytest.mark.unit
     def test_breakeven_range_uses_multipliers(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -185,6 +192,7 @@ class TestWheelCcPath:
         # Multipliers stay in sync with the published constant.
         assert WHEEL_BE_MULTIPLIERS == (0.8, 1.0, 1.3)
 
+    @pytest.mark.unit
     def test_capital_tied_up_is_strike_proxy_x_shares(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -197,6 +205,7 @@ class TestWheelCcPath:
         # strike_proxy = $8, shares = 100 → $800
         assert wheel["capital_tied_up"] == pytest.approx(800.0)
 
+    @pytest.mark.unit
     def test_opportunity_cost_vs_baseline_when_yield_set(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -218,6 +227,7 @@ class TestWheelCcPath:
 
 
 class TestAverageDownPath:
+    @pytest.mark.unit
     def test_suppressed_when_sizing_cap_breached(self):
         # SOFI: shares=100, basis=$3800, current=$8 → adding 100 shares at
         # $8 = $800 in fresh capital; total tied up = $4600 → within $5000
@@ -237,6 +247,7 @@ class TestAverageDownPath:
         assert avg["capital_tied_up"] is None
         assert avg["opportunity_cost_vs_baseline"] is None
 
+    @pytest.mark.unit
     def test_eligible_within_cap(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -252,6 +263,7 @@ class TestAverageDownPath:
         # opp_cost = additional_capital * target_yield = $800 * 0.18 = $144
         assert avg["opportunity_cost_vs_baseline"] == pytest.approx(144.0)
 
+    @pytest.mark.unit
     def test_uses_supplied_sizing_cap(self):
         # The engine no longer carries its own default cap (issue #156):
         # the caller resolves it from rules_config and always supplies a
@@ -267,6 +279,7 @@ class TestAverageDownPath:
         avg = next(p for p in paths if p["path_id"] == "average-down")
         assert avg["eligibility"] == "eligible"
 
+    @pytest.mark.unit
     def test_eligible_breakeven_range_is_positive(self):
         # Average-down now projects a deterministic breakeven by grinding
         # wheel-CC premium on the doubled position (issue #237).
@@ -295,6 +308,7 @@ class TestAverageDownPath:
         assert be["expected"] == 125
         assert be["worst"] == 163
 
+    @pytest.mark.unit
     def test_breakeven_methodology_in_assumptions(self):
         # The assumption blob must document the new premium-grind
         # methodology and must NOT carry the stale "not modeled" copy.
@@ -313,6 +327,7 @@ class TestAverageDownPath:
         assert "doubled position" in assumption_blob.lower()
         assert "not modeled" not in assumption_blob.lower()
 
+    @pytest.mark.unit
     def test_breakeven_collapses_only_on_zero_price_or_zero_shares(self):
         null_range = {"best": None, "expected": None, "worst": None}
 
@@ -363,6 +378,7 @@ class TestAverageDownPath:
 
 
 class TestHoldMonitorPath:
+    @pytest.mark.unit
     def test_breakeven_range_is_all_null(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -378,6 +394,7 @@ class TestHoldMonitorPath:
             "worst": None,
         }
 
+    @pytest.mark.unit
     def test_opportunity_cost_is_freed_capital_x_yield(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -390,6 +407,7 @@ class TestHoldMonitorPath:
         # freed_capital = $800; opp_cost = $800 * 0.18 = $144
         assert hold["opportunity_cost_vs_baseline"] == pytest.approx(144.0)
 
+    @pytest.mark.unit
     def test_capital_tied_up_is_current_basis(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -402,6 +420,7 @@ class TestHoldMonitorPath:
         # adjusted_cost_basis = $3800
         assert hold["capital_tied_up"] == pytest.approx(3800.0)
 
+    @pytest.mark.unit
     def test_eligible_even_when_yield_unset(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -423,6 +442,7 @@ class TestHoldMonitorPath:
 
 
 class TestDeterminism:
+    @pytest.mark.unit
     def test_byte_identical_output_for_same_input(self):
         kwargs = {
             "position": _sofi_position(),
@@ -448,6 +468,7 @@ class TestNoExternalCalls:
         "socket",
     }
 
+    @pytest.mark.unit
     def test_engine_module_has_no_forbidden_imports(self):
         path = (
             Path(__file__).resolve().parents[1]
@@ -474,6 +495,7 @@ class TestNoExternalCalls:
 
 
 class TestEdgeCases:
+    @pytest.mark.unit
     def test_position_above_water_returns_eligible_paths_with_null_breakeven(self):
         # current_price * shares > adjusted_cost_basis → no realized loss.
         paths = compute_recovery_paths(
@@ -487,6 +509,7 @@ class TestEdgeCases:
         sell = next(p for p in paths if p["path_id"] == "sell-redeploy")
         assert sell["months_to_breakeven"]["expected"] is None
 
+    @pytest.mark.unit
     def test_zero_current_price_treated_as_zero_dollars(self):
         paths = compute_recovery_paths(
             position=_sofi_position(),
@@ -499,6 +522,7 @@ class TestEdgeCases:
         # Premium math collapses to zero — no breakeven horizon.
         assert wheel["months_to_breakeven"]["expected"] is None
 
+    @pytest.mark.unit
     def test_zero_shares_collapses_paths_to_zero_dollars(self):
         paths = compute_recovery_paths(
             position=_sofi_position(shares=0),
@@ -524,6 +548,7 @@ class TestSizingCapPctResolution:
     eligible with the "cap unenforceable" assumption per §6.2.
     """
 
+    @pytest.mark.unit
     def test_average_down_suppressed_when_resolved_cap_breached(self):
         # SOFI override: basis=$1700 + additional ($8 × 100 = $800)
         # → capital_tied_up = $2500. Resolved cap = 10% × $20,000 = $2,000.
@@ -544,6 +569,7 @@ class TestSizingCapPctResolution:
         assert avg["capital_tied_up"] is None
         assert avg["opportunity_cost_vs_baseline"] is None
 
+    @pytest.mark.unit
     def test_average_down_eligible_with_cap_unenforceable_when_total_capital_none(self):
         # §6.2 contract: when Schwab account value is unavailable
         # (total_capital is None) the path must NOT be suppressed —
@@ -569,6 +595,7 @@ class TestSizingCapPctResolution:
         assert "unenforceable" in assumption_blob
         assert "Schwab account value unavailable" in assumption_blob
 
+    @pytest.mark.unit
     def test_average_down_within_resolved_cap_uses_pct_in_message(self):
         # SOFI override: basis=$3200 + $800 = $4000.
         # Resolved cap = 25% × $20,000 = $5,000. 4000 ≤ 5000 ⇒ eligible.

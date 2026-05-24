@@ -24,6 +24,7 @@ OTHER_KEY = Fernet.generate_key().decode()
 
 
 class TestEncryptDecrypt:
+    @pytest.mark.integration
     def test_roundtrip(self):
         """Encrypt then decrypt returns original value."""
         plaintext = "my_secret_token_value"
@@ -31,17 +32,20 @@ class TestEncryptDecrypt:
         assert ciphertext != plaintext
         assert decrypt_value(ciphertext, key=TEST_KEY) == plaintext
 
+    @pytest.mark.integration
     def test_wrong_key_raises(self):
         """Decrypting with a different key raises InvalidToken."""
         ciphertext = encrypt_value("secret", key=TEST_KEY)
         with pytest.raises(InvalidToken):
             decrypt_value(ciphertext, key=OTHER_KEY)
 
+    @pytest.mark.integration
     def test_empty_string_roundtrip(self):
         """Empty string encrypts and decrypts correctly."""
         ciphertext = encrypt_value("", key=TEST_KEY)
         assert decrypt_value(ciphertext, key=TEST_KEY) == ""
 
+    @pytest.mark.integration
     def test_ciphertext_differs_each_call(self):
         """Fernet uses a random IV, so ciphertexts differ."""
         a = encrypt_value("same", key=TEST_KEY)
@@ -51,27 +55,33 @@ class TestEncryptDecrypt:
 
 
 class TestIsEncrypted:
+    @pytest.mark.integration
     def test_true_for_ciphertext(self):
         ciphertext = encrypt_value("token", key=TEST_KEY)
         assert is_encrypted(ciphertext, key=TEST_KEY) is True
 
+    @pytest.mark.integration
     def test_false_for_plaintext(self):
         assert is_encrypted("plaintext_token", key=TEST_KEY) is False
 
+    @pytest.mark.integration
     def test_false_for_empty(self):
         assert is_encrypted("", key=TEST_KEY) is False
 
+    @pytest.mark.integration
     def test_false_when_no_key(self):
         assert is_encrypted("anything", key=None) is False
 
 
 class TestRequireEncryptionKey:
+    @pytest.mark.integration
     def test_raises_when_missing(self):
         with patch("app.services.encryption.settings") as mock_settings:
             mock_settings.schwab_encryption_key = ""
             with pytest.raises(EncryptionKeyMissing):
                 require_encryption_key()
 
+    @pytest.mark.integration
     def test_returns_key_when_set(self):
         with patch("app.services.encryption.settings") as mock_settings:
             mock_settings.schwab_encryption_key = TEST_KEY
@@ -79,11 +89,13 @@ class TestRequireEncryptionKey:
 
 
 class TestGetEncryptionKey:
+    @pytest.mark.integration
     def test_returns_none_when_empty(self):
         with patch("app.services.encryption.settings") as mock_settings:
             mock_settings.schwab_encryption_key = ""
             assert get_encryption_key() is None
 
+    @pytest.mark.integration
     def test_returns_key_when_set(self):
         with patch("app.services.encryption.settings") as mock_settings:
             mock_settings.schwab_encryption_key = TEST_KEY
@@ -91,6 +103,7 @@ class TestGetEncryptionKey:
 
 
 class TestUpsertEncrypts:
+    @pytest.mark.integration
     def test_upsert_encrypts_sensitive_keys(self):
         """_upsert_setting encrypts values for sensitive keys."""
         from app.services.schwab_auth import _upsert_setting
@@ -108,6 +121,7 @@ class TestUpsertEncrypts:
         # Should decrypt back to original
         assert decrypt_value(added_obj.value, key=TEST_KEY) == "my_token"
 
+    @pytest.mark.integration
     def test_upsert_does_not_encrypt_non_sensitive_keys(self):
         """_upsert_setting stores plaintext for non-sensitive keys."""
         from app.services.schwab_auth import _upsert_setting
@@ -124,6 +138,7 @@ class TestUpsertEncrypts:
 
 
 class TestReadSettingDecrypts:
+    @pytest.mark.integration
     def test_read_setting_decrypts(self):
         """_read_setting decrypts encrypted values."""
         from app.services.schwab_auth import _read_setting
@@ -141,6 +156,7 @@ class TestReadSettingDecrypts:
 
         assert result == "real_token"
 
+    @pytest.mark.integration
     def test_read_setting_returns_plaintext_without_key(self):
         """_read_setting returns raw value when no encryption key."""
         from app.services.schwab_auth import _read_setting
@@ -157,6 +173,7 @@ class TestReadSettingDecrypts:
 
         assert result == "plaintext_token"
 
+    @pytest.mark.integration
     def test_read_setting_returns_none_when_missing(self):
         """_read_setting returns None for missing keys."""
         from app.services.schwab_auth import _read_setting
@@ -169,6 +186,7 @@ class TestReadSettingDecrypts:
 
 
 class TestMigratePlaintextTokens:
+    @pytest.mark.integration
     def test_migrates_plaintext_to_encrypted(self, client):
         """migrate_plaintext_tokens encrypts plaintext values in-place."""
         from app.models.database import AppSetting, get_db
@@ -199,6 +217,7 @@ class TestMigratePlaintextTokens:
 
         db.close()
 
+    @pytest.mark.integration
     def test_skips_already_encrypted(self, client):
         """migrate_plaintext_tokens skips values already encrypted."""
         from app.models.database import AppSetting, get_db
@@ -223,6 +242,7 @@ class TestMigratePlaintextTokens:
         assert count == 0
         db.close()
 
+    @pytest.mark.integration
     def test_no_migration_without_key(self):
         """migrate_plaintext_tokens does nothing without encryption key."""
         mock_db = MagicMock()
@@ -233,6 +253,7 @@ class TestMigratePlaintextTokens:
 
 
 class TestDbFilePermissions:
+    @pytest.mark.integration
     def test_warns_on_world_readable(self, tmp_path):
         """Warns when DB file has group/other permissions."""
         db_file = tmp_path / "test.db"
@@ -243,6 +264,7 @@ class TestDbFilePermissions:
         assert len(warnings) == 1
         assert "chmod 600" in warnings[0]
 
+    @pytest.mark.integration
     def test_no_warning_on_600(self, tmp_path):
         """No warning when file has correct permissions."""
         db_file = tmp_path / "test.db"
@@ -252,6 +274,7 @@ class TestDbFilePermissions:
         warnings = check_db_file_permissions(str(db_file))
         assert len(warnings) == 0
 
+    @pytest.mark.integration
     def test_no_warning_for_missing_file(self, tmp_path):
         """No warning for non-existent file."""
         warnings = check_db_file_permissions(str(tmp_path / "nonexistent.db"))
@@ -259,6 +282,7 @@ class TestDbFilePermissions:
 
 
 class TestEncryptedSettingKeys:
+    @pytest.mark.integration
     def test_correct_keys(self):
         """ENCRYPTED_SETTING_KEYS contains exactly the sensitive keys."""
         assert ENCRYPTED_SETTING_KEYS == {
@@ -268,6 +292,7 @@ class TestEncryptedSettingKeys:
             "schwab_app_secret",
         }
 
+    @pytest.mark.integration
     def test_timestamp_keys_not_encrypted(self):
         """Timestamp keys are NOT in the encrypted set."""
         assert "schwab_access_token_expires" not in ENCRYPTED_SETTING_KEYS

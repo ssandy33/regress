@@ -27,6 +27,7 @@ def _make_df(start: str, periods: int, freq: str = "D", values: list[float] | No
 class TestAlignDatasets:
     """Tests for align_datasets() — multi-series alignment to common frequency."""
 
+    @pytest.mark.unit
     def test_align_two_datasets_matching_dates(self):
         """Two daily series with identical dates preserve all rows."""
         df_a = _make_df("2023-01-01", 30)
@@ -36,6 +37,7 @@ class TestAlignDatasets:
         assert list(combined.columns) == ["A", "B"]
         assert not any("Dropped" in n for n in notes)
 
+    @pytest.mark.unit
     def test_align_datasets_with_partial_overlap(self):
         """Two daily series with partial overlap — ffill extends beyond raw intersection.
 
@@ -51,18 +53,21 @@ class TestAlignDatasets:
         assert combined.index[0] == pd.Timestamp("2023-01-15")
         assert combined.index[-1] == pd.Timestamp("2023-02-05")
 
+    @pytest.mark.unit
     def test_align_empty_dict_raises(self):
         """Empty input raises ValueError."""
         with pytest.raises(ValueError, match="No datasets provided"):
             align_datasets({})
 
+    @pytest.mark.unit
     def test_align_single_dataset(self):
         """Single DataFrame returns one-column result with all rows."""
         df = _make_df("2023-01-01", 20)
-        combined, notes = align_datasets({"only": df})
+        combined, _notes = align_datasets({"only": df})
         assert len(combined) == 20
         assert list(combined.columns) == ["only"]
 
+    @pytest.mark.unit
     def test_align_datasets_preserves_chronological_order(self):
         """Output index is monotonically increasing."""
         df_a = _make_df("2023-01-01", 30)
@@ -70,6 +75,7 @@ class TestAlignDatasets:
         combined, _ = align_datasets({"A": df_a, "B": df_b})
         assert combined.index.is_monotonic_increasing
 
+    @pytest.mark.unit
     def test_align_datasets_notes_contain_observation_count(self):
         """Notes include the 'Aligned dataset: N observations' string."""
         df_a = _make_df("2023-01-01", 10)
@@ -77,6 +83,7 @@ class TestAlignDatasets:
         _, notes = align_datasets({"A": df_a, "B": df_b})
         assert any("Aligned dataset: 10 observations" in n for n in notes)
 
+    @pytest.mark.unit
     def test_align_mixed_frequencies_resamples(self):
         """Daily + monthly series triggers resampling note."""
         df_daily = _make_df("2023-01-01", 90, freq="D")
@@ -85,6 +92,7 @@ class TestAlignDatasets:
         assert any("Resampled" in n for n in notes)
         assert any("monthly" in n for n in notes)
 
+    @pytest.mark.unit
     def test_align_datasets_ffill_limit(self):
         """Gaps beyond ffill limit=5 cause rows to be dropped."""
         # Create two series where one has a 7-day gap
@@ -99,6 +107,7 @@ class TestAlignDatasets:
         combined, notes = align_datasets({"A": df_a, "B": df_b})
         assert any("Dropped" in n for n in notes)
 
+    @pytest.mark.unit
     def test_align_datasets_empty_result_raises_index_error(self):
         """When alignment produces zero rows, accessing index[0] raises IndexError.
 
@@ -117,6 +126,7 @@ class TestAlignDatasets:
         with pytest.raises(IndexError):
             align_datasets({"A": df_a, "B": df_b})
 
+    @pytest.mark.unit
     def test_align_datasets_column_values_correct(self):
         """Aligned values match the original series values."""
         df_a = _make_df("2023-01-01", 5, values=[10.0, 20.0, 30.0, 40.0, 50.0])
@@ -129,23 +139,28 @@ class TestAlignDatasets:
 class TestInferFrequency:
     """Tests for _infer_frequency() — median-gap frequency detection."""
 
+    @pytest.mark.unit
     def test_daily_frequency(self):
         df = _make_df("2023-01-01", 30, freq="D")
         assert _infer_frequency(df) == "daily"
 
+    @pytest.mark.unit
     def test_monthly_frequency(self):
         df = _make_df("2023-01-31", 6, freq="ME")
         assert _infer_frequency(df) == "monthly"
 
+    @pytest.mark.unit
     def test_quarterly_frequency(self):
         df = _make_df("2023-03-31", 4, freq="QE")
         assert _infer_frequency(df) == "quarterly"
 
+    @pytest.mark.unit
     def test_single_row_returns_daily(self):
         """A single-row DataFrame defaults to 'daily'."""
         df = _make_df("2023-01-01", 1)
         assert _infer_frequency(df) == "daily"
 
+    @pytest.mark.unit
     def test_weekly_infers_as_daily(self):
         """Weekly data (median ~7 days) falls within the daily threshold (<=7)."""
         df = _make_df("2023-01-01", 10, freq="W")
@@ -155,26 +170,32 @@ class TestInferFrequency:
 class TestParseDate:
     """Tests for parse_date() — YYYY-MM-DD string to datetime."""
 
+    @pytest.mark.unit
     def test_valid_date(self):
         result = parse_date("2023-06-15")
         assert result == datetime(2023, 6, 15)
 
+    @pytest.mark.unit
     def test_valid_date_type(self):
         result = parse_date("2023-01-01")
         assert isinstance(result, datetime)
 
+    @pytest.mark.unit
     def test_invalid_format_raises(self):
         with pytest.raises(ValueError):
             parse_date("06/15/2023")
 
+    @pytest.mark.unit
     def test_nonsense_string_raises(self):
         with pytest.raises(ValueError):
             parse_date("not-a-date")
 
+    @pytest.mark.unit
     def test_empty_string_raises(self):
         with pytest.raises(ValueError):
             parse_date("")
 
+    @pytest.mark.unit
     def test_leap_day(self):
         result = parse_date("2024-02-29")
         assert result == datetime(2024, 2, 29)
@@ -183,27 +204,33 @@ class TestParseDate:
 class TestMakeTimeIndex:
     """Tests for make_time_index() — sequential float array generation."""
 
+    @pytest.mark.unit
     def test_returns_correct_length(self):
         result = make_time_index(5)
         assert len(result) == 5
 
+    @pytest.mark.unit
     def test_returns_float_dtype(self):
         result = make_time_index(3)
         assert result.dtype == float
 
+    @pytest.mark.unit
     def test_values_are_sequential(self):
         result = make_time_index(4)
         np.testing.assert_array_equal(result, [0.0, 1.0, 2.0, 3.0])
 
+    @pytest.mark.unit
     def test_zero_length(self):
         result = make_time_index(0)
         assert len(result) == 0
         assert result.dtype == float
 
+    @pytest.mark.unit
     def test_single_element(self):
         result = make_time_index(1)
         np.testing.assert_array_equal(result, [0.0])
 
+    @pytest.mark.unit
     def test_returns_numpy_array(self):
         result = make_time_index(3)
         assert isinstance(result, np.ndarray)

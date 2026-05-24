@@ -20,6 +20,7 @@ threshold remains a hardcoded heuristic.
 """
 
 from __future__ import annotations
+import pytest
 
 import inspect
 
@@ -31,6 +32,7 @@ from app.services import action_engine, recovery_engine
 
 # The rule constants that issue #156 removed. Each must no longer exist as a
 # module attribute on its engine.
+@pytest.mark.unit
 def test_recovery_engine_default_sizing_cap_constant_removed():
     """``DEFAULT_SIZING_CAP_DOLLARS`` no longer exists on the recovery engine."""
     assert not hasattr(recovery_engine, "DEFAULT_SIZING_CAP_DOLLARS"), (
@@ -40,6 +42,7 @@ def test_recovery_engine_default_sizing_cap_constant_removed():
     assert "DEFAULT_SIZING_CAP_DOLLARS" not in recovery_engine.__all__
 
 
+@pytest.mark.unit
 def test_action_engine_itm_short_dte_max_constant_removed():
     """``ITM_SHORT_DTE_MAX_DTE`` no longer exists on the action engine."""
     assert not hasattr(action_engine, "ITM_SHORT_DTE_MAX_DTE"), (
@@ -48,6 +51,7 @@ def test_action_engine_itm_short_dte_max_constant_removed():
     )
 
 
+@pytest.mark.unit
 def test_large_loser_pct_threshold_constant_removed():
     """``LARGE_LOSER_PCT_THRESHOLD`` no longer exists on either consumer.
 
@@ -71,6 +75,7 @@ def test_large_loser_pct_threshold_constant_removed():
         )
 
 
+@pytest.mark.unit
 def test_option_scan_request_rule_fields_default_to_none():
     """The seven ``OptionScanRequest`` rule fields default to ``None``.
 
@@ -95,6 +100,7 @@ def test_option_scan_request_rule_fields_default_to_none():
         )
 
 
+@pytest.mark.unit
 def test_option_scan_request_has_universe_rule_fields():
     """``OptionScanRequest`` carries the universe-rule fields, all default ``None``."""
     fields = OptionScanRequest.model_fields
@@ -103,6 +109,7 @@ def test_option_scan_request_has_universe_rule_fields():
         assert fields[name].default is None
 
 
+@pytest.mark.unit
 def test_no_migrated_constant_name_in_source():
     """A source-text scan confirms the migrated constant names are gone.
 

@@ -84,6 +84,7 @@ def _seed_ghost_open_position(
 
 
 class TestReconcileAll:
+    @pytest.mark.unit
     def test_dry_run_makes_no_writes(self, db_session, capsys):
         pos = _seed_ghost_open_position(
             db_session,
@@ -121,6 +122,7 @@ class TestReconcileAll:
         assert "DRY RUN" in captured.out
         assert "MARA" in captured.out
 
+    @pytest.mark.unit
     def test_apply_corrects_ghost_open_positions(self, db_session, capsys):
         # Bad state: shares=100, status=open. Real ledger: full cycle ending
         # in called_away → should be closed with 0 shares.
@@ -171,6 +173,7 @@ class TestReconcileAll:
         captured = capsys.readouterr()
         assert "Applied" in captured.out
 
+    @pytest.mark.unit
     def test_apply_aggregates_double_assignment(self, db_session):
         # Bad state: shares=100. Real ledger: two assignments → 200 shares.
         pos = _seed_ghost_open_position(
@@ -213,6 +216,7 @@ class TestReconcileAll:
         assert reloaded.shares == 200
         assert reloaded.broker_cost_basis == pytest.approx(2800.0 + 3000.0)
 
+    @pytest.mark.unit
     def test_no_changes_when_state_already_correct(
         self, db_session, capsys, monkeypatch
     ):
@@ -253,6 +257,7 @@ class TestReconcileAll:
         assert changed == 0
         assert errors == 0
 
+    @pytest.mark.unit
     def test_apply_re_derives_strategy_label(self, db_session):
         # Bad state: stored as "wheel" but the ledger shows held shares with
         # no open option legs → the derived label is "holding". This
@@ -297,6 +302,7 @@ class TestReconcileAll:
 class TestMainCli:
     """Argparse-driven entry point for the script (``python -m scripts...``)."""
 
+    @pytest.mark.unit
     def test_main_dry_run_default(self, db_session):
         # Patch SessionLocal so the CLI uses the test engine.
         with patch(
@@ -310,6 +316,7 @@ class TestMainCli:
 
         assert exit_code == 0
 
+    @pytest.mark.unit
     def test_main_apply_returns_zero_with_no_errors(self, db_session):
         with patch(
             "scripts.reconcile_positions.SessionLocal",

@@ -120,6 +120,7 @@ def _clear_regression_cache():
 # --- Success path with all 3 factors --------------------------------------
 
 
+@pytest.mark.integration
 def test_success_with_all_three_factors(client):
     """Financial Services position → basket includes SPY + XLF + DGS10."""
     position_id = _create_position(client, ticker="JPM")
@@ -166,6 +167,7 @@ def test_success_with_all_three_factors(client):
 # --- Sector-omitted branch -------------------------------------------------
 
 
+@pytest.mark.integration
 def test_sector_unknown_drops_to_two_factor_basket(client):
     """Unmapped sector → basket is SPY + DGS10 only and sector_omitted=True."""
     position_id = _create_position(client, ticker="ZZZX")
@@ -196,6 +198,7 @@ def test_sector_unknown_drops_to_two_factor_basket(client):
 # --- Insufficient-data branch ---------------------------------------------
 
 
+@pytest.mark.integration
 def test_insufficient_sample_size_returns_422(client):
     """Fewer than 60 aligned trading days → 422 with sanitized message."""
     position_id = _create_position(client, ticker="AAPL")
@@ -227,6 +230,7 @@ def test_insufficient_sample_size_returns_422(client):
 # --- Upstream-source failure ----------------------------------------------
 
 
+@pytest.mark.integration
 def test_upstream_fetch_failure_returns_502(client):
     """Any upstream fetch raising → 502 with generic source message."""
     position_id = _create_position(client, ticker="AAPL")
@@ -253,6 +257,7 @@ def test_upstream_fetch_failure_returns_502(client):
 # --- Position not found ---------------------------------------------------
 
 
+@pytest.mark.integration
 def test_unknown_position_returns_404(client):
     """A position id that does not exist → 404."""
     resp = client.get(
@@ -265,6 +270,7 @@ def test_unknown_position_returns_404(client):
 # --- Window validation -----------------------------------------------------
 
 
+@pytest.mark.integration
 def test_invalid_window_returns_422(client):
     """Any ``window`` value other than ``1Y`` → 422."""
     position_id = _create_position(client, ticker="AAPL")
@@ -278,6 +284,7 @@ def test_invalid_window_returns_422(client):
 # --- Cache behavior --------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_cache_hit_on_second_call_within_ttl(client):
     """Second call within TTL serves the cached response without fetching."""
     position_id = _create_position(client, ticker="JPM")
@@ -313,6 +320,7 @@ def test_cache_hit_on_second_call_within_ttl(client):
 # --- Factor variance share normalization ----------------------------------
 
 
+@pytest.mark.integration
 def test_factor_contributions_sum_to_approximately_one(client):
     """Sanity check: factor + idiosyncratic shares sum to ~1.0 (donut-ready)."""
     position_id = _create_position(client, ticker="JPM")

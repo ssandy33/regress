@@ -42,6 +42,7 @@ def _mock_resp(text: str) -> MagicMock:
 
 
 class TestGetNextEarningsDate:
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_returns_next_future_date(self, mock_get, mock_settings):
@@ -55,6 +56,7 @@ class TestGetNextEarningsDate:
         result = get_next_earnings_date("AAPL")
         assert result == future_date
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_returns_earliest_future_date(self, mock_get, mock_settings):
@@ -68,6 +70,7 @@ class TestGetNextEarningsDate:
         result = get_next_earnings_date("AAPL")
         assert result == date2
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_returns_none_when_no_future_dates(self, mock_get, mock_settings):
@@ -80,11 +83,13 @@ class TestGetNextEarningsDate:
         result = get_next_earnings_date("AAPL")
         assert result is None
 
+    @pytest.mark.unit
     def test_returns_none_when_api_key_not_set(self):
         with patch("app.services.alpha_vantage_client.get_alpha_vantage_api_key", return_value=""):
             result = get_next_earnings_date("AAPL")
         assert result is None
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_returns_none_on_api_error(self, mock_get, mock_settings):
@@ -94,6 +99,7 @@ class TestGetNextEarningsDate:
         result = get_next_earnings_date("AAPL")
         assert result is None
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_caches_result(self, mock_get, mock_settings):
@@ -108,6 +114,7 @@ class TestGetNextEarningsDate:
         assert result1 == result2 == future_date
         assert mock_get.call_count == 1  # Only called once due to cache
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_returns_none_on_empty_csv(self, mock_get, mock_settings):
@@ -120,6 +127,7 @@ class TestGetNextEarningsDate:
         result = get_next_earnings_date("AAPL")
         assert result is None
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_returns_none_on_missing_report_date_header(self, mock_get, mock_settings):
@@ -135,6 +143,7 @@ class TestGetNextEarningsDate:
         result = get_next_earnings_date("AAPL")
         assert result is None
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_does_not_cache_transient_failures(self, mock_get, mock_settings):
@@ -152,6 +161,7 @@ class TestGetNextEarningsDate:
         result2 = get_next_earnings_date("AAPL")
         assert result2 == future_date
 
+    @pytest.mark.unit
     @patch("app.services.alpha_vantage_client.settings")
     @patch("app.services.alpha_vantage_client.requests.get")
     def test_detects_json_error_in_200_response(self, mock_get, mock_settings):
@@ -175,6 +185,7 @@ class TestNoYfinanceImportsAnywhere:
     These are smoke tests for the key files.
     """
 
+    @pytest.mark.unit
     def test_no_yfinance_in_options_scanner(self):
         import ast
         import inspect
@@ -188,6 +199,7 @@ class TestNoYfinanceImportsAnywhere:
             if isinstance(node, ast.ImportFrom):
                 assert node.module != "yfinance", "options_scanner.py still imports from yfinance"
 
+    @pytest.mark.unit
     def test_no_yfinance_in_regression_router(self):
         import ast
         import inspect
@@ -202,6 +214,7 @@ class TestNoYfinanceImportsAnywhere:
                 if node.module and "yfinance" in node.module:
                     raise AssertionError("regression.py still imports from yfinance")
 
+    @pytest.mark.unit
     def test_no_yfinance_in_health_router(self):
         import ast
         import inspect
@@ -224,6 +237,7 @@ class TestGetCachedNextEarningsDate:
     on this guarantee to avoid blocking the request on Alpha Vantage.
     """
 
+    @pytest.mark.unit
     def test_returns_none_when_cache_miss(self):
         # No in-memory entry; _read_db_cache is stubbed to None via the
         # module-level autouse fixture. The helper MUST NOT call requests.get.
@@ -232,6 +246,7 @@ class TestGetCachedNextEarningsDate:
         assert result is None
         mock_get.assert_not_called()
 
+    @pytest.mark.unit
     def test_returns_value_from_hot_cache(self):
         # Pre-populate the hot cache.
         from app.services import alpha_vantage_client as av
@@ -242,6 +257,7 @@ class TestGetCachedNextEarningsDate:
         assert result == "2026-06-15"
         mock_get.assert_not_called()
 
+    @pytest.mark.unit
     def test_returns_none_when_hot_cache_expired(self):
         from app.services import alpha_vantage_client as av
 
@@ -253,6 +269,7 @@ class TestGetCachedNextEarningsDate:
         assert result is None
         mock_get.assert_not_called()
 
+    @pytest.mark.unit
     def test_falls_back_to_db_cache(self):
         from app.services import alpha_vantage_client as av
 
@@ -298,6 +315,7 @@ class TestGetIncomeStatementCacheNPoisoning:
             ],
         }
 
+    @pytest.mark.unit
     @patch(
         "app.services.alpha_vantage_client._write_income_db_cache",
         new=MagicMock(),

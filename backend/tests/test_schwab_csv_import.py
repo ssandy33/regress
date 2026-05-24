@@ -63,6 +63,7 @@ OCC_SELL_PUT_ROW = (
 class TestParseSchwabCsv:
     """Cover the happy-path mappings, skip rules, and malformed input."""
 
+    @pytest.mark.unit
     def test_sell_to_open_put_human_symbol(self):
         result = parse_schwab_csv(_csv([SELL_PUT_ROW]))
         assert len(result) == 1
@@ -78,6 +79,7 @@ class TestParseSchwabCsv:
         assert row["fees"] == 0.65
         assert row["opened_at"] == "2026-03-01"
 
+    @pytest.mark.unit
     def test_sell_to_open_call_multi_contract(self):
         result = parse_schwab_csv(_csv([SELL_CALL_ROW]))
         assert len(result) == 1
@@ -89,6 +91,7 @@ class TestParseSchwabCsv:
         # — the post-fee net — corrected after #184).
         assert row["premium"] == pytest.approx(0.50, abs=1e-4)
 
+    @pytest.mark.unit
     def test_buy_to_close_premium_is_negative(self):
         result = parse_schwab_csv(_csv([BUY_TO_CLOSE_ROW]))
         assert len(result) == 1
@@ -98,11 +101,13 @@ class TestParseSchwabCsv:
         # Pre-#184 this used post-fee net (-0.1065).
         assert row["premium"] == pytest.approx(-0.10, abs=1e-4)
 
+    @pytest.mark.unit
     def test_assigned_maps_to_assignment(self):
         result = parse_schwab_csv(_csv([ASSIGNED_PUT_ROW]))
         assert len(result) == 1
         assert result[0]["trade_type"] == "assignment"
 
+    @pytest.mark.unit
     def test_expired_call_maps_to_expired(self):
         """An expired call must map to ``trade_type="expired"``, not ``called_away``.
 
@@ -115,6 +120,7 @@ class TestParseSchwabCsv:
         assert len(result) == 1
         assert result[0]["trade_type"] == "expired"
 
+    @pytest.mark.unit
     def test_expired_put_maps_to_expired(self):
         """An expired put also maps to ``trade_type="expired"`` — not ``assignment``.
 
@@ -131,6 +137,7 @@ class TestParseSchwabCsv:
         assert result[0]["trade_type"] == "expired"
         assert result[0]["ticker"] == "SOFI"
 
+    @pytest.mark.unit
     def test_occ_format_symbol_parses(self):
         result = parse_schwab_csv(_csv([OCC_SELL_PUT_ROW]))
         assert len(result) == 1
@@ -140,6 +147,7 @@ class TestParseSchwabCsv:
         assert row["expiration"] == "2026-03-15"
         assert row["trade_type"] == "sell_put"
 
+    @pytest.mark.unit
     def test_full_mix_round_trip(self):
         rows = [
             SELL_PUT_ROW,
@@ -165,10 +173,12 @@ class TestParseSchwabCsv:
             "sell_put",
         ]
 
+    @pytest.mark.unit
     def test_non_options_rows_skipped(self):
         result = parse_schwab_csv(_csv([STOCK_BUY_ROW, DIVIDEND_ROW, ACH_ROW]))
         assert result == []
 
+    @pytest.mark.unit
     def test_unknown_action_skipped(self):
         # "Journal" / "Wire Transfer" / etc. should never crash the parser.
         rows = [
@@ -177,6 +187,7 @@ class TestParseSchwabCsv:
         ]
         assert parse_schwab_csv(_csv(rows)) == []
 
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "bad_symbol",
         [
@@ -194,6 +205,7 @@ class TestParseSchwabCsv:
         )
         assert parse_schwab_csv(_csv([row])) == []
 
+    @pytest.mark.unit
     def test_missing_required_columns_returns_empty(self):
         # No "Symbol" column at all — entire file rejected.
         body = (
@@ -202,14 +214,17 @@ class TestParseSchwabCsv:
         ).encode("utf-8")
         assert parse_schwab_csv(body) == []
 
+    @pytest.mark.unit
     def test_empty_file_returns_empty(self):
         assert parse_schwab_csv(b"") == []
         assert parse_schwab_csv(b"\n") == []
 
+    @pytest.mark.unit
     def test_utf8_bom_tolerated(self):
         body = b"\xef\xbb\xbf" + _csv([SELL_PUT_ROW])
         assert len(parse_schwab_csv(body)) == 1
 
+    @pytest.mark.unit
     def test_zero_quantity_row_skipped(self):
         row = (
             '03/01/2026,Sell to Open,F 03/27/2026 13.50 P,'
@@ -217,6 +232,7 @@ class TestParseSchwabCsv:
         )
         assert parse_schwab_csv(_csv([row])) == []
 
+    @pytest.mark.unit
     def test_amount_with_dollar_and_comma(self):
         # Schwab sometimes formats Amount as "$1,234.56".
         row = (
@@ -241,6 +257,7 @@ def _csv_file(content: bytes, filename: str = "schwab.csv") -> dict:
 class TestImportCsvPreviewEndpoint:
     """Cover ``POST /api/journal/import/csv/preview`` validation + happy path."""
 
+    @pytest.mark.integration
     def test_preview_rejects_wrong_extension(self, client):
         resp = client.post(
             "/api/journal/import/csv/preview",
@@ -249,6 +266,7 @@ class TestImportCsvPreviewEndpoint:
         assert resp.status_code == 422
         assert resp.json()["detail"] == "Only .csv files are accepted"
 
+    @pytest.mark.integration
     def test_preview_rejects_oversized_file(self, client):
         # 6 MB synthetic body — header byte + filler. Body content is irrelevant
         # because size is checked before parsing.
@@ -261,6 +279,7 @@ class TestImportCsvPreviewEndpoint:
         assert resp.status_code == 422
         assert "5 MB" in resp.json()["detail"]
 
+    @pytest.mark.integration
     def test_preview_rejects_empty_file(self, client):
         resp = client.post(
             "/api/journal/import/csv/preview",
@@ -269,6 +288,7 @@ class TestImportCsvPreviewEndpoint:
         assert resp.status_code == 422
         assert resp.json()["detail"] == "Uploaded file is empty"
 
+    @pytest.mark.integration
     def test_preview_returns_correct_shape(self, client):
         resp = client.post(
             "/api/journal/import/csv/preview",
@@ -286,6 +306,7 @@ class TestImportCsvPreviewEndpoint:
         for trade in data["trades"]:
             assert trade["is_duplicate"] is False
 
+    @pytest.mark.integration
     def test_preview_with_only_non_options_returns_empty(self, client):
         resp = client.post(
             "/api/journal/import/csv/preview",
@@ -301,6 +322,7 @@ class TestImportCsvPreviewEndpoint:
             "new_count": 0,
         }
 
+    @pytest.mark.integration
     def test_preview_does_not_leak_exception_message(self, client):
         # If parsing somehow crashes (defensive, since parse_schwab_csv catches
         # per-row errors), the endpoint must return a generic 422.
@@ -321,6 +343,7 @@ class TestImportCsvPreviewEndpoint:
 class TestImportCsvEndpoint:
     """Cover ``POST /api/journal/import/csv`` write path + duplicate handling."""
 
+    @pytest.mark.integration
     def test_import_creates_trades_and_positions(self, client):
         # Stale clients may still post `position_strategy`; the field is
         # ignored by FastAPI under #131 but the request must still succeed.
@@ -339,6 +362,7 @@ class TestImportCsvEndpoint:
         tickers = {p["ticker"] for p in positions}
         assert tickers == {"F", "SOFI"}
 
+    @pytest.mark.integration
     def test_import_derives_strategy_label(self, client, monkeypatch):
         # `position_strategy` form field is no longer accepted under #131.
         # The recomputer derives the label per position state. F has a single
@@ -364,6 +388,7 @@ class TestImportCsvEndpoint:
         assert labels["F"] == "csp"
         assert labels["SOFI"] == "cc"
 
+    @pytest.mark.integration
     def test_import_skips_duplicates_on_second_upload(self, client):
         body = _csv([SELL_PUT_ROW, SELL_CALL_ROW])
         first = client.post("/api/journal/import/csv", files=_csv_file(body))
@@ -375,6 +400,7 @@ class TestImportCsvEndpoint:
         assert data["skipped_duplicates"] == 2
         assert data["positions_created"] == 0
 
+    @pytest.mark.integration
     def test_import_ignores_legacy_strategy_field(self, client):
         # Stale clients may still post `position_strategy`; under #131 the
         # field is no longer declared on the handler so FastAPI silently
@@ -387,6 +413,7 @@ class TestImportCsvEndpoint:
         )
         assert resp.status_code == 200
 
+    @pytest.mark.integration
     def test_import_rejects_oversized_file(self, client):
         oversized = b"Date,Action,Symbol,Description,Quantity,Price,Fees & Comm,Amount\n"
         oversized += b"x" * (6 * 1024 * 1024)
@@ -396,6 +423,7 @@ class TestImportCsvEndpoint:
         )
         assert resp.status_code == 422
 
+    @pytest.mark.integration
     def test_import_does_not_leak_exception_message(self, client):
         with patch(
             "app.routers.journal.parse_schwab_csv",

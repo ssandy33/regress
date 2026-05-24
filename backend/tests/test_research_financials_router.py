@@ -59,6 +59,7 @@ def _av_quarter(period: str = "2025-03-31") -> dict:
     }
 
 
+@pytest.mark.integration
 def test_get_financials_404_for_missing_position(client):
     """Unknown ``position_id`` → 404 with sanitized detail."""
     resp = client.get("/api/positions/does-not-exist/research/financials")
@@ -66,6 +67,7 @@ def test_get_financials_404_for_missing_position(client):
     assert resp.json() == {"detail": "Position not found"}
 
 
+@pytest.mark.integration
 def test_get_financials_200_returns_av_payload(client):
     """AV primary returns data → 200 with ``source=alphavantage``."""
     pid = _create_position(client)
@@ -111,6 +113,7 @@ def test_get_financials_200_returns_av_payload(client):
     assert 0.42 < first["gross_margin"] < 0.44
 
 
+@pytest.mark.integration
 def test_get_financials_200_falls_back_to_yfinance(client):
     """AV down + yfinance up → 200 with ``source=yfinance``."""
     pid = _create_position(client)
@@ -138,6 +141,7 @@ def test_get_financials_200_falls_back_to_yfinance(client):
     assert len(body["quarters"]) == 1
 
 
+@pytest.mark.integration
 def test_get_financials_502_when_both_sources_unavailable(client):
     """AV ``None`` + yfinance ``None`` → 502 with sanitized detail.
 
@@ -164,6 +168,7 @@ def test_get_financials_502_when_both_sources_unavailable(client):
     }
 
 
+@pytest.mark.integration
 def test_get_financials_500_on_unexpected_exception(client):
     """Unexpected service exception → 500 with the generic CLAUDE.md detail."""
     pid = _create_position(client)

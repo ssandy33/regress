@@ -16,6 +16,7 @@ def mock_token():
 
 
 class TestGetAccounts:
+    @pytest.mark.unit
     def test_success(self):
         accounts = [{"hashValue": "abc123", "securitiesAccount": {"accountNumber": "12345678"}}]
         mock_resp = MagicMock()
@@ -27,12 +28,14 @@ class TestGetAccounts:
 
         assert result == accounts
 
+    @pytest.mark.unit
     def test_401_raises_auth_error(self):
         resp = httpx.Response(401, request=httpx.Request("GET", "https://example.com"))
         with patch("app.services.schwab_client.httpx.get", side_effect=httpx.HTTPStatusError("", request=resp.request, response=resp)):
             with pytest.raises(SchwabAuthError):
                 SchwabClient().get_accounts()
 
+    @pytest.mark.unit
     def test_network_error_raises_client_error(self):
         with patch("app.services.schwab_client.httpx.get", side_effect=httpx.ConnectError("connection failed")):
             with pytest.raises(SchwabClientError):
@@ -40,6 +43,7 @@ class TestGetAccounts:
 
 
 class TestGetTransactions:
+    @pytest.mark.unit
     def test_success(self):
         txns = [{"transactionId": "1", "type": "TRADE"}]
         mock_resp = MagicMock()
@@ -51,12 +55,14 @@ class TestGetTransactions:
 
         assert result == txns
 
+    @pytest.mark.unit
     def test_401_raises_auth_error(self):
         resp = httpx.Response(401, request=httpx.Request("GET", "https://example.com"))
         with patch("app.services.schwab_client.httpx.get", side_effect=httpx.HTTPStatusError("", request=resp.request, response=resp)):
             with pytest.raises(SchwabAuthError):
                 SchwabClient().get_transactions("abc123", "2025-01-01", "2025-03-01")
 
+    @pytest.mark.unit
     def test_empty_list(self):
         mock_resp = MagicMock()
         mock_resp.json.return_value = []
@@ -67,6 +73,7 @@ class TestGetTransactions:
 
         assert result == []
 
+    @pytest.mark.unit
     def test_invalid_account_hash(self):
         with pytest.raises(SchwabClientError, match="Invalid account hash"):
             SchwabClient().get_transactions("abc/123!!", "2025-01-01", "2025-03-01")

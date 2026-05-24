@@ -109,6 +109,7 @@ def _ten_av_quarters() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_build_financials_payload_av_primary_success(client):
     """AV returns 10 quarters → response carries 8, source=alphavantage."""
     db = _db_session(client)
@@ -127,6 +128,7 @@ def test_build_financials_payload_av_primary_success(client):
     yf_fetcher.assert_not_called()
 
 
+@pytest.mark.integration
 def test_av_quarter_projection_computes_margins(client):
     """gross_margin = gross_profit / total_revenue; operating_margin same shape."""
     db = _db_session(client)
@@ -154,6 +156,7 @@ def test_av_quarter_projection_computes_margins(client):
     assert q["operating_margin"] == pytest.approx(0.04)
 
 
+@pytest.mark.integration
 def test_av_quarter_with_missing_fields_surfaces_none_margins(client):
     """Missing numerator/denominator → margins are JSON null, not 0."""
     db = _db_session(client)
@@ -186,6 +189,7 @@ def test_av_quarter_with_missing_fields_surfaces_none_margins(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_av_rate_limited_falls_back_to_yfinance(client):
     """AV returns None → yfinance is called; source attribution flips."""
     db = _db_session(client)
@@ -208,6 +212,7 @@ def test_av_rate_limited_falls_back_to_yfinance(client):
     assert payload["quarters"][0]["period_end"] == "2025-03-31"
 
 
+@pytest.mark.integration
 def test_yfinance_fallback_payload_is_persisted_to_app_settings(client):
     """yfinance fallback writes a durable yf_financials:{ticker} row."""
     db = _db_session(client)
@@ -237,6 +242,7 @@ def test_yfinance_fallback_payload_is_persisted_to_app_settings(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_both_sources_fail_raises_sanitized_error(client):
     """AV None + yfinance None → ResearchSourceUnavailable; no str(e) leak.
 
@@ -265,6 +271,7 @@ def test_both_sources_fail_raises_sanitized_error(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_cache_hit_skips_both_upstreams_on_second_call(client):
     """Second call within TTL serves the composed payload from research_cache."""
     db = _db_session(client)
@@ -283,6 +290,7 @@ def test_cache_hit_skips_both_upstreams_on_second_call(client):
     assert av_fetcher.call_count == 1
 
 
+@pytest.mark.integration
 def test_durable_yf_cache_serves_after_in_memory_eviction(client):
     """Pre-seeded yf_financials app_setting served when AV is unavailable."""
     db = _db_session(client)
@@ -328,6 +336,7 @@ def test_durable_yf_cache_serves_after_in_memory_eviction(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 @pytest.mark.skip(
     reason="Position-not-found returns 404 at the HTTP router layer; "
     "that test belongs alongside backend/app/routers/research.py "
@@ -343,6 +352,7 @@ def test_position_not_found_returns_404_via_router():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_section_d_both_sources_empty_includes_ticker_in_detail(client):
     """AV None + yfinance None → detail names the ticker + both sources verbatim."""
     db = _db_session(client)
@@ -360,6 +370,7 @@ def test_section_d_both_sources_empty_includes_ticker_in_detail(client):
     )
 
 
+@pytest.mark.integration
 def test_section_d_av_empty_then_yfinance_throttled_raises_throttling(client):
     """AV None + yfinance throttled → ResearchSourceUnavailable with throttling copy."""
     from app.services.yfinance_client import YFinanceRateLimitedError

@@ -8,6 +8,7 @@ from app.models.database import AppSetting
 
 
 class TestSchwabAuthUrl:
+    @pytest.mark.integration
     def test_generates_auth_url(self, client):
         resp = client.post("/api/settings/schwab/auth-url", json={"app_key": "test-key-123"})
         assert resp.status_code == 200
@@ -16,10 +17,12 @@ class TestSchwabAuthUrl:
         assert "test-key-123" in data["auth_url"]
         assert "redirect_uri" in data
 
+    @pytest.mark.integration
     def test_empty_app_key_returns_422(self, client):
         resp = client.post("/api/settings/schwab/auth-url", json={"app_key": "  "})
         assert resp.status_code == 422
 
+    @pytest.mark.integration
     def test_auth_url_includes_readonly_scope(self, client):
         # Regression for #125: Schwab's /trader/v1/accounts/{hash}/transactions
         # endpoint silently returns 200 + [] when the OAuth grant lacks scope.
@@ -42,6 +45,7 @@ def _mock_token_response():
 
 
 class TestSchwabCallback:
+    @pytest.mark.integration
     def test_success(self, client):
         with patch("app.routers.settings.httpx.post", return_value=_mock_token_response()):
             resp = client.post("/api/settings/schwab/callback", json={
@@ -56,6 +60,7 @@ class TestSchwabCallback:
         assert "access_token_expires" in data
         assert "refresh_token_expires" in data
 
+    @pytest.mark.integration
     def test_tokens_persisted_in_db(self, client):
         """Verify tokens are actually stored in the database after successful exchange."""
         with patch("app.routers.settings.httpx.post", return_value=_mock_token_response()):
@@ -83,6 +88,7 @@ class TestSchwabCallback:
         finally:
             db.close()
 
+    @pytest.mark.integration
     def test_no_code_in_url(self, client):
         resp = client.post("/api/settings/schwab/callback", json={
             "app_key": "key",
@@ -92,6 +98,7 @@ class TestSchwabCallback:
         assert resp.status_code == 422
         assert "authorization code" in resp.json()["detail"].lower()
 
+    @pytest.mark.integration
     def test_token_exchange_http_error(self, client):
         error_resp = httpx.Response(401, request=httpx.Request("POST", "https://example.com"))
         with patch("app.routers.settings.httpx.post", side_effect=httpx.HTTPStatusError("", request=error_resp.request, response=error_resp)):
@@ -103,6 +110,7 @@ class TestSchwabCallback:
         assert resp.status_code == 502
         assert "App Key and Secret" in resp.json()["detail"]
 
+    @pytest.mark.integration
     def test_token_exchange_network_error(self, client):
         with patch("app.routers.settings.httpx.post", side_effect=httpx.ConnectError("connection refused")):
             resp = client.post("/api/settings/schwab/callback", json={

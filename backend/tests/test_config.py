@@ -49,12 +49,14 @@ def _seed(factory, **kv):
 
 
 class TestGetFredApiKey:
+    @pytest.mark.unit
     def test_get_fred_api_key_from_env(self):
         """Env var set — returns the env value without touching the DB."""
         with patch("app.config.settings") as mock_settings:
             mock_settings.fred_api_key = "env_fred_key"
             assert get_fred_api_key() == "env_fred_key"
 
+    @pytest.mark.unit
     def test_get_fred_api_key_from_db_fallback(self, db_session_factory):
         """No env var — returns the value stored in the DB."""
         _seed(db_session_factory, fred_api_key="db_fred_key")
@@ -64,6 +66,7 @@ class TestGetFredApiKey:
             mock_settings.fred_api_key = ""
             assert get_fred_api_key() == "db_fred_key"
 
+    @pytest.mark.unit
     def test_get_fred_api_key_env_precedence_over_db(self, db_session_factory):
         """Env var wins even when a DB row also exists."""
         _seed(db_session_factory, fred_api_key="db_fred_key")
@@ -73,6 +76,7 @@ class TestGetFredApiKey:
             mock_settings.fred_api_key = "env_fred_key"
             assert get_fred_api_key() == "env_fred_key"
 
+    @pytest.mark.unit
     def test_get_fred_api_key_missing_both(self, db_session_factory):
         """No env var and no DB row — returns empty string, never raises."""
         with patch("app.config.settings") as mock_settings, patch(
@@ -81,6 +85,7 @@ class TestGetFredApiKey:
             mock_settings.fred_api_key = ""
             assert get_fred_api_key() == ""
 
+    @pytest.mark.unit
     def test_get_fred_api_key_db_error_returns_empty(self):
         """A DB failure is swallowed — returns empty string, never raises."""
         def _boom():
@@ -94,6 +99,7 @@ class TestGetFredApiKey:
 
 
 class TestGetSchwabCredentials:
+    @pytest.mark.unit
     def test_get_schwab_credentials_from_env(self):
         """Both env vars set — returns them without touching the DB."""
         with patch("app.config.settings") as mock_settings:
@@ -101,6 +107,7 @@ class TestGetSchwabCredentials:
             mock_settings.schwab_app_secret = "env_secret"
             assert get_schwab_credentials() == ("env_key", "env_secret")
 
+    @pytest.mark.unit
     def test_get_schwab_credentials_partial_env(self, db_session_factory):
         """Only one env var set — falls through to the DB fallback path.
 
@@ -125,6 +132,7 @@ class TestGetSchwabCredentials:
         assert app_key == "db_key"
         assert app_secret == "db_secret"
 
+    @pytest.mark.unit
     def test_get_schwab_credentials_partial_env_no_db_keeps_env(
         self, db_session_factory
     ):
@@ -143,6 +151,7 @@ class TestGetSchwabCredentials:
         assert app_key == "env_key"
         assert app_secret == ""
 
+    @pytest.mark.unit
     def test_get_schwab_credentials_db_fallback(self, db_session_factory):
         """No env vars — credentials are decrypted from the DB."""
         _seed(
@@ -158,6 +167,7 @@ class TestGetSchwabCredentials:
             enc_settings.schwab_encryption_key = TEST_KEY
             assert get_schwab_credentials() == ("real_key", "real_secret")
 
+    @pytest.mark.unit
     def test_get_schwab_credentials_db_fallback_no_key(self, db_session_factory):
         """No encryption key configured — DB values are returned as stored."""
         _seed(
@@ -173,6 +183,7 @@ class TestGetSchwabCredentials:
             enc_settings.schwab_encryption_key = ""
             assert get_schwab_credentials() == ("plain_key", "plain_secret")
 
+    @pytest.mark.unit
     def test_get_schwab_credentials_env_precedence_over_db(self, db_session_factory):
         """Env vars win even when DB rows also exist."""
         _seed(
@@ -188,6 +199,7 @@ class TestGetSchwabCredentials:
             enc_settings.schwab_encryption_key = TEST_KEY
             assert get_schwab_credentials() == ("env_key", "env_secret")
 
+    @pytest.mark.unit
     def test_get_schwab_credentials_missing_both(self, db_session_factory):
         """No env vars and no DB rows — returns ('', ''), never raises."""
         with patch("app.config.settings") as mock_settings, patch(
@@ -198,6 +210,7 @@ class TestGetSchwabCredentials:
             enc_settings.schwab_encryption_key = TEST_KEY
             assert get_schwab_credentials() == ("", "")
 
+    @pytest.mark.unit
     def test_credential_decryption_failure(self, db_session_factory):
         """A corrupted DB value is handled gracefully — never raises.
 
@@ -219,6 +232,7 @@ class TestGetSchwabCredentials:
             # Must not raise; corrupted ciphertext degrades to the defaults.
             assert get_schwab_credentials() == ("", "")
 
+    @pytest.mark.unit
     def test_get_schwab_credentials_db_error_returns_defaults(self):
         """A DB failure is swallowed — returns ('', ''), never raises."""
         def _boom():
@@ -242,10 +256,12 @@ class TestSettingsExtraIgnore:
     ``GITHUB_SECRET`` into the traceback. ``extra="ignore"`` prevents this.
     """
 
+    @pytest.mark.unit
     def test_model_config_sets_extra_ignore(self):
         """``Settings`` ``model_config`` declares ``extra="ignore"``."""
         assert Settings.model_config.get("extra") == "ignore"
 
+    @pytest.mark.unit
     def test_undeclared_env_keys_do_not_raise(self, monkeypatch):
         """Constructing ``Settings()`` with undeclared env keys does not raise.
 

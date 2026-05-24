@@ -83,6 +83,7 @@ def _fake_info(**overrides: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_build_business_payload_success_returns_payload(client):
     """yfinance returns full info → payload matches PRD contract verbatim."""
     _seed_position(client)
@@ -106,6 +107,7 @@ def test_build_business_payload_success_returns_payload(client):
     fetcher.assert_called_once_with("SOFI")
 
 
+@pytest.mark.integration
 def test_build_business_payload_normalizes_ticker_to_upper(client):
     """Lowercase ticker is uppercased before the fetch and in the payload."""
     _seed_position(client, ticker="sofi")
@@ -120,6 +122,7 @@ def test_build_business_payload_normalizes_ticker_to_upper(client):
     fetcher.assert_called_once_with("SOFI")
 
 
+@pytest.mark.integration
 def test_build_business_payload_surfaces_partial_fields_as_none(client):
     """yfinance omitted fields → JSON null, not fabricated values."""
     _seed_position(client)
@@ -148,6 +151,7 @@ def test_build_business_payload_surfaces_partial_fields_as_none(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_build_business_payload_raises_when_yfinance_returns_none(client):
     """yfinance hard fail → ResearchSourceUnavailable with sanitized detail."""
     _seed_position(client)
@@ -168,6 +172,7 @@ def test_build_business_payload_raises_when_yfinance_returns_none(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_in_memory_cache_hit_skips_yfinance_on_second_call(client):
     """Second call inside TTL serves from research_cache — no fetcher call."""
     _seed_position(client)
@@ -190,6 +195,7 @@ def test_in_memory_cache_hit_skips_yfinance_on_second_call(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_app_setting_cache_hit_skips_yfinance_after_in_memory_eviction(
     client,
 ):
@@ -231,6 +237,7 @@ def test_app_setting_cache_hit_skips_yfinance_after_in_memory_eviction(
     assert payload["summary"] == "Pre-seeded."
 
 
+@pytest.mark.integration
 def test_stale_app_setting_falls_through_to_yfinance(client):
     """app_settings row older than 24h → yfinance is called again."""
     _seed_position(client)
@@ -274,6 +281,7 @@ def test_stale_app_setting_falls_through_to_yfinance(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_rate_limited_yfinance_raises_throttling_research_source_unavailable(
     client,
 ):

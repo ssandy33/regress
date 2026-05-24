@@ -67,6 +67,7 @@ def _store(db, value: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_module_constants():
     """The key and schema-version constants match the ADR-002 spec."""
     assert RULES_CONFIG_KEY == "rules_config"
@@ -80,6 +81,7 @@ def test_module_constants():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_default_config_universe_matches_catalog():
     """Universe defaults equal PRD #209 §R2."""
     u = DEFAULT_RULES_CONFIG.universe
@@ -89,6 +91,7 @@ def test_default_config_universe_matches_catalog():
     assert u.min_iv_percentile is None
 
 
+@pytest.mark.unit
 def test_default_config_entry_matches_catalog():
     """Entry defaults equal the reconciled PRD #209 §R3 catalog."""
     e = DEFAULT_RULES_CONFIG.entry
@@ -101,6 +104,7 @@ def test_default_config_entry_matches_catalog():
     assert e.min_call_distance_from_cost_basis_pct == 0.0
 
 
+@pytest.mark.unit
 def test_default_config_position_matches_catalog():
     """Position defaults equal PRD #209 §R4 (v1.0.7 / issue #234)."""
     p = DEFAULT_RULES_CONFIG.position
@@ -111,6 +115,7 @@ def test_default_config_position_matches_catalog():
     assert p.max_open_positions is None
 
 
+@pytest.mark.unit
 def test_default_config_risk_matches_catalog():
     """Risk defaults equal PRD #209 §R5."""
     r = DEFAULT_RULES_CONFIG.risk
@@ -119,6 +124,7 @@ def test_default_config_risk_matches_catalog():
     assert r.max_consecutive_rolls is None
 
 
+@pytest.mark.unit
 def test_default_config_management_matches_catalog():
     """Management defaults equal PRD #209 §R6."""
     m = DEFAULT_RULES_CONFIG.management
@@ -128,6 +134,7 @@ def test_default_config_management_matches_catalog():
     assert m.assignment_risk_review == "High"
 
 
+@pytest.mark.unit
 def test_default_config_carries_schema_version():
     """The top-level model carries the schema-version integer."""
     assert DEFAULT_RULES_CONFIG.schema_version == RULES_CONFIG_SCHEMA_VERSION
@@ -140,24 +147,28 @@ def test_default_config_carries_schema_version():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_validator_rejects_negative_dte():
     """A negative DTE minimum is rejected."""
     with pytest.raises(ValidationError):
         EntryRules(dte_range=RangeRule(min=-1, max=45))
 
 
+@pytest.mark.unit
 def test_validator_rejects_delta_above_one():
     """A delta above 1.0 is rejected."""
     with pytest.raises(ValidationError):
         EntryRules(delta_range_csp=RangeRule(min=0.2, max=1.5))
 
 
+@pytest.mark.unit
 def test_validator_rejects_delta_below_zero():
     """A negative delta bound is rejected."""
     with pytest.raises(ValidationError):
         EntryRules(delta_range_csp=RangeRule(min=-0.1, max=0.3))
 
 
+@pytest.mark.unit
 def test_validator_rejects_inverted_range():
     """A range with ``min >= max`` is rejected."""
     with pytest.raises(ValidationError):
@@ -166,30 +177,35 @@ def test_validator_rejects_inverted_range():
         RangeRule(min=30, max=30)
 
 
+@pytest.mark.unit
 def test_validator_rejects_positive_loss_threshold():
     """A loss-review threshold above zero is rejected — a loss is not a gain."""
     with pytest.raises(ValidationError):
         RiskRules(loss_review_threshold_pct=5.0)
 
 
+@pytest.mark.unit
 def test_validator_rejects_profit_review_over_100():
     """A profit-review percent above 100 is rejected."""
     with pytest.raises(ValidationError):
         ManagementTriggers(profit_review_pct=150.0)
 
 
+@pytest.mark.unit
 def test_validator_rejects_zero_max_open_positions():
     """A max-open-positions cap below 1 is rejected when set."""
     with pytest.raises(ValidationError):
         PositionRules(max_open_positions=0)
 
 
+@pytest.mark.unit
 def test_validator_rejects_negative_open_interest():
     """A negative open-interest floor is rejected."""
     with pytest.raises(ValidationError):
         UniverseRules(min_open_interest=-1)
 
 
+@pytest.mark.unit
 def test_validator_rejects_out_of_range_sizing_cap_pct():
     """``sizing_cap_pct`` is a whole-percent in ``(0, 100]``.
 
@@ -216,6 +232,7 @@ def test_validator_rejects_out_of_range_sizing_cap_pct():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_unset_optionals_accept_none():
     """The four PRD #209 "unset" rules are valid as ``None`` — no enforcement.
 
@@ -239,6 +256,7 @@ def test_unset_optionals_accept_none():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_load_missing_row_returns_defaults(db, caplog):
     """No ``rules_config`` row → the full default config + an INFO log."""
     with caplog.at_level(logging.INFO):
@@ -247,6 +265,7 @@ def test_load_missing_row_returns_defaults(db, caplog):
     assert any("default trading rules" in r.message for r in caplog.records)
 
 
+@pytest.mark.unit
 def test_load_empty_value_returns_defaults(db):
     """An empty-string stored value is treated as missing → defaults."""
     _store(db, "   ")
@@ -258,6 +277,7 @@ def test_load_empty_value_returns_defaults(db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_load_valid_full_object_returns_stored_values(db):
     """A valid full stored object → exactly those values are returned."""
     stored = {
@@ -311,6 +331,7 @@ def test_load_valid_full_object_returns_stored_values(db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_load_partial_object_merges_over_defaults(db):
     """A partial stored object → stored fields honored, the rest defaulted."""
     _store(db, json.dumps({"entry": {"min_monthly_return_pct": 4.0}}))
@@ -327,6 +348,7 @@ def test_load_partial_object_merges_over_defaults(db):
     assert cfg.management == DEFAULT_RULES_CONFIG.management
 
 
+@pytest.mark.unit
 def test_load_partial_group_only(db):
     """An older build that stored only ``entry`` → other four groups defaulted."""
     _store(db, json.dumps({"entry": {"dte_range": {"min": 25, "max": 50}}}))
@@ -340,6 +362,7 @@ def test_load_partial_group_only(db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_load_malformed_json_returns_defaults_and_warns(db, caplog):
     """Malformed JSON → defaults + a generic WARNING that leaks no exception text."""
     _store(db, "{not valid json")
@@ -357,6 +380,7 @@ def test_load_malformed_json_returns_defaults_and_warns(db, caplog):
     assert "char" not in joined
 
 
+@pytest.mark.unit
 def test_load_non_object_json_returns_defaults(db):
     """Valid JSON that is not an object (e.g. a list) → defaults."""
     _store(db, json.dumps([1, 2, 3]))
@@ -368,6 +392,7 @@ def test_load_non_object_json_returns_defaults(db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_load_single_bad_field_falls_back_that_field_only(db):
     """One out-of-range field reverts to its default; the rest is honored."""
     _store(
@@ -388,6 +413,7 @@ def test_load_single_bad_field_falls_back_that_field_only(db):
     assert cfg.entry.earnings_buffer_days == 14
 
 
+@pytest.mark.unit
 def test_load_inverted_range_reverts_range_only(db, caplog):
     """An inverted ``dte_range`` reverts as a unit; other fields are honored."""
     _store(
@@ -412,6 +438,7 @@ def test_load_inverted_range_reverts_range_only(db, caplog):
     assert any("entry.dte_range" in r.message for r in warnings)
 
 
+@pytest.mark.unit
 def test_load_bad_field_in_one_group_does_not_poison_others(db):
     """A bad field in ``risk`` does not discard a valid ``position`` group."""
     _store(
@@ -433,6 +460,7 @@ def test_load_bad_field_in_one_group_does_not_poison_others(db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "stored_value",
     [
@@ -467,6 +495,7 @@ def _store_v1(db, position: dict) -> None:
     _store(db, json.dumps({"position": position}))
 
 
+@pytest.mark.unit
 def test_migration_idempotent(db):
     """Running ``load_rules_config`` twice on a v1 row migrates once.
 
@@ -500,6 +529,7 @@ def test_migration_idempotent(db):
     assert markers[0].value == marker_value_before
 
 
+@pytest.mark.unit
 def test_migration_preserves_other_position_fields(db):
     """The migration only touches sizing-cap fields; other rules pass through."""
     _store_v1(
@@ -526,6 +556,7 @@ def test_migration_preserves_other_position_fields(db):
     assert cfg.management == DEFAULT_RULES_CONFIG.management
 
 
+@pytest.mark.unit
 def test_migration_writes_marker_row(db):
     """First migration creates a marker row with the expected JSON shape."""
     _store_v1(db, {"sizing_cap_dollars": 5000.0})
@@ -547,6 +578,7 @@ def test_migration_writes_marker_row(db):
     assert parsed_ts.tzinfo is not None  # carries a timezone
 
 
+@pytest.mark.unit
 def test_migration_does_not_overwrite_existing_marker(db):
     """A pre-existing ``sizing_cap_migration`` row (e.g. dismissed) is left alone.
 
@@ -589,6 +621,7 @@ def test_migration_does_not_overwrite_existing_marker(db):
     assert payload["previous_sizing_cap_dollars"] == 9999.0  # original, not 5000
 
 
+@pytest.mark.unit
 def test_migration_persists_v2_schema_back_to_row(db):
     """After migration the persisted ``rules_config`` row carries v2 + no v1 key."""
     _store_v1(db, {"sizing_cap_dollars": 5000.0})
@@ -607,6 +640,7 @@ def test_migration_persists_v2_schema_back_to_row(db):
     assert "sizing_cap_dollars" not in persisted.get("position", {})
 
 
+@pytest.mark.unit
 def test_no_migration_marker_when_no_old_key(db):
     """A fresh-install row that never carried ``sizing_cap_dollars`` writes no marker."""
     _store(db, json.dumps({"position": {"sizing_cap_pct": 15.0}}))
@@ -626,12 +660,14 @@ def test_no_migration_marker_when_no_old_key(db):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_sizing_cap_account_field_defaults_null():
     """``sizing_cap_account`` defaults to ``None`` — first-account behavior."""
     assert PositionRules().sizing_cap_account is None
     assert DEFAULT_RULES_CONFIG.position.sizing_cap_account is None
 
 
+@pytest.mark.unit
 def test_sizing_cap_account_accepts_strings():
     """``sizing_cap_account`` accepts ``None``, ``"sum"``, and a masked id string."""
     # ``None`` (default / first account).

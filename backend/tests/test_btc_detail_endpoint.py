@@ -18,6 +18,7 @@ Covers:
 """
 
 from __future__ import annotations
+import pytest
 
 from datetime import date, timedelta
 from unittest.mock import patch
@@ -159,6 +160,7 @@ def _patch_schwab(quote_price=15.0, chain=None):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_btc_detail_200_populated_when_profit_take_fired(client):
     """A leg deep in the money for the seller (% captured high) → populated."""
     _seed_position(client)
@@ -178,6 +180,7 @@ def test_btc_detail_200_populated_when_profit_take_fired(client):
     assert payload["disclaimer"]
 
 
+@pytest.mark.integration
 def test_btc_detail_rules_audit_has_all_four_rules(client):
     _seed_position(client)
     _seed_trade(client)
@@ -198,6 +201,7 @@ def test_btc_detail_rules_audit_has_all_four_rules(client):
     assert governing[0]["reasoning"]
 
 
+@pytest.mark.integration
 def test_btc_detail_economics_fields_are_correct(client):
     _seed_position(client)
     # 1 contract, $0.3834 premium → $38.34 credit; $0.1572 mid → $15.72 cost.
@@ -212,6 +216,7 @@ def test_btc_detail_economics_fields_are_correct(client):
     assert econ["pricing_as_of"] is not None
 
 
+@pytest.mark.integration
 def test_btc_detail_captured_pct_agrees_with_profit_signal(client):
     """captured_pct is lifted from the % CAPT signal — agree by construction."""
     _seed_position(client)
@@ -229,6 +234,7 @@ def test_btc_detail_captured_pct_agrees_with_profit_signal(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_btc_detail_no_rule_triggered_for_quiet_leg(client):
     """A far-DTE OTM leg with low capture → verdict hold → no-rule-triggered."""
     _seed_position(client)
@@ -258,6 +264,7 @@ def test_btc_detail_no_rule_triggered_for_quiet_leg(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_btc_detail_pricing_unavailable_when_no_mark(client):
     """No option mark for the contract → pricing fields degrade to null."""
     _seed_position(client)
@@ -281,6 +288,7 @@ def test_btc_detail_pricing_unavailable_when_no_mark(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_btc_detail_404_for_unknown_position(client):
     with _patch_schwab():
         resp = client.get("/api/positions/nope/legs/whatever/btc")
@@ -288,6 +296,7 @@ def test_btc_detail_404_for_unknown_position(client):
     assert resp.json() == {"detail": "Leg not found"}
 
 
+@pytest.mark.integration
 def test_btc_detail_404_for_unknown_leg(client):
     _seed_position(client)
     _seed_trade(client)
@@ -297,6 +306,7 @@ def test_btc_detail_404_for_unknown_leg(client):
     assert resp.json() == {"detail": "Leg not found"}
 
 
+@pytest.mark.integration
 def test_btc_detail_404_for_closed_leg(client):
     _seed_position(client)
     _seed_trade(client, closed_at="2026-05-01T00:00:00Z")
@@ -306,6 +316,7 @@ def test_btc_detail_404_for_closed_leg(client):
     assert resp.json() == {"detail": "Leg not found"}
 
 
+@pytest.mark.integration
 def test_btc_detail_404_for_position_leg_mismatch(client):
     """A leg id that belongs to a different position → 404, no cross-leak."""
     _seed_position(client, pos_id="pos-ford", ticker="F")
@@ -323,6 +334,7 @@ def test_btc_detail_404_for_position_leg_mismatch(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.integration
 def test_btc_detail_500_uses_generic_detail_on_quote_failure(client):
     _seed_position(client)
     _seed_trade(client)

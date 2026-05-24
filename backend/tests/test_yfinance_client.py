@@ -28,12 +28,14 @@ from app.services import yfinance_client
 from app.services.yfinance_client import YFinanceRateLimitedError
 
 
+@pytest.mark.unit
 def test_cache_dir_is_configured_on_module_import():
     """``YFINANCE_CACHE_DIR`` is set at module import and points to a real path."""
     assert isinstance(yfinance_client.YFINANCE_CACHE_DIR, str)
     assert yfinance_client.YFINANCE_CACHE_DIR != ""
 
 
+@pytest.mark.unit
 def test_cache_dir_default_is_tmp_when_env_unset(monkeypatch):
     """No env var → default ``/tmp/yfinance-cache``."""
     monkeypatch.delenv("YFINANCE_CACHE_DIR", raising=False)
@@ -45,6 +47,7 @@ def test_cache_dir_default_is_tmp_when_env_unset(monkeypatch):
     set_loc.assert_called_once_with("/tmp/yfinance-cache")
 
 
+@pytest.mark.unit
 def test_env_var_override_picks_up_custom_dir(monkeypatch, tmp_path):
     """``YFINANCE_CACHE_DIR`` env var overrides the default."""
     target = tmp_path / "yfin"
@@ -57,6 +60,7 @@ def test_env_var_override_picks_up_custom_dir(monkeypatch, tmp_path):
     set_loc.assert_called_once_with(str(target))
 
 
+@pytest.mark.unit
 def test_explicit_env_override_arg_bypasses_environ(tmp_path):
     """``env_override`` parameter is honored without consulting the environment."""
     target = tmp_path / "explicit"
@@ -75,6 +79,7 @@ def test_explicit_env_override_arg_bypasses_environ(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
 def test_json_decode_error_expecting_value_classified_as_rate_limit():
     """The Yahoo HTML-as-JSON signature → YFinanceRateLimitedError."""
     exc = json.JSONDecodeError(
@@ -84,6 +89,7 @@ def test_json_decode_error_expecting_value_classified_as_rate_limit():
     assert isinstance(result, YFinanceRateLimitedError)
 
 
+@pytest.mark.unit
 def test_other_json_decode_error_propagated_unchanged():
     """Different JSONDecodeError messages pass through unchanged."""
     exc = json.JSONDecodeError(
@@ -93,6 +99,7 @@ def test_other_json_decode_error_propagated_unchanged():
     assert result is exc
 
 
+@pytest.mark.unit
 def test_non_json_decode_error_propagated_unchanged():
     """Any non-JSONDecodeError exception passes through unchanged."""
     exc = ValueError("nope")
@@ -100,6 +107,7 @@ def test_non_json_decode_error_propagated_unchanged():
     assert result is exc
 
 
+@pytest.mark.unit
 def test_fetch_business_info_raises_rate_limit_on_html_429():
     """fetch_business_info re-raises YFinanceRateLimitedError on the 429 signature."""
     fake_ticker = MagicMock()
@@ -117,6 +125,7 @@ def test_fetch_business_info_raises_rate_limit_on_html_429():
             yfinance_client.fetch_business_info("SOFI")
 
 
+@pytest.mark.unit
 def test_fetch_quarterly_income_stmt_raises_rate_limit_on_html_429():
     """fetch_quarterly_income_stmt re-raises YFinanceRateLimitedError on the 429 signature."""
     fake_ticker = MagicMock()
@@ -134,6 +143,7 @@ def test_fetch_quarterly_income_stmt_raises_rate_limit_on_html_429():
             yfinance_client.fetch_quarterly_income_stmt("SOFI", 8)
 
 
+@pytest.mark.unit
 def test_fetch_business_info_returns_none_on_other_failure():
     """Non-classified failure still returns None (existing contract)."""
     fake_ticker = MagicMock()

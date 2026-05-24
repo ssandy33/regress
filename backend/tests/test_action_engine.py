@@ -126,6 +126,7 @@ def _leg(
 
 
 class TestSchwabDisconnectedTrigger:
+    @pytest.mark.unit
     def test_emits_when_not_configured(self):
         actions = compute_next_actions(
             status=_status(schwab_configured=False, schwab_valid=False),
@@ -136,6 +137,7 @@ class TestSchwabDisconnectedTrigger:
         ids = {a["action_id"] for a in actions}
         assert "data.schwab_disconnected" in ids
 
+    @pytest.mark.unit
     def test_emits_when_invalid(self):
         actions = compute_next_actions(
             status=_status(schwab_configured=True, schwab_valid=False),
@@ -146,6 +148,7 @@ class TestSchwabDisconnectedTrigger:
         ids = {a["action_id"] for a in actions}
         assert "data.schwab_disconnected" in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_when_healthy(self):
         actions = compute_next_actions(
             status=_status(schwab_configured=True, schwab_valid=True),
@@ -158,6 +161,7 @@ class TestSchwabDisconnectedTrigger:
 
 
 class TestCacheVeryStaleTrigger:
+    @pytest.mark.unit
     def test_emits_when_very_stale_positive(self):
         actions = compute_next_actions(
             status=_status(cache_very_stale=3),
@@ -169,6 +173,7 @@ class TestCacheVeryStaleTrigger:
         assert action["priority"] == "P0"
         assert action["cta"]["kind"] == "inline"
 
+    @pytest.mark.unit
     def test_does_not_emit_when_no_very_stale(self):
         actions = compute_next_actions(
             status=_status(cache_very_stale=0),
@@ -181,6 +186,7 @@ class TestCacheVeryStaleTrigger:
 
 
 class TestSchwabTokenExpiringTrigger:
+    @pytest.mark.unit
     def test_emits_when_within_threshold(self):
         soon = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
         actions = compute_next_actions(
@@ -192,6 +198,7 @@ class TestSchwabTokenExpiringTrigger:
         ids = {a["action_id"] for a in actions}
         assert "data.schwab_token_expiring" in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_when_far_from_expiry(self):
         far = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         actions = compute_next_actions(
@@ -203,6 +210,7 @@ class TestSchwabTokenExpiringTrigger:
         ids = {a["action_id"] for a in actions}
         assert "data.schwab_token_expiring" not in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_immediately_after_fresh_seven_day_grant(self):
         # Regression: Schwab refresh tokens last exactly 7 days. A 7-day
         # threshold here caused the P1 "Renew Schwab token" card to fire
@@ -220,6 +228,7 @@ class TestSchwabTokenExpiringTrigger:
         ids = {a["action_id"] for a in actions}
         assert "data.schwab_token_expiring" not in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_when_disconnected(self):
         # Disconnected case is handled by `data.schwab_disconnected`. No
         # double-emit when both conditions hold.
@@ -235,6 +244,7 @@ class TestSchwabTokenExpiringTrigger:
 
 
 class TestLargeLoserTrigger:
+    @pytest.mark.unit
     def test_emits_at_default_pct_threshold_minus_fifteen_pct(self):
         # Whichever-fires-first: the default loss-review threshold (-15%)
         # trips even when dollars are small. With no `rules` override the
@@ -250,6 +260,7 @@ class TestLargeLoserTrigger:
         ids = {a["action_id"] for a in actions}
         assert "position.large_loser" in ids
 
+    @pytest.mark.unit
     def test_emits_at_dollar_threshold_minus_1000(self):
         # Whichever-fires-first: -$1000 trips even at -1% basis. The dollar
         # trigger is a hardcoded heuristic, independent of the rules config.
@@ -264,6 +275,7 @@ class TestLargeLoserTrigger:
         ids = {a["action_id"] for a in actions}
         assert "position.large_loser" in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_just_below_thresholds(self):
         # -14.9% and -$999 should NOT trigger under the default -15% rule.
         actions = compute_next_actions(
@@ -277,6 +289,7 @@ class TestLargeLoserTrigger:
         ids = {a["action_id"] for a in actions}
         assert "position.large_loser" not in ids
 
+    @pytest.mark.unit
     def test_default_rule_does_not_emit_between_5_and_15_pct(self):
         # Issue #235: the old hardcoded -5% constant is gone. An -8% loser
         # — between the retired -5% and the configured -15% — must NOT flag
@@ -292,6 +305,7 @@ class TestLargeLoserTrigger:
         ids = {a["action_id"] for a in actions}
         assert "position.large_loser" not in ids
 
+    @pytest.mark.unit
     def test_largest_loser_honors_configured_loss_review_threshold(self):
         # Issue #235: a stricter-than-default threshold (-5%) flags an -8%
         # loser that the default -15% rule would leave alone — proving the
@@ -319,6 +333,7 @@ class TestLargeLoserTrigger:
             a["action_id"] for a in strict_actions
         }
 
+    @pytest.mark.unit
     def test_reason_copy_reflects_configured_threshold_no_hardcoded_pct(self):
         # Issue #235: the card's `reason` string must report the configured
         # threshold, never a hardcoded "-5%". Here a stored -20% rule.
@@ -337,6 +352,7 @@ class TestLargeLoserTrigger:
         assert "-20%" in loser_card["reason"]
         assert "-5%" not in loser_card["reason"]
 
+    @pytest.mark.unit
     def test_only_single_largest_loser_emitted(self):
         # Three losers — engine surfaces only the worst.
         actions = compute_next_actions(
@@ -353,6 +369,7 @@ class TestLargeLoserTrigger:
         assert len(loser_cards) == 1
         assert loser_cards[0]["subject"]["ticker"] == "BBB"
 
+    @pytest.mark.unit
     def test_cta_href_points_at_recovery_plan_route(self):
         # V0.5.8 (#182): the loser CTA destination flipped from the journal
         # filter page to the Recovery Plan route. Both shipped in the same
@@ -371,6 +388,7 @@ class TestLargeLoserTrigger:
 
 
 class TestItmShortDteTrigger:
+    @pytest.mark.unit
     def test_emits_when_itm_and_short_dte(self):
         actions = compute_next_actions(
             status=_status(),
@@ -381,6 +399,7 @@ class TestItmShortDteTrigger:
         ids = {a["action_id"] for a in actions}
         assert "expiration.itm_short_dte" in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_at_exact_boundary_eight_dte(self):
         # 8 DTE is outside the ≤ 7 window — no per-leg ITM card.
         actions = compute_next_actions(
@@ -392,6 +411,7 @@ class TestItmShortDteTrigger:
         ids = {a["action_id"] for a in actions}
         assert "expiration.itm_short_dte" not in ids
 
+    @pytest.mark.unit
     def test_capped_at_three(self):
         legs = [
             _leg(f"l-{i}", dte=i, moneyness_state="ITM", position_id=f"p-{i}")
@@ -408,6 +428,7 @@ class TestItmShortDteTrigger:
 
 
 class TestShortDteAggregateTrigger:
+    @pytest.mark.unit
     def test_aggregates_one_per_ticker_when_otm(self):
         # Two OTM short-DTE legs on AAPL → one card.
         actions = compute_next_actions(
@@ -424,6 +445,7 @@ class TestShortDteAggregateTrigger:
         # Carries leg count in the subject amount.
         assert "2 legs" in cards[0]["subject"]["amount"]
 
+    @pytest.mark.unit
     def test_does_not_emit_when_itm(self):
         actions = compute_next_actions(
             status=_status(),
@@ -436,6 +458,7 @@ class TestShortDteAggregateTrigger:
 
 
 class TestCcCandidateTrigger:
+    @pytest.mark.unit
     def test_emits_for_position_with_shares_and_no_open_call(self):
         actions = compute_next_actions(
             status=_status(),
@@ -446,6 +469,7 @@ class TestCcCandidateTrigger:
         ids = {a["action_id"] for a in actions}
         assert "position.cc_candidate" in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_when_open_call_exists(self):
         actions = compute_next_actions(
             status=_status(),
@@ -456,6 +480,7 @@ class TestCcCandidateTrigger:
         ids = {a["action_id"] for a in actions}
         assert "position.cc_candidate" not in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_for_less_than_100_shares(self):
         actions = compute_next_actions(
             status=_status(),
@@ -466,6 +491,7 @@ class TestCcCandidateTrigger:
         ids = {a["action_id"] for a in actions}
         assert "position.cc_candidate" not in ids
 
+    @pytest.mark.unit
     def test_cc_candidate_href_carries_context(self):
         """The CTA href hands off strategy, shares, and cost basis to the scanner."""
         actions = compute_next_actions(
@@ -492,6 +518,7 @@ class TestCcCandidateTrigger:
         # Must never emit the raw total — that breaks the 10% rule downstream.
         assert "cost_basis=17240" not in href
 
+    @pytest.mark.unit
     def test_cc_candidate_href_emits_per_share_basis_canonical_f_case(self):
         """Regression for #186: F at 100 shares with broker_cost_basis=$1,320.66
         must emit cost_basis=13.2066 per-share, not the raw total.
@@ -520,6 +547,7 @@ class TestCcCandidateTrigger:
         assert "13.206600000000002" not in href
         assert "13.20660000000001" not in href
 
+    @pytest.mark.unit
     @pytest.mark.skip(
         reason=(
             "Manual AC from #186: clicking 'Scan F →' on the dashboard yields "
@@ -530,6 +558,7 @@ class TestCcCandidateTrigger:
     def test_manual_ac_cc_candidate_yields_non_rejected_strike(self):
         pass
 
+    @pytest.mark.unit
     def test_cc_candidate_href_omits_cost_basis_when_null(self):
         """Null broker_cost_basis must omit the cost_basis param entirely."""
         actions = compute_next_actions(
@@ -554,6 +583,7 @@ class TestCcCandidateTrigger:
 
 
 class TestNoOpenLegsTrigger:
+    @pytest.mark.unit
     def test_emits_when_zero_open_legs(self):
         actions = compute_next_actions(
             status=_status(),
@@ -564,6 +594,7 @@ class TestNoOpenLegsTrigger:
         ids = {a["action_id"] for a in actions}
         assert "journal.no_open_legs" in ids
 
+    @pytest.mark.unit
     def test_emits_when_positions_exist_but_zero_legs(self):
         # Locked decision: emit even when positions exist but kpis.open_legs == 0.
         actions = compute_next_actions(
@@ -575,6 +606,7 @@ class TestNoOpenLegsTrigger:
         ids = {a["action_id"] for a in actions}
         assert "journal.no_open_legs" in ids
 
+    @pytest.mark.unit
     def test_does_not_emit_when_legs_exist(self):
         actions = compute_next_actions(
             status=_status(),
@@ -592,6 +624,7 @@ class TestNoOpenLegsTrigger:
 
 
 class TestRanking:
+    @pytest.mark.unit
     def test_p0_data_above_p0_position(self):
         # Spec §14.7: within P0, `data.*` outranks `position.*`.
         actions = compute_next_actions(
@@ -604,6 +637,7 @@ class TestRanking:
         first_p0 = next(a for a in actions if a["priority"] == "P0")
         assert first_p0["action_id"] == "data.cache_very_stale"
 
+    @pytest.mark.unit
     def test_p0_above_p1(self):
         actions = compute_next_actions(
             status=_status(schwab_configured=False, schwab_valid=False),
@@ -620,6 +654,7 @@ class TestRanking:
             if seen_p1 and p == "P0":
                 raise AssertionError("P0 found after a P1 — ranking is broken")
 
+    @pytest.mark.unit
     def test_p1_expiration_sorted_by_dte_ascending(self):
         legs = [
             _leg("l-7", dte=7, moneyness_state="ITM", position_id="p-7"),
@@ -636,6 +671,7 @@ class TestRanking:
         leg_ids = [a["id"].split(".")[-1] for a in cards]
         assert leg_ids == ["l-3", "l-5", "l-7"]
 
+    @pytest.mark.unit
     def test_p2_cc_before_scanner(self):
         # Both P2 cards in the same payload — covered call ranks first.
         actions = compute_next_actions(
@@ -649,6 +685,7 @@ class TestRanking:
             "journal.no_open_legs"
         )
 
+    @pytest.mark.unit
     def test_p2_cc_candidates_sorted_alphabetically(self):
         positions = [
             _position("p-tsla", "TSLA", shares=100),
@@ -668,6 +705,7 @@ class TestRanking:
         ]
         assert tickers == ["AAPL", "MSFT", "TSLA"]
 
+    @pytest.mark.unit
     def test_deterministic_across_runs(self):
         # Same inputs → same outputs across 100 runs.
         positions = [
@@ -693,6 +731,7 @@ class TestRanking:
             )
             assert again == first
 
+    @pytest.mark.unit
     def test_capped_at_max(self):
         # Stuff every bucket; ensure the engine truncates at MAX_ACTIONS.
         legs = [
@@ -712,6 +751,7 @@ class TestRanking:
 
 
 class TestActionShape:
+    @pytest.mark.unit
     def test_id_is_action_id_dot_subject_id(self):
         actions = compute_next_actions(
             status=_status(),
@@ -722,6 +762,7 @@ class TestActionShape:
         scanner = next(a for a in actions if a["action_id"] == "journal.no_open_legs")
         assert scanner["id"].startswith("journal.no_open_legs.")
 
+    @pytest.mark.unit
     def test_cta_kind_inline_only_for_cache_refresh(self):
         actions = compute_next_actions(
             status=_status(cache_very_stale=1),
@@ -735,6 +776,7 @@ class TestActionShape:
             else:
                 assert action["cta"]["kind"] == "link"
 
+    @pytest.mark.unit
     def test_priority_is_string_label(self):
         actions = compute_next_actions(
             status=_status(schwab_configured=False, schwab_valid=False),
@@ -834,6 +876,7 @@ def _verdict_leg(
 
 
 class TestProfitTakeReviewCard:
+    @pytest.mark.unit
     def test_emits_when_verdict_is_profit_take_review(self):
         actions = compute_next_actions(
             status=_status(),
@@ -849,6 +892,7 @@ class TestProfitTakeReviewCard:
         assert card["id"] == "leg.profit_take_review.l-1"
         assert card["triggered_rules"]
 
+    @pytest.mark.unit
     def test_card_cta_links_to_btc_detail_route(self):
         # Issue #244 — the CTA repoints from the dead `/dashboard#leg-{id}`
         # hash to the dedicated per-leg buy-to-close detail route.
@@ -861,6 +905,7 @@ class TestProfitTakeReviewCard:
         card = next(a for a in actions if a["action_id"] == "leg.profit_take_review")
         assert card["cta"]["href"] == "/positions/p-1/legs/l-1/btc"
 
+    @pytest.mark.unit
     def test_not_emitted_for_hold_verdict(self):
         actions = compute_next_actions(
             status=_status(),
@@ -871,6 +916,7 @@ class TestProfitTakeReviewCard:
         ids = {a["action_id"] for a in actions}
         assert "leg.profit_take_review" not in ids
 
+    @pytest.mark.unit
     def test_card_title_and_cta_use_buy_to_close_vocabulary(self):
         """Issue #249 — the card title and CTA label name the destination
         screen, not the rule audit sub-section. Locks the vocabulary contract:
@@ -889,6 +935,7 @@ class TestProfitTakeReviewCard:
 
 
 class TestDteReviewCard:
+    @pytest.mark.unit
     def test_emits_when_verdict_is_dte_review(self):
         actions = compute_next_actions(
             status=_status(),
@@ -904,6 +951,7 @@ class TestDteReviewCard:
         assert card.get("tone", "warning") == "warning"
         assert card["id"] == "leg.dte_review.l-1"
 
+    @pytest.mark.unit
     def test_not_emitted_for_profit_take_verdict(self):
         actions = compute_next_actions(
             status=_status(),
@@ -914,6 +962,7 @@ class TestDteReviewCard:
         ids = {a["action_id"] for a in actions}
         assert "leg.dte_review" not in ids
 
+    @pytest.mark.unit
     def test_cta_label_uses_buy_to_close_vocabulary(self):
         """Issue #249 — DTE-review CTA also names the destination. The card
         title (``{N}-day review``) is intentionally retained — it describes
@@ -933,6 +982,7 @@ class TestDteReviewCard:
 
 
 class TestRuleMonitorCardPrecedence:
+    @pytest.mark.unit
     def test_itm_short_dte_leg_emits_only_expiration_card(self):
         # A 5-DTE ITM leg: verdict is "assignment" (the §R6 governing rule).
         # The legacy expiration.itm_short_dte builder still fires on its own
@@ -951,6 +1001,7 @@ class TestRuleMonitorCardPrecedence:
         assert "leg.profit_take_review" not in ids
         assert "leg.dte_review" not in ids
 
+    @pytest.mark.unit
     def test_profit_take_leg_inside_dte_window_emits_only_profit_card(self):
         # 18-DTE leg, 60% captured: profit-take governs (verdict drives it),
         # so no leg.dte_review card despite the 21d window also matching.
@@ -973,6 +1024,7 @@ class TestExpirationCardsUnaffected:
     after the new §R6 builders land (spec §10 cross-cutting AC).
     """
 
+    @pytest.mark.unit
     def test_mixed_leg_set_expiration_cards_unchanged(self):
         legs = [
             # ITM short-DTE → expiration.itm_short_dte
@@ -1006,6 +1058,7 @@ class TestExpirationCardsUnaffected:
 
 
 class TestRuleMonitorCardSort:
+    @pytest.mark.unit
     def test_expiration_card_sorts_before_profit_take_within_p1(self):
         legs = [
             _verdict_leg(
@@ -1028,6 +1081,7 @@ class TestRuleMonitorCardSort:
             "leg.profit_take_review"
         )
 
+    @pytest.mark.unit
     def test_dte_review_card_sorts_in_p2(self):
         legs = [
             _verdict_leg(
@@ -1051,6 +1105,7 @@ class TestProfitTakeCardThreadsManagementThresholds:
     (CodeRabbit fix: ``dte_review_days``/``expiration_warning_days``).
     """
 
+    @pytest.mark.unit
     def test_custom_dte_review_days_flows_into_profit_take_card_reason(
         self, monkeypatch
     ):
@@ -1102,6 +1157,7 @@ class TestLargeLoserSubjectSpacingIssue164:
     cosmetic defect.
     """
 
+    @pytest.mark.unit
     def test_subject_amount_uses_single_space_with_pct(self):
         actions = compute_next_actions(
             status=_status(),
@@ -1122,6 +1178,7 @@ class TestLargeLoserSubjectSpacingIssue164:
             f"subject.amount must not contain a double space: {amount!r}"
         )
 
+    @pytest.mark.unit
     def test_subject_amount_uses_single_space_when_pct_is_none(self):
         # The no-pct branch hits the alternate f-string at L296 — same
         # spacing rule must hold even though the trailing ``({pct})`` is
