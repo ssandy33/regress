@@ -135,14 +135,83 @@ All new logging code MUST follow the conventions in [ADR Discussion #292](https:
 
 ## API Contract
 
-The full API-contract architecture is specified in [**PRD #262 — Contract v1: OpenAPI as Source of Truth**](https://github.com/ssandy33/regress/discussions/262) — committed `openapi.json` snapshot artifact, CI drift detection, Schemathesis contract tests, and `openapi-typescript` frontend type generation. Contract v1 lands as a Platform-lane milestone (#28); first-wave issues are filed just-in-time when the milestone activates.
+The OpenAPI spec is a **committed, source-controlled snapshot** at
+`backend/openapi/openapi.json`. The authoring direction is code-first
+(Pydantic → emitted OpenAPI → snapshot); the snapshot is downstream of
+the code, never authored by hand.
 
-While Contract v1 is in draft, the following interim disciplines apply to all new endpoints:
+The full architecture is specified in [**PRD #262 — Contract v1: OpenAPI as Source of Truth**](https://github.com/ssandy33/regress/discussions/262).
 
-- **`response_model` is required on every route** — `@router.get("/path", response_model=SomeSchema)`. This is the minimum-viable contract discipline; PRD #262 builds on this with Schemathesis + drift detection when it activates.
-- **Pydantic model location** — define new response shapes in `backend/app/models/schemas.py` under the appropriate `# --- <domain> ---` section divider. No inline orphan models on routes.
-- **Stability tiers** — every endpoint is **Internal** (UI-only, ships in lockstep, no deprecation cycle) unless explicitly promoted to **Public**. All endpoints are Internal today; reserve `/api/v1/...` for future Public per PRD #262's authoring direction.
-- **Phase 5 reviewers** check API-contract conformance during code review (every new endpoint has `response_model` + every new response shape is in `schemas.py`).
+### Regenerate when you change a route shape
+
+Run `python -m openapi.regen` from the `backend/` directory after adding,
+removing, or changing a route's request/response shape. Commit the
+resulting `backend/openapi/openapi.json` diff in the same PR as the
+route change.
+
+### CI drift detection
+
+The `backend-unit` CI job runs an `OpenAPI drift check` step that
+verifies the committed snapshot matches what the current code produces.
+A stale snapshot fails the build with the message:
+
+> `OpenAPI snapshot is stale. Run 'python -m openapi.regen' and commit backend/openapi/openapi.json.`
+
+If you see this on a PR that changes router shapes, the fix is to
+regenerate the snapshot locally and commit it. If you see this on a PR
+that *doesn't* touch router shapes, it usually means a dependency bump
+(FastAPI, Pydantic) shifted the emitted spec — regenerate and commit in
+the same PR as the bump.
+
+### `info.version` and snapshot diffs
+
+The snapshot's `info.version` field is read from `FastAPI(version=...)`
+in `backend/app/main.py` and is intentionally NOT overridden by the
+regen script. A release version bump will surface in the snapshot diff
+— that's correct: a version bump is a deliberate API event and SHOULD
+show up.
+
+### Authoring discipline (still required on every endpoint)
+
+- **`response_model=` on every new route.** Coverage today is ~65%; the
+  gap is concentrated in `settings.py` / `health.py` and is being closed
+  by Wave 2 of Contract v1 (driven by Schemathesis surfacing the
+  punch-list). New endpoints land with `response_model=`.
+- **Pydantic model location** — define new response shapes in
+  `backend/app/models/schemas.py` under the appropriate
+  `# --- <domain> ---` section divider. No inline orphan models on
+  routes.
+
+### Stability tiers
+
+Every endpoint is **Internal** (UI-only, ships in lockstep, no
+deprecation cycle) unless explicitly promoted to **Public**. All
+endpoints today are Internal under `/api/...`. The `/api/v1/...` prefix
+is reserved for future Public endpoints per PRD #262.
+
+### Breaking-change policy
+
+A *breaking* change to the contract — removing a field, changing a
+type, removing an endpoint — requires:
+
+1. The change appears in the `openapi.json` diff in PR review.
+2. The PR carries the `breaking-api` label.
+3. The PR description explains migration for any frontend consumer.
+
+### Contract tests (Wave 2)
+
+Schemathesis contract tests will live under
+`backend/tests/contract/test_contract_*.py` with
+`@pytest.mark.integration`. They assert every documented endpoint's
+response validates against the OpenAPI spec. Coming in milestone #28
+Wave 2 (issue #305).
+
+### Frontend type generation (Wave 3)
+
+Frontend type generation via `openapi-typescript` is coming in
+milestone #28 Wave 3 (issues #306 / #307). Until then,
+`frontend/api/client.js` stays hand-typed; new API call sites should
+match field names against the committed snapshot.
 
 ## Issue Management
 
