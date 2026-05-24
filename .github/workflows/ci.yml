@@ -23,6 +23,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Need PR base SHA available locally for the tdd_red diff scan below
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
@@ -44,6 +47,15 @@ jobs:
           name: coverage-unit
           path: backend/coverage-unit.xml
           if-no-files-found: ignore
+
+      # Quality v1 — Wave 2 (#269): block PR merges that leave a tdd_red
+      # marker behind. Diff-based grep over .py files added/modified on
+      # this PR relative to its base SHA. Skipped on push-to-main runs
+      # (no pull_request context exists).
+      - name: tdd_red gate (PR diff scan)
+        id: tdd_red_gate
+        if: github.event_name == 'pull_request'
+        run: python -m scripts.check_tdd_red --diff-base ${{ github.event.pull_request.base.sha }}
 
   backend-integration:
     name: Backend tests (integration)
@@ -126,8 +138,23 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright tests
-        run: npx playwright test
+      # Quality v1 — Wave 2 (#270): enforce @smoke / @e2e tagging convention.
+      # Fails the job if any frontend/e2e/*.spec.js (non-prod) has an untagged
+      # test() or test.describe() call at column 0. See CLAUDE.md "Testing
+      # Requirements → Playwright tagging — @smoke / @e2e (R6)".
+      - name: Playwright tag check
+        id: playwright_tag_check
+        run: bash scripts/check-playwright-tags.sh
+
+      # Quality v1 — Wave 2 (#270): smoke-then-e2e split. @smoke is the
+      # critical-path subset (dashboard, auth, schwab, trading-rules); failing
+      # smoke short-circuits the broader e2e run. Both steps inherit the
+      # job-level continue-on-error: true until the 2026-05-25 shakedown flip.
+      - name: Run Playwright smoke
+        run: npx playwright test --grep "@smoke"
+
+      - name: Run Playwright e2e
+        run: npx playwright test --grep "@e2e"
 
       - name: Upload Playwright report
         if: failure()

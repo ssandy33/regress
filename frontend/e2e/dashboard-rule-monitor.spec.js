@@ -223,7 +223,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('OpenLegsCard rule monitor — ACTION verdict column', () => {
+test.describe('OpenLegsCard rule monitor — ACTION verdict column @e2e', () => {
   test('profit-take verdict renders "Review · 50%" emerald', async ({ page }) => {
     const leg = makeLeg({ verdict: 'profit_take_review', capturedPct: 0.6 });
     await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
@@ -303,7 +303,7 @@ test.describe('OpenLegsCard rule monitor — ACTION verdict column', () => {
   });
 });
 
-test.describe('OpenLegsCard rule monitor — InspectPanel', () => {
+test.describe('OpenLegsCard rule monitor — InspectPanel @e2e', () => {
   test('clicking a leg row expands the inspect panel', async ({ page }) => {
     const leg = makeLeg({ verdict: 'profit_take_review', capturedPct: 0.6 });
     await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
@@ -412,7 +412,7 @@ test.describe('OpenLegsCard rule monitor — InspectPanel', () => {
   });
 });
 
-test.describe('OpenLegsCard rule monitor — degraded path', () => {
+test.describe('OpenLegsCard rule monitor — degraded path @e2e', () => {
   test('no live mid → % Capt shows — and verdict falls back to DTE rule', async ({ page }) => {
     const leg = makeLeg({
       id: 'leg-nvda',
@@ -437,7 +437,7 @@ test.describe('OpenLegsCard rule monitor — degraded path', () => {
   });
 });
 
-test.describe('NextActionCard — rule-monitor cards', () => {
+test.describe('NextActionCard — rule-monitor cards @e2e', () => {
   test('leg.profit_take_review card renders emerald, ✓, [P1]', async ({ page }) => {
     const card = makeCard({ action_id: 'leg.profit_take_review', tone: 'opportunity', priority: 'P1' });
     await mockDashboard(page, {
@@ -483,7 +483,7 @@ test.describe('NextActionCard — rule-monitor cards', () => {
   });
 });
 
-test.describe('OpenLegsCard — dead #leg hash deep link removed (issue #244)', () => {
+test.describe('OpenLegsCard — dead #leg hash deep link removed (issue #244) @e2e', () => {
   test('navigating to /dashboard#leg-{id} does NOT auto-expand any row', async ({
     page,
   }) => {

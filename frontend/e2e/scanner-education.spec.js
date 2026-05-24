@@ -144,7 +144,7 @@ async function clearScannerStorage(page) {
   });
 }
 
-test.describe('Scanner education — strategy primer', () => {
+test.describe('Scanner education — strategy primer @e2e', () => {
   test('renders collapsed by default and toggles on click', async ({ page }) => {
     await setupMocks(page);
     await clearScannerStorage(page);
@@ -197,7 +197,7 @@ test.describe('Scanner education — strategy primer', () => {
   });
 });
 
-test.describe('Scanner education — column tooltips', () => {
+test.describe('Scanner education — column tooltips @e2e', () => {
   test('clicking ⓘ opens a 3-part tooltip; Escape closes it', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.2066');
@@ -239,7 +239,7 @@ test.describe('Scanner education — column tooltips', () => {
   });
 });
 
-test.describe('Scanner education — per-row expansion', () => {
+test.describe('Scanner education — per-row expansion @e2e', () => {
   test('expanding a row reveals the "What this trade commits you to" panel', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.2066');
@@ -264,7 +264,7 @@ test.describe('Scanner education — per-row expansion', () => {
   });
 });
 
-test.describe('Scanner education — humanized rejected strikes', () => {
+test.describe('Scanner education — humanized rejected strikes @e2e', () => {
   test('renders human sentences from the backend, not raw codes', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/options?ticker=F&strategy=covered_call&shares=100&cost_basis=13.2066');
@@ -437,7 +437,7 @@ async function openPanelAndGetRowLabels(page) {
   return rows.locator('> div > span').first();
 }
 
-test.describe('Scanner education — Rejected Strikes sort + summary + near-pass (#257)', () => {
+test.describe('Scanner education — Rejected Strikes sort + summary + near-pass (#257) @e2e', () => {
   test('default sort is failure_count_asc — 1-reason rows surface first', async ({
     page,
   }) => {
@@ -741,7 +741,7 @@ function setupRelaxMocks(page, { relaxStatus = 200, relaxBody = RELAX_PAYLOAD_LO
   ]);
 }
 
-test.describe('Scanner education — Relax-to-X preview popover (#258)', () => {
+test.describe('Scanner education — Relax-to-X preview popover (#258) @e2e', () => {
   test('clicking a relaxable chip opens the popover and renders the ready state', async ({
     page,
   }) => {
@@ -1110,7 +1110,7 @@ async function clearRowCollapseStorage(page) {
   });
 }
 
-test.describe('Scanner education — Rejected Strikes ≥3-reason collapse (#259)', () => {
+test.describe('Scanner education — Rejected Strikes ≥3-reason collapse (#259) @e2e', () => {
   test('rows with >= 3 reasons render collapsed by default (data-collapsed="true")', async ({
     page,
   }) => {

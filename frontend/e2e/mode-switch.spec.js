@@ -7,7 +7,7 @@ const MODES = [
   { label: 'Compare', description: 'Side-by-side assets' },
 ];
 
-test.describe('Regression mode selector bar', () => {
+test.describe('Regression mode selector bar @e2e', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/analysis');
     await page.waitForLoadState('networkidle');

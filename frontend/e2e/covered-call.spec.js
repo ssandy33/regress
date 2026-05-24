@@ -198,7 +198,7 @@ async function openCoveredCall(page, route = COVERED_CALL_ROUTE) {
 
 // --- Tests: route renders + populated view ---------------------------------
 
-test.describe('Covered-call screen — route + populated view', () => {
+test.describe('Covered-call screen — route + populated view @e2e', () => {
   test('loads and renders combined P&L and if-assigned for the canonical F covered call', async ({
     page,
   }) => {
@@ -274,7 +274,7 @@ test.describe('Covered-call screen — route + populated view', () => {
 
 // --- Tests: empty states ----------------------------------------------------
 
-test.describe('Covered-call screen — empty states', () => {
+test.describe('Covered-call screen — empty states @e2e', () => {
   test('CSP-only renders covered-call-empty-no-shares', async ({ page }) => {
     await mockCoveredCall(page, emptyPayload('not_applicable_no_shares'));
     await openCoveredCall(page);
@@ -326,7 +326,7 @@ test.describe('Covered-call screen — empty states', () => {
 
 // --- Tests: degraded + multi-leg --------------------------------------------
 
-test.describe('Covered-call screen — degraded + multi-leg', () => {
+test.describe('Covered-call screen — degraded + multi-leg @e2e', () => {
   test('degraded — no live mid — today hero shows em-dash, if-assigned renders normally', async ({
     page,
   }) => {
@@ -463,7 +463,7 @@ function mockDashboard(page) {
   );
 }
 
-test.describe('Dashboard — Covered call view → link visibility', () => {
+test.describe('Dashboard — Covered call view → link visibility @e2e', () => {
   test('Covered call view → link appears on CC and Wheel rows; absent on CSP and Holding', async ({
     page,
   }) => {

@@ -156,7 +156,7 @@ async function scanAndSelectStrikes(page, capital, strikesToSelect) {
   }
 }
 
-test.describe('Comparison card pill badges (#38)', () => {
+test.describe('Comparison card pill badges (#38) @e2e', () => {
   test('highlight tags render as colored pill badges instead of plain text', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/options');

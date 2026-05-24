@@ -43,7 +43,7 @@ const ccButton = (page) => page.getByRole('button', { name: 'Covered Call' });
 
 const ACTIVE_CLASS = /bg-blue-600/;
 
-test.describe('Options scanner — URL pre-fill', () => {
+test.describe('Options scanner — URL pre-fill @e2e', () => {
   test('?ticker=F pre-fills the ticker input', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/options?ticker=F');

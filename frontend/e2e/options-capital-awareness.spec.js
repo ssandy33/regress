@@ -113,7 +113,7 @@ async function fillAndScan(page, capital) {
   await page.waitForSelector('[data-testid="strike-table"], [data-testid="budget-alert-banner"]', { timeout: 5000 });
 }
 
-test.describe('Options capital awareness & affordability', () => {
+test.describe('Options capital awareness & affordability @e2e', () => {
   test.skip('light and dark mode styling is correct', async () => {
     // Manual verification: budget alert banner, capital utilization card, dimmed rows,
     // and lock icons should be visually correct in both light and dark themes.

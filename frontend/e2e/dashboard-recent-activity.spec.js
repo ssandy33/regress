@@ -100,7 +100,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('RecentActivityCard — V0.5.4 refactor (issue #153)', () => {
+test.describe('RecentActivityCard — V0.5.4 refactor (issue #153) @e2e', () => {
   test('renders summary, filter chips, search input, and rows', async ({ page }) => {
     await mockDashboard(page, BASE_PAYLOAD);
     await page.goto('/dashboard');

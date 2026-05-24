@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Options page Schwab API status indicator', () => {
+test.describe('Options page Schwab API status indicator @e2e', () => {
   test('shows not-connected banner when Schwab is not configured', async ({ page }) => {
     // Mock the Schwab health endpoint to return not configured
     await page.route('**/api/settings/health/schwab', (route) =>

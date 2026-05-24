@@ -121,7 +121,7 @@ async function selectAssetAndRun(page, { multiFactor = false } = {}) {
   await page.getByRole('button', { name: 'Run Analysis' }).click();
 }
 
-test.describe('Regression stats grouped display', () => {
+test.describe('Regression stats grouped display @e2e', () => {
   test.describe('Linear mode sections', () => {
     test('displays Model Fit, Trend, and Diagnostics section headers', async ({ page }) => {
       await mockBackendAPIs(page);

@@ -82,7 +82,7 @@ function setupSettingsMocks(page, { positions = SEEDED_POSITIONS } = {}) {
   ]);
 }
 
-test.describe('Settings → Reconcile journal', () => {
+test.describe('Settings → Reconcile journal @e2e', () => {
   test('renders above Danger Zone with both buttons enabled', async ({ page }) => {
     await setupSettingsMocks(page);
 

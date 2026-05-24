@@ -141,7 +141,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('OpenLegsCard (V0.5 — triage columns)', () => {
+test.describe('OpenLegsCard (V0.5 — triage columns) @e2e', () => {
   test('%CAPTURED column renders `—` when state is unknown (universal V0.5 case)', async ({ page }) => {
     const leg = makeLeg();
     await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
@@ -324,7 +324,7 @@ test.describe('OpenLegsCard (V0.5 — triage columns)', () => {
  *     collapses with the `% Capt` cell.
  *   - Degraded path (no live mid) keeps the badge, shows `—` for the dollars.
  */
-test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
+test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L) @e2e', () => {
   // The F 15C covered worked example from the issue / spec §1.2.
   function coveredLeg(overrides = {}) {
     return makeLeg({
@@ -589,7 +589,7 @@ test.describe('OpenLegsCard (V1.0.6 — coverage badge + dollar P&L)', () => {
   });
 });
 
-test.describe('OpenLegsCard (V1.0.8 #252 — quantity scales degraded Credit received)', () => {
+test.describe('OpenLegsCard (V1.0.8 #252 — quantity scales degraded Credit received) @e2e', () => {
   // The primary path (`pnl_dollars + cost_to_close`) is already qty-scaled by
   // `derive_leg_economics`. These tests pin the degraded fallback formula in
   // `OpenLegsCard.jsx:204`: `creditReceived = premium * 100 * (quantity ?? 1)`.
