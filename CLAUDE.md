@@ -83,6 +83,39 @@ These rules govern **new tests on new issues**. The Quality v1 Wave 1 tagging pa
 - Run frontend tests: `cd frontend && npm run test:e2e` (all), `npm run test:smoke` (smoke only).
 - CI runs the three-job matrix on every PR: `backend-unit` (with classifier + tdd_red gate), `backend-integration`, `frontend-playwright` (with tag check + smoke-then-e2e).
 
+### Lessons learned from the Wave 3 pilot (#271 / #160)
+
+Quality v1's pragmatic-TDD methodology was piloted on #160 (per-trade entry-rule compliance tagging) during Wave 3. This subsection captures the lessons. PRD #261's R4 (pragmatic TDD) and R7 (Test List requirement) remain canonical; this is empirical refinement, not replacement.
+
+**What worked**
+
+- **Locking the Test List in the plan file before implementation surfaced the #157 OKR-engine dependency on day one.** The KR-5 integration AC ("OKR engine queries `trade_entry_compliance`...") was structurally deferrable to #157 because the OKR engine does not exist yet. Recording it in the Test List as "deferred to #157" instead of trying to stub it kept the pilot focused on the producer side — and is exactly the dependency-mismatch surfacing R7 promises.
+- **Locking the failed_rules vocabulary in the plan file before writing tests OR code paid off immediately.** The eight string literals (`dte_too_low`, `delta_too_high`, `delta_unknown`, etc.) appear in the test file, the evaluator, and the snapshot — having one canonical list in the plan meant the tests were not driven by the implementation's choices, and a typo would have been caught at test-write time rather than at refactor time.
+- **The Red phase was visible in the git log without ceremonial overhead.** Two Red commits (one for the unit Test List, one for the integration Test List) followed by their respective Green commits gave a 4-commit + 1-refactor + 1-docs cadence that reads as TDD without forcing one-test-per-commit micro-stepping.
+- **The integration-test failure on the rolling-window endpoint caught a real date-arithmetic bug in the TEST, not the impl.** The original test pinned `opened_at = "2026-01-15"`, which by today's date (2026-05-23) was outside the rolling 30-day window. The endpoint correctly filtered it out and the test failed with `total == 0`. Without the integration test exercising the real date filter, the impl would have shipped fine — but the test would have been silently wrong. The Red phase paid for itself there.
+
+**What was awkward**
+
+- **The Red→Green cycle for the schema layer was so tight (model doesn't exist → add it → schema test passes) that splitting the test commit from the impl commit felt slightly ceremonial.** The methodology proof is the Test List existing in the plan + the lessons-learned retrospective, not the commit count — the plan's "acceptable shortcut" (R4 pragmatic TDD: combine schema Red+Green when the cycle is tight) is the right call. I kept them separate this time because the pilot's deliverable was the visible Red→Green rhythm, but for normal issues I'd collapse the schema pair.
+- **The "snapshot non-retroactivity" AC has a stronger DB-layer enforcement (PK on `trade_id`) than the evaluator-layer behavior the unit test exercised.** The unit test verified that re-running the pure evaluator with different rules produces a different snapshot — which is true, but it doesn't actually exercise the protection against overwriting an existing row. That guarantee lives at the SQLAlchemy PK level (a second insert on the same `trade_id` raises `IntegrityError`). The test list flagged this as covered by `test_trade_entry_compliance_unique_per_trade`; in retrospect a more explicit "record then re-record must raise" integration test would have been a better choice. Not blocking; calling it out for the next pilot.
+- **Lazy import inside `create_trade` to break a circular dependency between `services/journal.py` and `services/entry_compliance.py` (which itself imports `models/schemas.py` for the response type).** Acceptable workaround; the cleaner fix would be to move the response model the evaluator returns OUT of `schemas.py` (since it's not actually a route response) but that's a larger refactor that wasn't worth the methodology-noise. Noted as known tech debt.
+- **CodeRabbit Phase 5.5 caught that several `@pytest.mark.unit` tests in the pilot were actually using real DB sessions — they should have been `@pytest.mark.integration`.** The pilot's schema + rolling-window tests instantiated an in-memory SQLAlchemy engine via `_make_in_memory_session()` and ran real commits/queries; that meets the unit-tier disqualifier in PRD #261 / R3 ("no DB session") even without a FastAPI app or TestClient. The lesson: "no DB session" in the unit definition is easy to miss in practice when a SQLAlchemy session feels lightweight. The next pilot/implementer should explicitly grep `from .conftest import` or `Session(` in their unit tests before tagging — and reviewers should treat any `db.add(...) / db.commit()` in a `@pytest.mark.unit` body as a reclassification trigger. Five tests were rebadged on PR #301 in the v1.2.0 integration triage.
+
+**Concrete refinements for the next implementer**
+
+- **When a Test List entry depends on an unbuilt sibling (like #157 here), record it as "deferred to <issue>" in the Test List itself — do not satisfy it with a stub.** A stub OKR engine would have been ~80 LOC of throwaway code, would have grown its own tests, and would have shipped the wrong API surface. The deferral is honest and the PR retrospective surfaces it; the consumer issue will close the loop.
+- **For config-driven evaluators, the failed_rules vocabulary (or equivalent string-literal enum) is the place where the AC and the code converge. Lock the vocabulary in the plan file before writing tests OR code — both reference the same strings, drift dies, and the snapshot-vs-reference invariant (the AC that the snapshot is non-retroactive) becomes obvious because the snapshot literally embeds the vocabulary.**
+- **When an integration test depends on "now()" semantics (rolling windows, expirations, freshness), parameterize the timestamp from `datetime.now(timezone.utc)` rather than pinning ISO literals.** Cuts the "test passed in May, mysteriously failed in August" class of bugs entirely. The same lesson applied to the seeded `opened_at` in the rolling-window test; the fix was a one-line `(datetime.now(timezone.utc) - timedelta(days=2)).isoformat()` substitution.
+- **Save the "pragmatic-TDD acceptable shortcut" (Red+Green in one commit) for the cases where the Red phase is structurally a one-liner (e.g. importing a class that does not yet exist). For evaluator/router pairs where the implementation has real branching, keep them separate — the Red commit lets future readers reconstruct what the test was asserting before the impl colored their reading.**
+
+**Cross-references**
+
+- Pilot issue: #271
+- Pilot feature: #160
+- Anchor PRD: #261
+- Deferred sibling: #157 (OKR engine — the KR-5 consumer)
+- Failed-rules vocabulary lock: `backend/app/services/entry_compliance.py` (search for `dte_too_low` to find the canonical list)
+
 ## Code Quality
 
 - Never return raw exception messages (`str(e)`) in API responses — use generic error messages.

@@ -77,6 +77,21 @@ class Trade(Base):
     closed_at = Column(String, nullable=True)
     close_reason = Column(String, nullable=True)  # "fifty_pct_target" | "full_expiration" | "rolled" | "closed_early" | "assigned" | "called_away"
     position = relationship("Position", back_populates="trades")
+    # One-to-one child row (issue #160). When the trade is deleted (via
+    # ``delete_trade``) the compliance row is removed in the same
+    # transaction — the row is a snapshot keyed by ``trade_id`` and has no
+    # independent existence. ``passive_deletes`` defaults to False because
+    # the project does not enable ``PRAGMA foreign_keys=ON``, so the
+    # SQL-level ``ondelete="CASCADE"`` would silently no-op; the ORM-level
+    # cascade is what we rely on. ``clear_all_journal_data`` does a bulk
+    # delete that bypasses ORM cascade entirely — it wipes the child table
+    # explicitly first (see :func:`app.services.journal.clear_all_journal_data`).
+    entry_compliance = relationship(
+        "TradeEntryCompliance",
+        back_populates="trade",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 class PositionNote(Base):
@@ -110,6 +125,60 @@ class PositionNote(Base):
     version = Column(Integer, nullable=False, default=1)  # increments on each PUT
     updated_at = Column(String, nullable=False)  # ISO datetime
     updated_by = Column(String, nullable=True)  # nullable in single-user mode
+
+
+class TradeEntryCompliance(Base):
+    """Per-trade entry-rule compliance row (issue #160 / Quality v1 Wave 3).
+
+    One row per evaluated trade. ``trade_id`` is the primary key — the row
+    is written once when a ``sell_put`` / ``sell_call`` trade is created and
+    is **never updated**. This snapshot-not-reference design preserves the
+    historical compliance verdict against the live ``rules_config`` so a
+    trader who tightens their entry rules tomorrow does not retroactively
+    flag yesterday's compliant trade as non-compliant.
+
+    Field shape locked in the Wave 3 plan §V1-Freeze-1:
+
+    - ``trade_id`` (FK -> trades.id, primary_key) — one row per trade.
+    - ``evaluated_at`` — ISO datetime string (matches the codebase's
+      no-native-timestamp convention).
+    - ``dte_at_entry`` — always derivable, never unknown.
+    - ``delta_at_entry`` — nullable; Schwab-imported trades carry None and
+      the evaluator marks them ``delta_unknown`` (not non-compliant).
+    - ``monthly_return_pct`` — whole-percent, matching ``RulesConfig``.
+    - ``earnings_buffer_days`` — nullable; None marks
+      ``earnings_buffer_unknown`` (not non-compliant).
+    - ``compliant`` — integer 0/1 (SQLite has no native BOOLEAN; matches
+      the codebase convention).
+    - ``failed_rules`` — JSON-encoded array of locked string literals; see
+      :mod:`app.services.entry_compliance` for the vocabulary.
+    - ``entry_rules_snapshot`` — JSON-encoded object capturing the relevant
+      slice of :class:`app.services.rules_config.EntryRules` at evaluation
+      time. Stored as text (not a foreign key to a config version) because
+      the config has no version table.
+
+    The project has no Alembic — ``Base.metadata.create_all(bind=engine)``
+    is idempotent, so an existing deployment grows the new table on next
+    startup without migration overhead. Rollback path is a manual
+    ``DROP TABLE trade_entry_compliance``.
+    """
+
+    __tablename__ = "trade_entry_compliance"
+
+    trade_id = Column(
+        String,
+        ForeignKey("trades.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    evaluated_at = Column(String, nullable=False)  # ISO datetime
+    dte_at_entry = Column(Integer, nullable=False)
+    delta_at_entry = Column(Float, nullable=True)
+    monthly_return_pct = Column(Float, nullable=False)
+    earnings_buffer_days = Column(Integer, nullable=True)
+    compliant = Column(Integer, nullable=False)  # 0/1 — SQLite boolean idiom
+    failed_rules = Column(Text, nullable=False)  # JSON-encoded array of strings
+    entry_rules_snapshot = Column(Text, nullable=False)  # JSON-encoded object
+    trade = relationship("Trade", back_populates="entry_compliance")
 
 
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})

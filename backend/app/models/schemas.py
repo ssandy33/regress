@@ -392,6 +392,22 @@ class TradeCreate(BaseModel):
     opened_at: str
     closed_at: Optional[str] = None
     close_reason: Optional[CLOSE_REASONS] = None
+    # Entry-compliance hints (issue #160 / Quality v1 Wave 3). All three are
+    # optional and default to None for back-compat — Schwab-imported trades
+    # never carry them. When provided on a sell_put / sell_call trade they
+    # are used verbatim by the entry-compliance evaluator. The ``_hint``
+    # suffix is deliberate: these are user-asserted snapshots, not computed
+    # values; the evaluator records them as the historical truth.
+    #
+    # Bounds (CodeRabbit triage on PR #301):
+    # - DTE / earnings-buffer hints reject negatives — the evaluator clamps
+    #   DTE to 1 for monthly-return math, which would inflate the return on
+    #   a negative input.
+    # - Delta hint rejects non-finite floats (NaN / +-inf) — they bypass the
+    #   delta-band comparisons silently.
+    dte_at_entry_hint: Optional[int] = Field(default=None, ge=0)
+    delta_at_entry_hint: Optional[float] = Field(default=None, allow_inf_nan=False)
+    earnings_buffer_days_hint: Optional[int] = Field(default=None, ge=0)
 
 
 class TradeUpdate(BaseModel):
@@ -418,6 +434,56 @@ class TradeResponse(BaseModel):
     opened_at: str
     closed_at: Optional[str] = None
     close_reason: Optional[str] = None
+
+
+# --- compliance (issue #160 / Quality v1 Wave 3) ---
+#
+# Per-trade entry-rule compliance shapes. The producer side of KR-5; the OKR
+# engine (#157, deferred) consumes these. See
+# :mod:`app.services.entry_compliance` for the failed_rules vocabulary +
+# evaluation logic locked in the Wave 3 plan §V1-Freeze-3.
+
+
+class EntryComplianceResponse(BaseModel):
+    """One trade's compliance row.
+
+    ``entry_rules_snapshot`` is intentionally typed as a structural ``dict``
+    (not a strongly-typed model) — the snapshot captures the EntryRules
+    shape at evaluation time, so a future EntryRules field flows through
+    automatically without a schema-bump.
+    """
+
+    trade_id: str
+    evaluated_at: str
+    dte_at_entry: int
+    delta_at_entry: float | None
+    monthly_return_pct: float
+    earnings_buffer_days: int | None
+    compliant: bool
+    failed_rules: list[str]
+    entry_rules_snapshot: dict
+
+
+class EntryComplianceSummary(BaseModel):
+    """Rolling-window KR-5 summary.
+
+    ``compliant_pct`` is ``None`` when ``(total - unknown_only) == 0`` — the
+    OKR engine renders that as the ``unknown`` status (#157 will close the
+    loop on the consumer side).
+    """
+
+    window_days: int  # 30 for the V1 endpoint
+    total: int
+    compliant: int
+    unknown_only: int  # excluded from denominator
+    compliant_pct: float | None
+
+
+class EntryComplianceListResponse(BaseModel):
+    """Response shape for ``GET /api/okrs/entry-compliance`` (rolling 30d)."""
+
+    summary: EntryComplianceSummary
+    non_compliant: list[EntryComplianceResponse]
 
 
 class PositionResponse(BaseModel):

@@ -1,9 +1,10 @@
 import logging
+import time
 import uuid
 
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.database import Position, Trade
+from app.models.database import Position, Trade, TradeEntryCompliance
 from app.models.schemas import PositionCreate, PositionUpdate, TradeCreate, TradeUpdate
 from app.services.positions import compute_assignment_netting
 
@@ -181,7 +182,23 @@ def update_position(db: Session, position_id: str, data: PositionUpdate) -> dict
 
 
 def create_trade(db: Session, data: TradeCreate) -> dict | None:
-    """Create a new trade. Returns None if position_id is invalid."""
+    """Create a new trade. Returns None if position_id is invalid.
+
+    Side effect (issue #160 / Quality v1 Wave 3): for ``sell_put`` /
+    ``sell_call`` trades, after the trade row is persisted, an entry-rule
+    compliance row is written via
+    :func:`app.services.entry_compliance.record_trade_compliance`. The
+    optional ``dte_at_entry_hint`` / ``delta_at_entry_hint`` /
+    ``earnings_buffer_days_hint`` fields on :class:`TradeCreate` propagate
+    into the evaluator verbatim; Schwab-imported trades that never carry
+    hints record with ``delta_unknown`` + ``earnings_buffer_unknown``.
+
+    A compliance failure does not block trade creation — the trade row is
+    already committed at that point, and the OKR engine (#157, deferred)
+    consumes the compliance verdict downstream. Any persistence error in
+    the compliance write is logged at WARNING and swallowed so the trade
+    POST stays atomic from the caller's POV.
+    """
     position = db.query(Position).filter(Position.id == data.position_id).first()
     if position is None:
         return None
@@ -207,6 +224,45 @@ def create_trade(db: Session, data: TradeCreate) -> dict | None:
         raise
     db.refresh(trade)
     logger.info("Created trade %s for position %s", trade.id, trade.position_id)
+
+    # Compliance side effect (issue #160). Imported lazily to avoid a circular
+    # import at module load (entry_compliance imports schemas; schemas is the
+    # consumer of this module's responses).
+    if data.trade_type in {"sell_put", "sell_call"}:
+        from app.services.entry_compliance import record_trade_compliance
+        from app.services.rules_config import load_rules_config
+
+        compliance_started = time.perf_counter()
+        try:
+            rules = load_rules_config(db)
+            record_trade_compliance(
+                db,
+                trade,
+                rules,
+                dte_hint=data.dte_at_entry_hint,
+                delta_hint=data.delta_at_entry_hint,
+                earnings_buffer_hint=data.earnings_buffer_days_hint,
+            )
+        except Exception as e:
+            # Compliance is best-effort; never block the trade POST on a
+            # compliance write failure. Generic log message per CLAUDE.md
+            # (no str(e) leak). ADR #292: ``.failed`` events carry both
+            # ``outcome`` and ``duration_ms``; ``trade_id`` is non-canonical
+            # so it travels in the message body, not ``extra``.
+            duration_ms = int((time.perf_counter() - compliance_started) * 1000)
+            logger.warning(
+                "Failed to record trade_entry_compliance for trade %s",
+                trade.id,
+                extra={
+                    "event": "trade_entry_compliance.failed",
+                    "outcome": "failed",
+                    "duration_ms": duration_ms,
+                    "error_class": type(e).__name__,
+                    "position_id": trade.position_id,
+                },
+            )
+            db.rollback()
+
     return _build_trade_response(trade)
 
 
@@ -280,6 +336,12 @@ def clear_all_journal_data(db: Session) -> dict:
     position_count = db.query(Position).count()
 
     try:
+        # Issue #160: ``trade_entry_compliance`` is a child of trades — wipe it
+        # FIRST so the bulk Trade delete below doesn't violate the FK (the SQL-
+        # level ``ondelete=CASCADE`` only fires when ``PRAGMA foreign_keys=ON``
+        # is set, which the project does not enable; bulk ORM deletes also
+        # bypass the ``cascade="all, delete-orphan"`` relationship semantics).
+        db.query(TradeEntryCompliance).delete(synchronize_session=False)
         db.query(Trade).delete(synchronize_session=False)
         db.query(Position).delete(synchronize_session=False)
         db.commit()
