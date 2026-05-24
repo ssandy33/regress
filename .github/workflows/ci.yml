@@ -126,8 +126,23 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright tests
-        run: npx playwright test
+      # Quality v1 — Wave 2 (#270): enforce @smoke / @e2e tagging convention.
+      # Fails the job if any frontend/e2e/*.spec.js (non-prod) has an untagged
+      # test() or test.describe() call at column 0. See CLAUDE.md "Testing
+      # Requirements → Playwright tagging — @smoke / @e2e (R6)".
+      - name: Playwright tag check
+        id: playwright_tag_check
+        run: bash scripts/check-playwright-tags.sh
+
+      # Quality v1 — Wave 2 (#270): smoke-then-e2e split. @smoke is the
+      # critical-path subset (dashboard, auth, schwab, trading-rules); failing
+      # smoke short-circuits the broader e2e run. Both steps inherit the
+      # job-level continue-on-error: true until the 2026-05-25 shakedown flip.
+      - name: Run Playwright smoke
+        run: npx playwright test --grep "@smoke"
+
+      - name: Run Playwright e2e
+        run: npx playwright test --grep "@e2e"
 
       - name: Upload Playwright report
         if: failure()

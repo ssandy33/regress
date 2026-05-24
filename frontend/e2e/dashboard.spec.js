@@ -224,7 +224,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('Dashboard route', () => {
+test.describe('Dashboard route @smoke @e2e', () => {
   test('default route `/` redirects to /dashboard', async ({ page }) => {
     await mockDashboard(page, EMPTY_PAYLOAD);
     await page.goto('/');

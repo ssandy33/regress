@@ -75,7 +75,7 @@ function setupMocks(page) {
   ]);
 }
 
-test.describe('Schwab CSV Import (issue #104)', () => {
+test.describe('Schwab CSV Import (issue #104) @e2e', () => {
   test.beforeEach(async ({ page }) => {
     await setupMocks(page);
     await page.goto('/journal');

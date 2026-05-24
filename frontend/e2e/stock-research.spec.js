@@ -176,7 +176,7 @@ async function openResearchPage(page) {
 
 // --- Tests ------------------------------------------------------------------
 
-test.describe('Stock Research page — populated state', () => {
+test.describe('Stock Research page — populated state @e2e', () => {
   test('renders all six sections + header + footer', async ({ page }) => {
     await mockAllSectionsHappy(page);
     await openResearchPage(page);
@@ -259,7 +259,7 @@ test.describe('Stock Research page — populated state', () => {
   });
 });
 
-test.describe('Stock Research page — per-section failure', () => {
+test.describe('Stock Research page — per-section failure @e2e', () => {
   test('Section D 502 surfaces the section error tile while the rest render', async ({
     page,
   }) => {
@@ -284,7 +284,7 @@ test.describe('Stock Research page — per-section failure', () => {
   });
 });
 
-test.describe('Stock Research page — full-page states', () => {
+test.describe('Stock Research page — full-page states @e2e', () => {
   test('404 on position renders the not-found EmptyState', async ({ page }) => {
     await mockPosition(
       page,
@@ -310,7 +310,7 @@ test.describe('Stock Research page — full-page states', () => {
   });
 });
 
-test.describe('Stock Research page — thesis editor', () => {
+test.describe('Stock Research page — thesis editor @e2e', () => {
   test('autosave fires after debounce and transitions through saved state', async ({
     page,
   }) => {
@@ -387,7 +387,7 @@ test.describe('Stock Research page — thesis editor', () => {
 
 // --- Dashboard CTA wire-up (issue #280 §9) ----------------------------------
 
-test.describe('Dashboard Positions Card — Review CTA', () => {
+test.describe('Dashboard Positions Card — Review CTA @e2e', () => {
   function dashboardPayload() {
     // Mirror the shape used by existing dashboard-* e2e specs so the
     // /dashboard surface renders without crashing.
@@ -502,7 +502,7 @@ async function mockAllSectionsWithRegression(page, regression) {
   await mockResearchEndpoint(page, 'thesis', thesisPayload());
 }
 
-test.describe('Section E · unknown factor bucket (#285)', () => {
+test.describe('Section E · unknown factor bucket (#285) @e2e', () => {
   test('single unknown factor (VIX) renders a row + wedge', async ({ page }) => {
     const regression = regressionPayloadWithFactors([
       { name: 'SPY', beta: 1.42, p_value: 0.001, share: 0.55 },
@@ -608,7 +608,7 @@ test.describe('Section E · unknown factor bucket (#285)', () => {
 
 // --- Issue #288: per-section failure copy ----------------------------------
 
-test.describe('Stock Research page — Section A throttling copy (#288)', () => {
+test.describe('Stock Research page — Section A throttling copy (#288) @e2e', () => {
   test('Section A renders throttling copy when API returns rate-limit detail', async ({
     page,
   }) => {
@@ -635,7 +635,7 @@ test.describe('Stock Research page — Section A throttling copy (#288)', () => 
   });
 });
 
-test.describe('Stock Research page — Section D both-empty copy (#288)', () => {
+test.describe('Stock Research page — Section D both-empty copy (#288) @e2e', () => {
   test('Section D renders verbatim no-data copy when both sources empty', async ({
     page,
   }) => {

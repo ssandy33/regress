@@ -131,7 +131,7 @@ function setupMocks(page) {
   ]);
 }
 
-test.describe('Journal data management', () => {
+test.describe('Journal data management @e2e', () => {
   test('kebab menu opens and exposes a Delete action', async ({ page }) => {
     await setupMocks(page);
     await page.goto('/journal');
@@ -247,7 +247,7 @@ function setupSettingsMocks(page) {
   ]);
 }
 
-test.describe('Settings → Danger Zone', () => {
+test.describe('Settings → Danger Zone @e2e', () => {
   test('clear-all confirm button is gated by exact "DELETE" text', async ({ page }) => {
     await setupSettingsMocks(page);
 

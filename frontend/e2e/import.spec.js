@@ -69,7 +69,7 @@ function setupMocks(page) {
   ]);
 }
 
-test.describe('Schwab Import', () => {
+test.describe('Schwab Import @e2e', () => {
   // Manual acceptance criterion from issue #119: verify the fix end-to-end against a
   // real Schwab brokerage account with assignments / called-away events in the last
   // 90 days. Not automatable in CI (requires live OAuth + non-deterministic data).

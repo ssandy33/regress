@@ -53,7 +53,7 @@ function setupMocks(page, { schwabConfigured = false } = {}) {
   ]);
 }
 
-test.describe('Schwab OAuth Setup', () => {
+test.describe('Schwab OAuth Setup @smoke @e2e', () => {
   test('shows setup form when Schwab is not configured', async ({ page }) => {
     await setupMocks(page, { schwabConfigured: false });
     await page.goto('/settings');

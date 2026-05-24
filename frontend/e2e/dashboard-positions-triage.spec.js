@@ -124,7 +124,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('Positions triage table', () => {
+test.describe('Positions triage table @e2e', () => {
   test('renders one row per position with required testIds', async ({ page }) => {
     await mockDashboard(page, TRIAGE_PAYLOAD);
     await page.goto('/dashboard');

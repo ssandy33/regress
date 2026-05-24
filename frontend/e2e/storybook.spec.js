@@ -25,7 +25,7 @@ import { test } from '@playwright/test';
  *   5. `git status` shows storybook-static/ is gitignored (not staged).
  */
 
-test.describe.skip('Storybook (issue #196) — deferred to follow-up', () => {
+test.describe.skip('Storybook (issue #196) — deferred to follow-up @e2e', () => {
   test('storybook dev server boots on :6006', async () => {
     // Future: spawn `npm run storybook` and assert the iframe loads the
     // StatCard story. Skipped in Phase A — requires a separate dev server

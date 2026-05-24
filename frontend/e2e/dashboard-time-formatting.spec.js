@@ -80,7 +80,7 @@ function mockDashboard(page, payload) {
   );
 }
 
-test.describe('Dashboard activity timestamp formatting', () => {
+test.describe('Dashboard activity timestamp formatting @e2e', () => {
   test('a UTC timestamp from 2 hours ago renders as HH:MM (today), not "yest" or a date', async ({
     page,
   }) => {
