@@ -1,6 +1,23 @@
 import axios from 'axios';
 import { getSession as getAuthSession } from 'next-auth/react';
 
+// --- Contract v1 typed-API aliases (Wave 3 #307) ---
+// See frontend/api/types.js for the canonical alias definitions.
+/** @typedef {import('./types').RecoveryPlanResponse} RecoveryPlanResponse */
+/** @typedef {import('./types').CoveredCallView} CoveredCallView */
+/** @typedef {import('./types').BtcDetail} BtcDetail */
+/** @typedef {import('./types').BusinessResponse} BusinessResponse */
+/** @typedef {import('./types').PriceHistoryResponse} PriceHistoryResponse */
+/** @typedef {import('./types').FinancialsResponse} FinancialsResponse */
+/** @typedef {import('./types').ResearchRegressionResponse} ResearchRegressionResponse */
+/** @typedef {import('./types').ThesisResponse} ThesisResponse */
+/** @typedef {import('./types').ThesisUpdateRequest} ThesisUpdateRequest */
+/** @typedef {import('./types').LinearRegressionRequest} LinearRegressionRequest */
+/** @typedef {import('./types').LinearRegressionResponse} LinearRegressionResponse */
+/** @typedef {import('./types').MultiFactorRegressionResponse} MultiFactorRegressionResponse */
+/** @typedef {import('./types').RollingRegressionResponse} RollingRegressionResponse */
+/** @typedef {import('./types').CompareRegressionResponse} CompareRegressionResponse */
+
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || '',
   timeout: 30000,
@@ -64,6 +81,12 @@ export async function fetchZillowData(zipCode, start, end) {
 
 // --- Regression ---
 
+/**
+ * @param {string} asset
+ * @param {string} startDate
+ * @param {string} endDate
+ * @returns {Promise<LinearRegressionResponse>}
+ */
 export async function runLinearRegression(asset, startDate, endDate) {
   const { data } = await api.post('/api/regression/linear', {
     asset,
@@ -73,6 +96,13 @@ export async function runLinearRegression(asset, startDate, endDate) {
   return data;
 }
 
+/**
+ * @param {string} dependent
+ * @param {string[]} independents
+ * @param {string} startDate
+ * @param {string} endDate
+ * @returns {Promise<MultiFactorRegressionResponse>}
+ */
 export async function runMultiFactorRegression(dependent, independents, startDate, endDate) {
   const { data } = await api.post('/api/regression/multi-factor', {
     dependent,
@@ -83,6 +113,13 @@ export async function runMultiFactorRegression(dependent, independents, startDat
   return data;
 }
 
+/**
+ * @param {string} asset
+ * @param {string} startDate
+ * @param {string} endDate
+ * @param {number} windowSize
+ * @returns {Promise<RollingRegressionResponse>}
+ */
 export async function runRollingRegression(asset, startDate, endDate, windowSize) {
   const { data } = await api.post('/api/regression/rolling', {
     asset,
@@ -93,6 +130,12 @@ export async function runRollingRegression(asset, startDate, endDate, windowSize
   return data;
 }
 
+/**
+ * @param {string[]} assets
+ * @param {string} startDate
+ * @param {string} endDate
+ * @returns {Promise<CompareRegressionResponse>}
+ */
 export async function runCompareRegression(assets, startDate, endDate) {
   const { data } = await api.post('/api/regression/compare', {
     assets,
@@ -374,6 +417,10 @@ export async function getDashboard() {
 
 // --- Recovery Plan (V0.5.8, issue #182) ---
 
+/**
+ * @param {string} id
+ * @returns {Promise<RecoveryPlanResponse>}
+ */
 export async function getRecoveryPlan(id) {
   const { data } = await api.post(
     `/api/positions/${encodeURIComponent(id)}/recovery-plan`,
@@ -383,6 +430,11 @@ export async function getRecoveryPlan(id) {
 
 // --- Buy-to-close leg detail (V1.0.6, issue #244) ---
 
+/**
+ * @param {string} positionId
+ * @param {string} legId
+ * @returns {Promise<BtcDetail>}
+ */
 export async function getBtcDetail(positionId, legId) {
   const { data } = await api.get(
     `/api/positions/${encodeURIComponent(positionId)}` +
@@ -393,6 +445,10 @@ export async function getBtcDetail(positionId, legId) {
 
 // --- Combined covered-call P&L + if-assigned (V1.0.6, issue #247) ---
 
+/**
+ * @param {string} positionId
+ * @returns {Promise<CoveredCallView>}
+ */
 export async function getCoveredCallView(positionId) {
   const { data } = await api.get(
     `/api/positions/${encodeURIComponent(positionId)}/covered-call`,
@@ -408,6 +464,10 @@ export async function getCoveredCallView(positionId) {
 // fans them out with `Promise.allSettled` so a single endpoint failure
 // degrades to a per-section tile instead of failing the whole page (NFR-3).
 
+/**
+ * @param {string} positionId
+ * @returns {Promise<BusinessResponse>}
+ */
 export async function getResearchBusiness(positionId) {
   const { data } = await api.get(
     `/api/positions/${encodeURIComponent(positionId)}/research/business`,
@@ -415,6 +475,11 @@ export async function getResearchBusiness(positionId) {
   return data;
 }
 
+/**
+ * @param {string} positionId
+ * @param {string} [window='1Y']
+ * @returns {Promise<PriceHistoryResponse>}
+ */
 export async function getResearchPriceHistory(positionId, window = '1Y') {
   const { data } = await api.get(
     `/api/positions/${encodeURIComponent(positionId)}/research/price-history`,
@@ -423,6 +488,10 @@ export async function getResearchPriceHistory(positionId, window = '1Y') {
   return data;
 }
 
+/**
+ * @param {string} positionId
+ * @returns {Promise<FinancialsResponse>}
+ */
 export async function getResearchFinancials(positionId) {
   const { data } = await api.get(
     `/api/positions/${encodeURIComponent(positionId)}/research/financials`,
@@ -430,6 +499,11 @@ export async function getResearchFinancials(positionId) {
   return data;
 }
 
+/**
+ * @param {string} positionId
+ * @param {string} [window='1Y']
+ * @returns {Promise<ResearchRegressionResponse>}
+ */
 export async function getResearchRegression(positionId, window = '1Y') {
   const { data } = await api.get(
     `/api/positions/${encodeURIComponent(positionId)}/research/regression`,
@@ -438,6 +512,10 @@ export async function getResearchRegression(positionId, window = '1Y') {
   return data;
 }
 
+/**
+ * @param {string} positionId
+ * @returns {Promise<ThesisResponse>}
+ */
 export async function getResearchThesis(positionId) {
   const { data } = await api.get(
     `/api/positions/${encodeURIComponent(positionId)}/research/thesis`,
@@ -445,6 +523,11 @@ export async function getResearchThesis(positionId) {
   return data;
 }
 
+/**
+ * @param {string} positionId
+ * @param {string} thesis
+ * @returns {Promise<ThesisResponse>}
+ */
 export async function putResearchThesis(positionId, thesis) {
   const { data } = await api.put(
     `/api/positions/${encodeURIComponent(positionId)}/research/thesis`,
