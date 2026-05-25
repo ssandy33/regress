@@ -8,7 +8,7 @@ fredapi==0.5.2
 statsmodels==0.14.4
 numpy==1.26.4
 pandas==2.2.3
-tenacity==9.0.0
+tenacity>=9.1.2,<10
 certifi
 requests
 python-dotenv==1.2.2
