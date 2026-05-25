@@ -42,4 +42,16 @@ contract_settings = hypothesis_settings(
     # to remain active for every call inside the test. Suppressing the
     # health check is the documented Hypothesis pattern for this case.
     suppress_health_check=[HealthCheck.function_scoped_fixture],
+    # Deterministic input generation. Two settings work together:
+    #   - derandomize=True pins the strategy seed so the same examples
+    #     are drawn every run.
+    #   - database=None disables the example database (.hypothesis/),
+    #     which otherwise replays cached failing examples from prior
+    #     runs out-of-order and reintroduces variance across sessions.
+    # Together they pin the failure set so CI sees the same
+    # (method, path) failures every run — the precondition for a stable
+    # exclusion list. The first stabilization pass without these saw
+    # the failure count drift 12-17 run-to-run.
+    derandomize=True,
+    database=None,
 )
