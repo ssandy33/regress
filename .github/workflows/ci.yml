@@ -48,6 +48,18 @@ jobs:
           path: backend/coverage-unit.xml
           if-no-files-found: ignore
 
+      # Contract v1 — Wave 1 (#303): fail PRs that change API surface
+      # without committing a regenerated openapi.json snapshot. The
+      # regen script (#302) is deterministic; the comparison is exact.
+      - name: OpenAPI drift check
+        id: openapi_drift_check
+        run: |
+          python -m openapi.regen --check || {
+            echo ""
+            echo "::error::OpenAPI snapshot is stale. Run 'python -m openapi.regen' and commit backend/openapi/openapi.json."
+            exit 1
+          }
+
       # Quality v1 — Wave 2 (#269): block PR merges that leave a tdd_red
       # marker behind. Diff-based grep over .py files added/modified on
       # this PR relative to its base SHA. Skipped on push-to-main runs
