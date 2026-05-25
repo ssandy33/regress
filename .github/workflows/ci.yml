@@ -118,6 +118,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Contract v1 — Wave 3 (#306): fail PRs that change the OpenAPI
+      # snapshot without regenerating frontend/api/generated/types.ts.
+      # Mirrors the backend OpenAPI drift check in backend-unit (Wave 1 #303).
+      - name: Frontend types drift check
+        id: frontend_types_drift_check
+        run: |
+          npm run types:check || {
+            echo ""
+            echo "::error::frontend/api/generated/types.ts is stale. Run 'npm run types:regen' (cd frontend) and commit the result."
+            exit 1
+          }
+
       - name: Lint
         run: npm run lint
 

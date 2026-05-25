@@ -1,0 +1,4 @@
+# Generated files — force LF line endings (prevent CRLF drift from Windows contributors)
+# and collapse in GitHub diff view via linguist-generated.
+frontend/api/generated/types.ts text eol=lf linguist-generated=true
+backend/openapi/openapi.json text eol=lf linguist-generated=true
