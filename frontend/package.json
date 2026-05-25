@@ -11,6 +11,8 @@
     "test:smoke": "playwright test --grep '@smoke'",
     "test:e2e:tags": "playwright test --grep '@e2e'",
     "test:e2e:prod": "playwright test --config playwright.prod.config.js",
+    "types:regen": "openapi-typescript ../backend/openapi/openapi.json --alphabetize --output api/generated/types.ts",
+    "types:check": "openapi-typescript ../backend/openapi/openapi.json --alphabetize --output /tmp/openapi-types-check.ts && diff -q api/generated/types.ts /tmp/openapi-types-check.ts",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },
@@ -28,6 +30,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "openapi-typescript": "^7",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "eslint": "^9",
