@@ -108,6 +108,12 @@ DAY_1_EXCLUSIONS: list[tuple[str, str]] = [
     ("POST", "/api/regression/rolling"),
     ("POST", "/api/sessions"),
     ("PUT", "/api/settings/rules"),
+    # Watchlist POST (#321/#322 — V1.6): identical malformed-body 400 to every
+    # other POST-with-body endpoint above (Schemathesis feeds non-JSON bytes →
+    # FastAPI "error parsing the body" 400, undocumented vs the 200/422 contract).
+    # New Group E member; the proper fix (declare 400 in responses=) is tracked
+    # under Wave 2.5 #315.
+    ("POST", "/api/watchlist"),
 ]
 
 
@@ -156,12 +162,13 @@ def test_exclusion_list_is_known_gaps():
 
     The count breakdown is: Group A (8 settings non-auth) + Group B (4
     settings schwab/health-probe) + Group C (2 health) + Group D (4
-    assets + options) + Group E (19 undocumented-error-response
-    endpoints) plus a tail of overlapping settings/rules entries
-    counted in Group A. Group E is a 5th post-merge sub-issue and
-    represents the largest class — routes that declare 200/422 but
-    actually return 400/404/502 on adversarial Hypothesis inputs.
+    assets + options) + Group E (20 undocumented-error-response
+    endpoints, incl. the V1.6 watchlist POST) plus a tail of overlapping
+    settings/rules entries counted in Group A. Group E is a 5th
+    post-merge sub-issue and represents the largest class — routes that
+    declare 200/422 but actually return 400/404/502 on adversarial
+    Hypothesis inputs.
     """
-    assert len(DAY_1_EXCLUSIONS) == 40
+    assert len(DAY_1_EXCLUSIONS) == 41
     methods = {m for m, _ in DAY_1_EXCLUSIONS}
     assert methods == {"GET", "PUT", "POST", "DELETE"}
