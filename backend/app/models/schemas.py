@@ -1349,3 +1349,41 @@ class FinancialsResponse(BaseModel):
     source: str
     fetched_at: str
 
+
+# --- watchlist ---
+
+
+class WatchlistResponse(BaseModel):
+    """Response shape for every watchlist endpoint (issue #321 / PRD #213 R4).
+
+    All three routes — ``GET``, ``POST``, ``DELETE`` — return the full,
+    current watchlist so the caller never has to issue a follow-up read after
+    a mutation. ``tickers`` is uppercase-normalized and returned in a stable
+    order (oldest-added first). Defaults to an empty list, which is the
+    correct representation of "the trader hasn't approved any names yet"
+    (PRD #213: an empty watchlist is a valid state, not an error).
+    """
+
+    tickers: list[str] = Field(default_factory=list)
+
+
+class WatchlistAddRequest(BaseModel):
+    """Request body for ``POST /api/watchlist`` (issue #321 / PRD #213 R2).
+
+    ``ticker`` is normalized to uppercase and stripped of surrounding
+    whitespace at this boundary, so the service layer can trust it is a
+    non-empty uppercase symbol. A blank or whitespace-only ticker is rejected
+    with ``422`` (the validator raises before the request reaches the route).
+    """
+
+    ticker: str = Field(..., description="Ticker symbol to add; normalized to uppercase.")
+
+    @field_validator("ticker")
+    @classmethod
+    def _normalize_ticker(cls, v: str) -> str:
+        """Strip + uppercase the ticker; reject blank/whitespace-only input."""
+        normalized = v.strip().upper()
+        if not normalized:
+            raise ValueError("ticker must not be empty")
+        return normalized
+

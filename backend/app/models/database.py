@@ -181,6 +181,41 @@ class TradeEntryCompliance(Base):
     trade = relationship("Trade", back_populates="entry_compliance")
 
 
+class WatchlistTicker(Base):
+    """A single approved underlying in the trader's watchlist (issue #321).
+
+    The watchlist is the operational form of the wheel-strategy "would I
+    voluntarily own this?" gate (PRD #213): the options scanner and downstream
+    engines only consider names that appear here. This is the **data + API
+    layer only** — scanner integration (PRD #213 R5) and the management UI
+    are sibling issues in the V1.6 milestone.
+
+    Storage decision (PRD #213 Q1): a **dedicated table, one row per ticker,
+    with ``ticker`` as the primary key** — chosen over co-locating a JSON
+    blob in ``app_settings`` (the ``rules_config`` pattern) because a
+    watchlist is a *set of members*, not a *map of thresholds*. The PK gives
+    idempotency for free (duplicate add → no-op on the existing row; missing
+    remove → ``DELETE`` affecting zero rows) and lets v2 per-ticker metadata
+    (target price, tags, notes — MVP non-goals) grow as new columns without a
+    schema redesign. Rationale recorded in
+    ``backend/design-specs/issue-321-watchlist-api-plan.md``.
+
+    ``ticker`` is stored uppercase-normalized; normalization happens at the
+    service / API boundary so the PK uniqueness constraint dedupes
+    case-insensitively (``aapl`` and ``AAPL`` collapse to one row).
+
+    The project has no Alembic — ``Base.metadata.create_all(bind=engine)`` in
+    :func:`init_db` is idempotent, so an existing deployment grows the
+    ``watchlist`` table on next startup without a migration. Rollback path is
+    a manual ``DROP TABLE watchlist``.
+    """
+
+    __tablename__ = "watchlist"
+
+    ticker = Column(String, primary_key=True)  # uppercase-normalized symbol
+    added_at = Column(String, nullable=False)  # ISO datetime — audit + stable sort
+
+
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
 
 
