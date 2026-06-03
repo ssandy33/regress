@@ -1,11 +1,14 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Settings → Watchlist tab (issue #323, PRD #213 UC1–UC4).
+ * Watchlist (issue #323, PRD #213 UC1–UC4; promoted to top-level nav in #327).
  *
- * The minimal approved-universe gate: a 4th Settings tab holding an add input,
- * the current ticker list with per-row Remove, and an empty state. Covers the
- * issue's automated-coverage ACs:
+ * The minimal approved-universe gate: an add input, the current ticker list
+ * with per-row Remove, and an empty state. Originally a 4th Settings tab (#323);
+ * #327 promotes it to a dedicated top-level `/watchlist` route reached from the
+ * `nav-watchlist-link` header item — the in-section UI and every
+ * `settings-watchlist-*` test ID are unchanged, only the entry point moved.
+ * Covers the issue's automated-coverage ACs:
  *  - the list reflects the persisted backend state on load (UC3);
  *  - add a ticker → it appears (UC1);
  *  - remove a ticker → it disappears (UC2);
@@ -90,42 +93,92 @@ function mockWatchlistEndpoints(
   });
 }
 
-/** Open the Settings page and switch to the Watchlist tab. */
+/**
+ * Open the dedicated `/watchlist` page (#327). The watchlist used to live
+ * behind a Settings tab (#323); the entry point moved to a top-level route, so
+ * navigation goes straight to `/watchlist` and asserts the section mounted.
+ */
 async function openWatchlistTab(page) {
-  await page.goto('/settings');
-  await page.getByTestId('settings-watchlist-tab').click();
+  await page.goto('/watchlist');
+  await expect(page.getByTestId('watchlist-page')).toBeVisible();
   await expect(page.getByTestId('settings-watchlist-section')).toBeVisible();
 }
 
-test.describe('Settings → Watchlist — tab & deep link @e2e', () => {
-  test('the tab bar exposes a 4th "Watchlist" tab', async ({ page }) => {
+test.describe('Watchlist — top-level nav entry point @smoke @e2e', () => {
+  test('clicking the top-nav Watchlist link lands on the watchlist page', async ({
+    page,
+  }) => {
+    await mockWatchlistEndpoints(page, { initial: ['AAPL'] });
+    // Start from another route so the click drives a real navigation.
+    await page.goto('/dashboard');
+
+    const navLink = page.getByTestId('nav-watchlist-link');
+    await expect(navLink).toBeVisible();
+    await expect(navLink).toHaveText('Watchlist');
+
+    await navLink.click();
+
+    await expect(page).toHaveURL(/\/watchlist$/);
+    await expect(page.getByTestId('watchlist-page')).toBeVisible();
+    // The unchanged #323 section renders on the page (the AC's landing target).
+    await expect(page.getByTestId('settings-watchlist-section')).toBeVisible();
+    await expect(
+      page.locator('[data-testid="settings-watchlist-item"][data-ticker="AAPL"]'),
+    ).toBeVisible();
+  });
+});
+
+test.describe('Watchlist — active-nav highlighting @e2e', () => {
+  test('the Watchlist nav link is active on /watchlist and idle elsewhere', async ({
+    page,
+  }) => {
+    await mockWatchlistEndpoints(page, { initial: ['AAPL'] });
+
+    // On /watchlist: the link carries the active class + aria-current="page".
+    await page.goto('/watchlist');
+    const onWatchlist = page.getByTestId('nav-watchlist-link');
+    await expect(onWatchlist).toHaveAttribute('aria-current', 'page');
+    await expect(onWatchlist).toHaveClass(/bg-blue-600/);
+
+    // On another route: no active treatment.
+    await page.goto('/dashboard');
+    const onDashboard = page.getByTestId('nav-watchlist-link');
+    await expect(onDashboard).not.toHaveAttribute('aria-current', 'page');
+    await expect(onDashboard).not.toHaveClass(/bg-blue-600/);
+  });
+});
+
+test.describe('Settings — Watchlist tab removed @e2e', () => {
+  test('the Settings tab bar no longer exposes a Watchlist tab', async ({
+    page,
+  }) => {
     await mockWatchlistEndpoints(page, { initial: ['AAPL'] });
     await page.goto('/settings');
 
-    const tab = page.getByTestId('settings-watchlist-tab');
-    await expect(tab).toBeVisible();
-    await expect(tab).toHaveText('Watchlist');
+    // The 4th tab is gone; the three config tabs remain (#327 §4).
+    await expect(page.getByTestId('settings-watchlist-tab')).toHaveCount(0);
+    await expect(page.getByTestId('settings-tab-general')).toBeVisible();
+    await expect(page.getByTestId('settings-rules-tab')).toBeVisible();
+    await expect(page.getByTestId('settings-objectives-tab')).toBeVisible();
   });
 
-  test('/settings?tab=watchlist opens the Watchlist tab without a click', async ({
+  test('a stale /settings?tab=watchlist deep link harmlessly shows General', async ({
     page,
   }) => {
     await mockWatchlistEndpoints(page, { initial: ['AAPL'] });
     await page.goto('/settings?tab=watchlist');
 
-    await expect(page.getByTestId('settings-watchlist-tab')).toHaveAttribute(
+    // Unknown ?tab values fall through to General (#327 §4.2) — no broken state.
+    await expect(page.getByTestId('settings-tab-general')).toHaveAttribute(
       'aria-selected',
       'true',
     );
-    await expect(page.getByTestId('settings-tab-general')).toHaveAttribute(
-      'aria-selected',
-      'false',
-    );
-    await expect(page.getByTestId('settings-watchlist-section')).toBeVisible();
+    await expect(page.getByTestId('settings-watchlist-tab')).toHaveCount(0);
+    await expect(page.getByTestId('settings-watchlist-section')).toHaveCount(0);
   });
 });
 
-test.describe('Settings → Watchlist — view persisted universe @smoke @e2e', () => {
+test.describe('Watchlist — view persisted universe @smoke @e2e', () => {
   test('the list reflects the persisted backend state on load', async ({
     page,
   }) => {
@@ -146,7 +199,7 @@ test.describe('Settings → Watchlist — view persisted universe @smoke @e2e', 
   });
 });
 
-test.describe('Settings → Watchlist — add a ticker @smoke @e2e', () => {
+test.describe('Watchlist — add a ticker @smoke @e2e', () => {
   test('add a ticker → it appears in the list', async ({ page }) => {
     await mockWatchlistEndpoints(page, { initial: ['AAPL'] });
     await openWatchlistTab(page);
@@ -179,7 +232,7 @@ test.describe('Settings → Watchlist — add a ticker @smoke @e2e', () => {
   });
 });
 
-test.describe('Settings → Watchlist — remove a ticker @e2e', () => {
+test.describe('Watchlist — remove a ticker @e2e', () => {
   test('remove a ticker → it disappears', async ({ page }) => {
     await mockWatchlistEndpoints(page, { initial: ['AAPL', 'MSFT'] });
     await openWatchlistTab(page);
@@ -209,7 +262,7 @@ test.describe('Settings → Watchlist — remove a ticker @e2e', () => {
   });
 });
 
-test.describe('Settings → Watchlist — empty state @e2e', () => {
+test.describe('Watchlist — empty state @e2e', () => {
   test('the empty state renders the explanatory message, not a blank panel', async ({
     page,
   }) => {
@@ -228,7 +281,7 @@ test.describe('Settings → Watchlist — empty state @e2e', () => {
   });
 });
 
-test.describe('Settings → Watchlist — lowercase normalization @e2e', () => {
+test.describe('Watchlist — lowercase normalization @e2e', () => {
   test('a lowercase add normalizes to uppercase in the list', async ({
     page,
   }) => {
@@ -249,7 +302,7 @@ test.describe('Settings → Watchlist — lowercase normalization @e2e', () => {
   });
 });
 
-test.describe('Settings → Watchlist — duplicate add @e2e', () => {
+test.describe('Watchlist — duplicate add @e2e', () => {
   test('adding an existing ticker shows an inline info note, not an error', async ({
     page,
   }) => {
@@ -269,7 +322,7 @@ test.describe('Settings → Watchlist — duplicate add @e2e', () => {
   });
 });
 
-test.describe('Settings → Watchlist — client validation @e2e', () => {
+test.describe('Watchlist — client validation @e2e', () => {
   test('invalid input is blocked client-side with an inline validation error', async ({
     page,
   }) => {
@@ -293,7 +346,7 @@ test.describe('Settings → Watchlist — client validation @e2e', () => {
   });
 });
 
-test.describe('Settings → Watchlist — load failure @e2e', () => {
+test.describe('Watchlist — load failure @e2e', () => {
   test('a failed initial GET shows the amber banner + Retry recovers', async ({
     page,
   }) => {
@@ -315,7 +368,7 @@ test.describe('Settings → Watchlist — load failure @e2e', () => {
       });
     });
 
-    await page.goto('/settings?tab=watchlist');
+    await page.goto('/watchlist');
 
     const banner = page.getByTestId('settings-watchlist-load-error');
     await expect(banner).toBeVisible();
@@ -332,7 +385,7 @@ test.describe('Settings → Watchlist — load failure @e2e', () => {
   });
 });
 
-test.describe('Settings → Watchlist — add failure @e2e', () => {
+test.describe('Watchlist — add failure @e2e', () => {
   test('an add failure shows a generic inline error, never raw server detail', async ({
     page,
   }) => {
