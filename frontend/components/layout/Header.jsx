@@ -1,44 +1,79 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { useTheme } from '../../context/ThemeContext';
 import UserMenu from './UserMenu';
 
 export default function Header({ sessions, onLoadSession }) {
   const { dark, toggle } = useTheme();
+  const pathname = usePathname();
+
+  // Active-nav highlighting (issue #327 §5). Idle = today's link recipe
+  // verbatim (zero visual change for an inactive link); active = the same
+  // `bg-blue-600 text-white` token the Settings tab bar already uses, so an
+  // "active nav item" reads consistently app-wide. `startsWith(href + '/')`
+  // keeps nested routes lit; matching exact `/dashboard` etc. avoids a bare
+  // `/` false positive against other routes.
+  const isActive = (href) => pathname === href || pathname?.startsWith(href + '/');
+  const navClass = (href) =>
+    `shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium ${
+      isActive(href)
+        ? 'bg-blue-600 text-white'
+        : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+    }`;
 
   return (
     <header className="h-14 border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-between px-4 shrink-0">
-      <Link href="/dashboard" className="text-lg font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">
+      <Link href="/dashboard" className="shrink-0 text-lg font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400">
         Regression Analysis Tool
       </Link>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 overflow-x-auto">
         <UserMenu />
         {/* Dashboard link — default landing route per #114 */}
         <Link
           href="/dashboard"
-          className="px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium"
+          className={navClass('/dashboard')}
+          aria-current={isActive('/dashboard') ? 'page' : undefined}
         >
           Dashboard
         </Link>
         {/* Analysis link — moved from `/` to `/analysis` per #114 */}
         <Link
           href="/analysis"
-          className="px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium"
+          className={navClass('/analysis')}
+          aria-current={isActive('/analysis') ? 'page' : undefined}
         >
           Analysis
         </Link>
         {/* Options scanner link */}
         <Link
           href="/options"
-          className="px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium"
+          className={navClass('/options')}
+          aria-current={isActive('/options') ? 'page' : undefined}
         >
           Options
+        </Link>
+
+        {/* Watchlist link — the approved-universe gate, promoted to top-level
+            (issue #327). Placed between Options and Journal, left-adjacent to
+            the scanner it gates; Journal stays rightmost as the post-trade
+            record (spec §3.3). */}
+        <Link
+          href="/watchlist"
+          data-testid="nav-watchlist-link"
+          className={navClass('/watchlist')}
+          aria-current={isActive('/watchlist') ? 'page' : undefined}
+        >
+          Watchlist
         </Link>
 
         {/* Journal link */}
         <Link
           href="/journal"
-          className="px-3 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 text-sm font-medium"
+          className={navClass('/journal')}
+          aria-current={isActive('/journal') ? 'page' : undefined}
         >
           Journal
         </Link>
@@ -48,7 +83,7 @@ export default function Header({ sessions, onLoadSession }) {
           <select
             onChange={(e) => e.target.value && onLoadSession(e.target.value)}
             defaultValue=""
-            className="text-sm border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
+            className="shrink-0 text-sm border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
           >
             <option value="">Saved Sessions</option>
             {sessions.map((s) => (
@@ -60,7 +95,7 @@ export default function Header({ sessions, onLoadSession }) {
         {/* Settings link */}
         <Link
           href="/settings"
-          className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+          className="shrink-0 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
           aria-label="Settings"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -72,7 +107,7 @@ export default function Header({ sessions, onLoadSession }) {
         {/* Help link */}
         <Link
           href="/help"
-          className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+          className="shrink-0 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
           aria-label="Help"
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -84,7 +119,7 @@ export default function Header({ sessions, onLoadSession }) {
         <button
           data-testid="dark-mode-toggle"
           onClick={toggle}
-          className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+          className="shrink-0 p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
           aria-label="Toggle dark mode"
         >
           {dark ? (
