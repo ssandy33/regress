@@ -536,4 +536,42 @@ export async function putResearchThesis(positionId, thesis) {
   return data;
 }
 
+// --- Watchlist (#321) ---
+//
+// The approved-underlying universe the Options scanner filters to. All three
+// endpoints return the full, current `{ tickers: [...] }` (uppercase-normalized,
+// backend-ordered), so the caller never needs a follow-up read after a mutation.
+
+/**
+ * @returns {Promise<string[]>} the current watchlist tickers
+ */
+export async function getWatchlist() {
+  const { data } = await api.get('/api/watchlist');
+  return data.tickers;
+}
+
+/**
+ * Add a ticker (idempotent + uppercase-normalized server-side). Returns the
+ * full updated list so the UI reflects normalization + ordering authoritatively.
+ * @param {string} ticker
+ * @returns {Promise<string[]>} the updated watchlist tickers
+ */
+export async function addWatchlistTicker(ticker) {
+  const { data } = await api.post('/api/watchlist', { ticker });
+  return data.tickers;
+}
+
+/**
+ * Remove a ticker (idempotent — removing a missing ticker is a 200 no-op).
+ * Returns the full updated list.
+ * @param {string} ticker
+ * @returns {Promise<string[]>} the updated watchlist tickers
+ */
+export async function removeWatchlistTicker(ticker) {
+  const { data } = await api.delete(
+    `/api/watchlist/${encodeURIComponent(ticker)}`,
+  );
+  return data.tickers;
+}
+
 export default api;
