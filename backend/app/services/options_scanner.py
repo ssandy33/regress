@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -18,6 +19,69 @@ from app.services.rules_config import DEFAULT_RULES_CONFIG
 from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
+
+# --- Watchlist gate (issue #322 / PRD #213 R5) ---
+#
+# The scanner is single-ticker: ``request.ticker`` is the candidate universe
+# for one scan, so the watchlist gate is the set intersection
+# ``{request.ticker} ∩ watchlist``. The two empty-state reason strings are
+# frozen here so the gate logic, the empty response, and the tests all
+# reference the same literals (no drift).
+EMPTY_WATCHLIST_REASON = (
+    "No approved underlyings — add tickers to your watchlist before scanning."
+)
+
+
+def _ticker_not_on_watchlist_reason(ticker: str) -> str:
+    """Build the off-watchlist explanation for a specific ticker."""
+    return (
+        f"{ticker} is not on your watchlist. "
+        "Add it to scan, or pick an approved name."
+    )
+
+
+@dataclass(frozen=True)
+class WatchlistGate:
+    """Outcome of applying the approved-universe gate to one scan request.
+
+    ``allowed`` is ``True`` when the requested ticker is on the watchlist and
+    the scan may proceed. When ``allowed`` is ``False`` the scan is short-
+    circuited to a zero-candidate response carrying ``reason`` — an
+    explanation, never an error (PRD #213 R5: an empty watchlist is the
+    cleanest expression of "I haven't decided what I'd own").
+    """
+
+    allowed: bool
+    reason: Optional[str] = None
+
+
+def evaluate_watchlist_gate(ticker: str, watchlist: list[str]) -> WatchlistGate:
+    """Decide whether a scan for ``ticker`` may proceed given ``watchlist``.
+
+    Pure function — no DB, no network. The caller supplies the watchlist read
+    from the single source of truth (:func:`app.services.watchlist.list_watchlist`,
+    issue #321). Matching is case-insensitive, mirroring the watchlist's own
+    uppercase normalization, so a request for ``aapl`` passes when ``AAPL`` is
+    approved.
+
+    Returns a :class:`WatchlistGate`:
+
+    - empty ``watchlist`` → blocked with :data:`EMPTY_WATCHLIST_REASON`.
+    - ``ticker`` not in ``watchlist`` → blocked with the off-list reason.
+    - otherwise → allowed.
+    """
+    if not watchlist:
+        return WatchlistGate(allowed=False, reason=EMPTY_WATCHLIST_REASON)
+
+    normalized = ticker.strip().upper()
+    approved = {t.strip().upper() for t in watchlist}
+    if normalized not in approved:
+        return WatchlistGate(
+            allowed=False,
+            reason=_ticker_not_on_watchlist_reason(normalized),
+        )
+
+    return WatchlistGate(allowed=True)
 
 
 class OptionScannerError(Exception):
@@ -105,6 +169,8 @@ class OptionScanner:
                 "recommendations": [],
                 "rejected": [],
                 "market_context": market_context,
+                "watchlist_filtered": True,
+                "empty_reason": None,
             }
 
         candidates = []
@@ -280,6 +346,31 @@ class OptionScanner:
             "recommendations": ranked[:20],
             "rejected": rejected[:50],
             "market_context": market_context,
+            "watchlist_filtered": True,
+            "empty_reason": None,
+        }
+
+    def empty_response(self, req: OptionScanRequest, reason: str) -> dict:
+        """Build a zero-candidate scan response for a blocked watchlist gate.
+
+        Returned (with a ``200``) when the requested ticker is not on the
+        watchlist (issue #322 / PRD #213 R5). No chain is fetched and no market
+        data is consulted, so ``current_price`` is ``0.0`` and the market
+        context is empty — the caller surfaces ``reason`` to explain the empty
+        result rather than treating it as an error.
+        """
+        return {
+            "ticker": req.ticker,
+            "current_price": 0.0,
+            "strategy": req.strategy,
+            "scan_time": datetime.now(timezone.utc).isoformat(),
+            "earnings_date": None,
+            "iv_rank": None,
+            "recommendations": [],
+            "rejected": [],
+            "market_context": MarketContext(),
+            "watchlist_filtered": True,
+            "empty_reason": reason,
         }
 
     # ---- Rule resolution ----

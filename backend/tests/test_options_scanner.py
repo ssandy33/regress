@@ -685,3 +685,83 @@ class TestHumanReasonsPopulated:
         for r in return_below:
             assert len(r.human_reasons) == len(r.rejection_reasons)
             assert any("target return" in s for s in r.human_reasons)
+
+
+# --- Watchlist gate (issue #322 / PRD #213 R5) ---
+#
+# Pure-unit coverage of the approved-universe gate: the set intersection
+# ``{request.ticker} ∩ watchlist`` and the zero-candidate empty response. No
+# DB, no app, no network — the gate logic and ``empty_response`` are exercised
+# in isolation.
+
+from app.services.options_scanner import (  # noqa: E402
+    EMPTY_WATCHLIST_REASON,
+    WatchlistGate,
+    evaluate_watchlist_gate,
+)
+
+
+class TestWatchlistGate:
+    @pytest.mark.unit
+    def test_gate_allows_ticker_on_watchlist(self):
+        """U1 (AC1) — a ticker on the watchlist passes the gate."""
+        gate = evaluate_watchlist_gate("AAPL", ["AAPL", "MSFT"])
+        assert gate == WatchlistGate(allowed=True, reason=None)
+
+    @pytest.mark.unit
+    def test_gate_allows_case_insensitive_match(self):
+        """U2 (AC4) — a lowercase request matches an uppercase watchlist entry."""
+        gate = evaluate_watchlist_gate("aapl", ["AAPL"])
+        assert gate.allowed is True
+        assert gate.reason is None
+
+    @pytest.mark.unit
+    def test_gate_blocks_ticker_not_on_watchlist(self):
+        """U3 (AC1) — a non-member ticker is blocked with the off-list reason."""
+        gate = evaluate_watchlist_gate("MSFT", ["AAPL"])
+        assert gate.allowed is False
+        assert gate.reason is not None
+        assert "MSFT" in gate.reason
+        assert "not on your watchlist" in gate.reason
+
+    @pytest.mark.unit
+    def test_gate_blocks_on_empty_watchlist(self):
+        """U4 (AC2) — an empty watchlist blocks every scan with a clear reason."""
+        gate = evaluate_watchlist_gate("AAPL", [])
+        assert gate.allowed is False
+        assert gate.reason == EMPTY_WATCHLIST_REASON
+
+    @pytest.mark.unit
+    def test_gate_empty_watchlist_reason_distinct_from_off_list(self):
+        """U5 (AC2) — empty-watchlist and off-list explanations are different."""
+        empty = evaluate_watchlist_gate("AAPL", [])
+        off_list = evaluate_watchlist_gate("AAPL", ["MSFT"])
+        assert empty.reason != off_list.reason
+        assert empty.reason == EMPTY_WATCHLIST_REASON
+
+
+class TestEmptyResponse:
+    @pytest.mark.unit
+    def test_empty_response_shape_is_zero_candidates(self):
+        """U6 (AC2) — the gated empty response carries 0 recs/rejected + reason."""
+        scanner = OptionScanner()
+        req = OptionScanRequest(
+            ticker="MSFT", strategy="covered_call", cost_basis=400.0
+        )
+        result = scanner.empty_response(req, EMPTY_WATCHLIST_REASON)
+        assert result["recommendations"] == []
+        assert result["rejected"] == []
+        assert result["empty_reason"] == EMPTY_WATCHLIST_REASON
+        assert result["watchlist_filtered"] is True
+
+    @pytest.mark.unit
+    def test_empty_response_echoes_ticker_and_strategy(self):
+        """U7 (AC2) — the empty response preserves the request ticker + strategy."""
+        scanner = OptionScanner()
+        req = OptionScanRequest(
+            ticker="NVDA", strategy="cash_secured_put", capital_available=5000.0
+        )
+        result = scanner.empty_response(req, "some reason")
+        assert result["ticker"] == "NVDA"
+        assert result["strategy"] == "cash_secured_put"
+        assert result["empty_reason"] == "some reason"
