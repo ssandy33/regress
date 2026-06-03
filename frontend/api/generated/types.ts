@@ -516,8 +516,18 @@ export interface paths {
          * Scan Options
          * @description Scan option chain for wheel strategy opportunities.
          *
-         *     Unset rule fields on the request are resolved from the persisted
-         *     ``rules_config`` (issue #156) before the scan runs.
+         *     The watchlist gate runs first (issue #322 / PRD #213 R5): the scanner only
+         *     considers names the trader has already approved. If the requested ticker is
+         *     not on the watchlist — including the empty-watchlist case — the scan is
+         *     short-circuited to a zero-candidate ``200`` response carrying an
+         *     explanatory ``empty_reason``, never an error. The watchlist is read from
+         *     the single source of truth (:func:`app.services.watchlist.list_watchlist`,
+         *     issue #321), so adding or removing a ticker via the watchlist API changes
+         *     the next scan's universe with no code change.
+         *
+         *     When the gate allows the scan, unset rule fields on the request are
+         *     resolved from the persisted ``rules_config`` (issue #156) before the scan
+         *     runs.
          */
         post: operations["scan_options_api_options_scan_post"];
         delete?: never;
@@ -1319,6 +1329,57 @@ export interface paths {
          */
         post: operations["exchange_schwab_callback_api_settings_schwab_callback_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watchlist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Watchlist
+         * @description Return the current watchlist of approved underlyings.
+         */
+        get: operations["get_watchlist_api_watchlist_get"];
+        put?: never;
+        /**
+         * Add Watchlist Ticker
+         * @description Add a ticker to the watchlist; idempotent and uppercase-normalized.
+         *
+         *     The ``ticker`` is normalized + validated by :class:`WatchlistAddRequest`,
+         *     so a blank ticker is rejected with ``422`` before reaching this handler.
+         */
+        post: operations["add_watchlist_ticker_api_watchlist_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watchlist/{ticker}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Watchlist Ticker
+         * @description Remove a ticker from the watchlist; idempotent.
+         *
+         *     The path parameter is normalized the same way as on add, so
+         *     ``DELETE /api/watchlist/aapl`` removes ``AAPL``. Removing a ticker that is
+         *     not present is a no-op that returns ``200`` with the unchanged list.
+         */
+        delete: operations["delete_watchlist_ticker_api_watchlist__ticker__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2604,12 +2665,25 @@ export interface components {
             /** Ticker */
             ticker: string;
         };
-        /** OptionScanResponse */
+        /**
+         * OptionScanResponse
+         * @description Response for ``POST /api/options/scan``.
+         *
+         *     The watchlist gate (issue #322 / PRD #213 R5) runs upstream of the chain
+         *     fetch: a scan for a ticker the trader has not approved returns zero
+         *     candidates with an explanatory ``empty_reason`` and a ``200`` — never an
+         *     error. ``watchlist_filtered`` records that the approved-universe gate was
+         *     applied to this scan; ``empty_reason`` is populated only when the gate
+         *     produced the empty result (it is ``None`` on a normal scan, including a
+         *     normal scan that legitimately found no strikes).
+         */
         OptionScanResponse: {
             /** Current Price */
             current_price: number;
             /** Earnings Date */
             earnings_date?: string | null;
+            /** Empty Reason */
+            empty_reason?: string | null;
             /** Iv Rank */
             iv_rank?: number | null;
             market_context: components["schemas"]["MarketContext"];
@@ -2623,6 +2697,11 @@ export interface components {
             strategy: string;
             /** Ticker */
             ticker: string;
+            /**
+             * Watchlist Filtered
+             * @default true
+             */
+            watchlist_filtered: boolean;
         };
         /**
          * PositionCreate
@@ -3726,6 +3805,37 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WatchlistAddRequest
+         * @description Request body for ``POST /api/watchlist`` (issue #321 / PRD #213 R2).
+         *
+         *     ``ticker`` is normalized to uppercase and stripped of surrounding
+         *     whitespace at this boundary, so the service layer can trust it is a
+         *     non-empty uppercase symbol. A blank or whitespace-only ticker is rejected
+         *     with ``422`` (the validator raises before the request reaches the route).
+         */
+        WatchlistAddRequest: {
+            /**
+             * Ticker
+             * @description Ticker symbol to add; normalized to uppercase.
+             */
+            ticker: string;
+        };
+        /**
+         * WatchlistResponse
+         * @description Response shape for every watchlist endpoint (issue #321 / PRD #213 R4).
+         *
+         *     All three routes — ``GET``, ``POST``, ``DELETE`` — return the full,
+         *     current watchlist so the caller never has to issue a follow-up read after
+         *     a mutation. ``tickers`` is uppercase-normalized and returned in a stable
+         *     order (oldest-added first). Defaults to an empty list, which is the
+         *     correct representation of "the trader hasn't approved any names yet"
+         *     (PRD #213: an empty watchlist is a valid state, not an error).
+         */
+        WatchlistResponse: {
+            /** Tickers */
+            tickers?: string[];
         };
     };
     responses: never;
@@ -5517,6 +5627,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_watchlist_api_watchlist_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResponse"];
+                };
+            };
+        };
+    };
+    add_watchlist_ticker_api_watchlist_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchlistAddRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_watchlist_ticker_api_watchlist__ticker__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ticker: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchlistResponse"];
                 };
             };
             /** @description Validation Error */
