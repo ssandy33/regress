@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import get_db
 from app.models.schemas import OptionScanRequest, OptionScanResponse
-from app.services.options_scanner import OptionScanner, OptionScannerError
+from app.services.options_scanner import (
+    OptionScanner,
+    OptionScannerError,
+    evaluate_watchlist_gate,
+)
 from app.services.rejection_relax import (
     NotRelaxableError,
     RelaxPreviewRequest,
@@ -15,6 +19,7 @@ from app.services.rejection_relax import (
 from app.services.rules_config import RulesConfig, load_rules_config
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
+from app.services.watchlist import list_watchlist
 from app.utils.parsing import to_float, to_int
 
 logger = logging.getLogger(__name__)
@@ -83,9 +88,31 @@ def scan_options(
 ):
     """Scan option chain for wheel strategy opportunities.
 
-    Unset rule fields on the request are resolved from the persisted
-    ``rules_config`` (issue #156) before the scan runs.
+    The watchlist gate runs first (issue #322 / PRD #213 R5): the scanner only
+    considers names the trader has already approved. If the requested ticker is
+    not on the watchlist — including the empty-watchlist case — the scan is
+    short-circuited to a zero-candidate ``200`` response carrying an
+    explanatory ``empty_reason``, never an error. The watchlist is read from
+    the single source of truth (:func:`app.services.watchlist.list_watchlist`,
+    issue #321), so adding or removing a ticker via the watchlist API changes
+    the next scan's universe with no code change.
+
+    When the gate allows the scan, unset rule fields on the request are
+    resolved from the persisted ``rules_config`` (issue #156) before the scan
+    runs.
     """
+    gate = evaluate_watchlist_gate(req.ticker, list_watchlist(db))
+    if not gate.allowed:
+        logger.info(
+            "Watchlist gate blocked scan",
+            extra={
+                "event": "watchlist_gate.blocked",
+                "ticker": req.ticker.strip().upper(),
+                "outcome": "no_data",
+            },
+        )
+        return scanner.empty_response(req, gate.reason)
+
     _resolve_scan_rules(req, load_rules_config(db))
     return scanner.scan(req)
 

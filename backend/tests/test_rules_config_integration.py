@@ -102,15 +102,29 @@ class _CaptureScanner(OptionScanner):
         }
 
 
+def _approve_watchlist(client, ticker: str) -> None:
+    """Seed the watchlist so the #322 gate lets a scan for ``ticker`` through.
+
+    Bridge helper added with the watchlist gate (issue #322): the scan endpoint
+    now short-circuits any ticker not on the watchlist to a ``200`` empty
+    result. These rule-resolution tests are about ``rules_config`` backfill, so
+    they approve the ticker they scan to reach the scanner.
+    """
+    client.post("/api/watchlist", json={"ticker": ticker})
+
+
 def _scan(client, body: dict) -> OptionScanRequest:
     """POST a scan, returning the OptionScanRequest the scanner received.
 
     Overrides the ``_get_scanner`` dependency with a capturing scanner so the
-    router's ``rules_config`` backfill can be inspected directly.
+    router's ``rules_config`` backfill can be inspected directly. The body's
+    ticker is approved on the watchlist first so the #322 gate does not
+    short-circuit the scan.
     """
     from app.main import app
     from app.routers.options import _get_scanner
 
+    _approve_watchlist(client, body["ticker"])
     _CaptureScanner.captured = None
     app.dependency_overrides[_get_scanner] = lambda: _CaptureScanner()
     try:
@@ -236,6 +250,7 @@ def test_fresh_db_yields_working_scan_no_migration(client):
     from app.main import app
     from app.routers.options import _get_scanner
 
+    _approve_watchlist(client, "SOFI")  # #322 gate — approve before scanning.
     _CaptureScanner.captured = None
     app.dependency_overrides[_get_scanner] = lambda: _CaptureScanner()
     try:
@@ -290,6 +305,7 @@ def _schwab_call_chain(strike: float, *, oi: int, dte: int = 30):
 @pytest.mark.integration
 def test_cc_scan_surfaces_below_cost_basis_reason(client):
     """A CC strike below cost basis is flagged ``below_cost_basis``, not dropped."""
+    _approve_watchlist(client, "TEST")  # #322 gate — approve before scanning.
     # Strike $14 sits below the $20 cost basis.
     chain = _schwab_call_chain(14.0, oi=500)
     with patch.object(OptionScanner, "_get_vix", return_value=None), patch(
@@ -315,6 +331,7 @@ def test_cc_scan_surfaces_below_cost_basis_reason(client):
 @pytest.mark.integration
 def test_cc_scan_below_cost_basis_suppressed_when_floor_disabled(client):
     """``cost_basis_floor_enabled=False`` suppresses the ``below_cost_basis`` reason."""
+    _approve_watchlist(client, "TEST")  # #322 gate — approve before scanning.
     chain = _schwab_call_chain(14.0, oi=500)
     with patch.object(OptionScanner, "_get_vix", return_value=None), patch(
         "app.services.options_scanner.get_next_earnings_date", return_value=None
@@ -344,6 +361,7 @@ def test_scan_min_open_interest_rejects_thin_strike(client):
     The default 500 floor would pass the same strike — confirms the inline
     ``oi < 50`` literal is gone and the floor comes from ``rules_config``.
     """
+    _approve_watchlist(client, "TEST")  # #322 gate — approve before scanning.
     _seed_setting(
         client,
         RULES_CONFIG_KEY,

@@ -3097,6 +3097,7 @@
         "type": "object"
       },
       "OptionScanResponse": {
+        "description": "Response for ``POST /api/options/scan``.\n\nThe watchlist gate (issue #322 / PRD #213 R5) runs upstream of the chain\nfetch: a scan for a ticker the trader has not approved returns zero\ncandidates with an explanatory ``empty_reason`` and a ``200`` — never an\nerror. ``watchlist_filtered`` records that the approved-universe gate was\napplied to this scan; ``empty_reason`` is populated only when the gate\nproduced the empty result (it is ``None`` on a normal scan, including a\nnormal scan that legitimately found no strikes).",
         "properties": {
           "current_price": {
             "title": "Current Price",
@@ -3112,6 +3113,17 @@
               }
             ],
             "title": "Earnings Date"
+          },
+          "empty_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Empty Reason"
           },
           "iv_rank": {
             "anyOf": [
@@ -3152,6 +3164,11 @@
           "ticker": {
             "title": "Ticker",
             "type": "string"
+          },
+          "watchlist_filtered": {
+            "default": true,
+            "title": "Watchlist Filtered",
+            "type": "boolean"
           }
         },
         "required": [
@@ -6884,7 +6901,7 @@
     },
     "/api/options/scan": {
       "post": {
-        "description": "Scan option chain for wheel strategy opportunities.\n\nUnset rule fields on the request are resolved from the persisted\n``rules_config`` (issue #156) before the scan runs.",
+        "description": "Scan option chain for wheel strategy opportunities.\n\nThe watchlist gate runs first (issue #322 / PRD #213 R5): the scanner only\nconsiders names the trader has already approved. If the requested ticker is\nnot on the watchlist — including the empty-watchlist case — the scan is\nshort-circuited to a zero-candidate ``200`` response carrying an\nexplanatory ``empty_reason``, never an error. The watchlist is read from\nthe single source of truth (:func:`app.services.watchlist.list_watchlist`,\nissue #321), so adding or removing a ticker via the watchlist API changes\nthe next scan's universe with no code change.\n\nWhen the gate allows the scan, unset rule fields on the request are\nresolved from the persisted ``rules_config`` (issue #156) before the scan\nruns.",
         "operationId": "scan_options_api_options_scan_post",
         "requestBody": {
           "content": {

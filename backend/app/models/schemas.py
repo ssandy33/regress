@@ -315,6 +315,17 @@ class OptionScanRequest(BaseModel):
 
 
 class OptionScanResponse(BaseModel):
+    """Response for ``POST /api/options/scan``.
+
+    The watchlist gate (issue #322 / PRD #213 R5) runs upstream of the chain
+    fetch: a scan for a ticker the trader has not approved returns zero
+    candidates with an explanatory ``empty_reason`` and a ``200`` — never an
+    error. ``watchlist_filtered`` records that the approved-universe gate was
+    applied to this scan; ``empty_reason`` is populated only when the gate
+    produced the empty result (it is ``None`` on a normal scan, including a
+    normal scan that legitimately found no strikes).
+    """
+
     ticker: str
     current_price: float
     strategy: str
@@ -324,6 +335,10 @@ class OptionScanResponse(BaseModel):
     recommendations: list[StrikeRecommendation]
     rejected: list[RejectedStrike]
     market_context: MarketContext
+    # Watchlist gate (issue #322 / PRD #213 R5). Additive + defaulted, so a
+    # pre-#322 client ignores them and the change is non-breaking.
+    watchlist_filtered: bool = True
+    empty_reason: Optional[str] = None
 
 
 # --- Journal ---
