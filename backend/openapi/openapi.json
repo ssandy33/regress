@@ -3097,6 +3097,7 @@
         "type": "object"
       },
       "OptionScanResponse": {
+        "description": "Response for ``POST /api/options/scan``.\n\nThe watchlist gate (issue #322 / PRD #213 R5) runs upstream of the chain\nfetch: a scan for a ticker the trader has not approved returns zero\ncandidates with an explanatory ``empty_reason`` and a ``200`` — never an\nerror. ``watchlist_filtered`` records that the approved-universe gate was\napplied to this scan; ``empty_reason`` is populated only when the gate\nproduced the empty result (it is ``None`` on a normal scan, including a\nnormal scan that legitimately found no strikes).",
         "properties": {
           "current_price": {
             "title": "Current Price",
@@ -3112,6 +3113,17 @@
               }
             ],
             "title": "Earnings Date"
+          },
+          "empty_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Empty Reason"
           },
           "iv_rank": {
             "anyOf": [
@@ -3152,6 +3164,11 @@
           "ticker": {
             "title": "Ticker",
             "type": "string"
+          },
+          "watchlist_filtered": {
+            "default": true,
+            "title": "Watchlist Filtered",
+            "type": "boolean"
           }
         },
         "required": [
@@ -5650,6 +5667,35 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WatchlistAddRequest": {
+        "description": "Request body for ``POST /api/watchlist`` (issue #321 / PRD #213 R2).\n\n``ticker`` is normalized to uppercase and stripped of surrounding\nwhitespace at this boundary, so the service layer can trust it is a\nnon-empty uppercase symbol. A blank or whitespace-only ticker is rejected\nwith ``422`` (the validator raises before the request reaches the route).",
+        "properties": {
+          "ticker": {
+            "description": "Ticker symbol to add; normalized to uppercase.",
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker"
+        ],
+        "title": "WatchlistAddRequest",
+        "type": "object"
+      },
+      "WatchlistResponse": {
+        "description": "Response shape for every watchlist endpoint (issue #321 / PRD #213 R4).\n\nAll three routes — ``GET``, ``POST``, ``DELETE`` — return the full,\ncurrent watchlist so the caller never has to issue a follow-up read after\na mutation. ``tickers`` is uppercase-normalized and returned in a stable\norder (oldest-added first). Defaults to an empty list, which is the\ncorrect representation of \"the trader hasn't approved any names yet\"\n(PRD #213: an empty watchlist is a valid state, not an error).",
+        "properties": {
+          "tickers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tickers",
+            "type": "array"
+          }
+        },
+        "title": "WatchlistResponse",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -5662,7 +5708,7 @@
   "info": {
     "description": "Backend API for financial data fetching, caching, and regression analysis",
     "title": "Financial Regression Analysis Tool",
-    "version": "1.0.0"
+    "version": "1.6.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6855,7 +6901,7 @@
     },
     "/api/options/scan": {
       "post": {
-        "description": "Scan option chain for wheel strategy opportunities.\n\nUnset rule fields on the request are resolved from the persisted\n``rules_config`` (issue #156) before the scan runs.",
+        "description": "Scan option chain for wheel strategy opportunities.\n\nThe watchlist gate runs first (issue #322 / PRD #213 R5): the scanner only\nconsiders names the trader has already approved. If the requested ticker is\nnot on the watchlist — including the empty-watchlist case — the scan is\nshort-circuited to a zero-candidate ``200`` response carrying an\nexplanatory ``empty_reason``, never an error. The watchlist is read from\nthe single source of truth (:func:`app.services.watchlist.list_watchlist`,\nissue #321), so adding or removing a ticker via the watchlist API changes\nthe next scan's universe with no code change.\n\nWhen the gate allows the scan, unset rule fields on the request are\nresolved from the persisted ``rules_config`` (issue #156) before the scan\nruns.",
         "operationId": "scan_options_api_options_scan_post",
         "requestBody": {
           "content": {
@@ -8313,6 +8359,126 @@
         "summary": "Exchange Schwab Callback",
         "tags": [
           "settings"
+        ]
+      }
+    },
+    "/api/watchlist": {
+      "get": {
+        "description": "Return the current watchlist of approved underlyings.",
+        "operationId": "get_watchlist_api_watchlist_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Watchlist",
+        "tags": [
+          "watchlist"
+        ]
+      },
+      "post": {
+        "description": "Add a ticker to the watchlist; idempotent and uppercase-normalized.\n\nThe ``ticker`` is normalized + validated by :class:`WatchlistAddRequest`,\nso a blank ticker is rejected with ``422`` before reaching this handler.",
+        "operationId": "add_watchlist_ticker_api_watchlist_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchlistAddRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Watchlist Ticker",
+        "tags": [
+          "watchlist"
+        ]
+      }
+    },
+    "/api/watchlist/{ticker}": {
+      "delete": {
+        "description": "Remove a ticker from the watchlist; idempotent.\n\nThe path parameter is normalized the same way as on add, so\n``DELETE /api/watchlist/aapl`` removes ``AAPL``. Removing a ticker that is\nnot present is a no-op that returns ``200`` with the unchanged list.",
+        "operationId": "delete_watchlist_ticker_api_watchlist__ticker__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ticker",
+            "required": true,
+            "schema": {
+              "title": "Ticker",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchlistResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Watchlist Ticker",
+        "tags": [
+          "watchlist"
         ]
       }
     }

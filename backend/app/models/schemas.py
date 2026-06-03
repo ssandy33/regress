@@ -315,6 +315,17 @@ class OptionScanRequest(BaseModel):
 
 
 class OptionScanResponse(BaseModel):
+    """Response for ``POST /api/options/scan``.
+
+    The watchlist gate (issue #322 / PRD #213 R5) runs upstream of the chain
+    fetch: a scan for a ticker the trader has not approved returns zero
+    candidates with an explanatory ``empty_reason`` and a ``200`` — never an
+    error. ``watchlist_filtered`` records that the approved-universe gate was
+    applied to this scan; ``empty_reason`` is populated only when the gate
+    produced the empty result (it is ``None`` on a normal scan, including a
+    normal scan that legitimately found no strikes).
+    """
+
     ticker: str
     current_price: float
     strategy: str
@@ -324,6 +335,10 @@ class OptionScanResponse(BaseModel):
     recommendations: list[StrikeRecommendation]
     rejected: list[RejectedStrike]
     market_context: MarketContext
+    # Watchlist gate (issue #322 / PRD #213 R5). Additive + defaulted, so a
+    # pre-#322 client ignores them and the change is non-breaking.
+    watchlist_filtered: bool = True
+    empty_reason: Optional[str] = None
 
 
 # --- Journal ---
@@ -1348,4 +1363,42 @@ class FinancialsResponse(BaseModel):
     quarters: list[FinancialQuarter] = Field(default_factory=list)
     source: str
     fetched_at: str
+
+
+# --- watchlist ---
+
+
+class WatchlistResponse(BaseModel):
+    """Response shape for every watchlist endpoint (issue #321 / PRD #213 R4).
+
+    All three routes — ``GET``, ``POST``, ``DELETE`` — return the full,
+    current watchlist so the caller never has to issue a follow-up read after
+    a mutation. ``tickers`` is uppercase-normalized and returned in a stable
+    order (oldest-added first). Defaults to an empty list, which is the
+    correct representation of "the trader hasn't approved any names yet"
+    (PRD #213: an empty watchlist is a valid state, not an error).
+    """
+
+    tickers: list[str] = Field(default_factory=list)
+
+
+class WatchlistAddRequest(BaseModel):
+    """Request body for ``POST /api/watchlist`` (issue #321 / PRD #213 R2).
+
+    ``ticker`` is normalized to uppercase and stripped of surrounding
+    whitespace at this boundary, so the service layer can trust it is a
+    non-empty uppercase symbol. A blank or whitespace-only ticker is rejected
+    with ``422`` (the validator raises before the request reaches the route).
+    """
+
+    ticker: str = Field(..., description="Ticker symbol to add; normalized to uppercase.")
+
+    @field_validator("ticker")
+    @classmethod
+    def _normalize_ticker(cls, v: str) -> str:
+        """Strip + uppercase the ticker; reject blank/whitespace-only input."""
+        normalized = v.strip().upper()
+        if not normalized:
+            raise ValueError("ticker must not be empty")
+        return normalized
 

@@ -17,7 +17,7 @@ from app.config import settings as app_settings
 from app.logging_config import setup_logging
 from app.middleware import RequestLoggingMiddleware
 from app.models.database import init_db, SessionLocal
-from app.routers import assets, covered_call, dashboard, data, health, journal, legs, okrs, options, positions, regression, research, sessions, settings
+from app.routers import assets, covered_call, dashboard, data, health, journal, legs, okrs, options, positions, regression, research, sessions, settings, watchlist
 from app.services.backup import create_backup
 from app.services.cache import CacheService
 from app.services.data_fetcher import DataFetcher, DataFetchError, InvalidTickerError, DataAlignmentError
@@ -137,7 +137,7 @@ def _run_security_checks():
 app = FastAPI(
     title="Financial Regression Analysis Tool",
     description="Backend API for financial data fetching, caching, and regression analysis",
-    version="1.0.0",
+    version="1.6.0",
     lifespan=lifespan,
 )
 
@@ -169,6 +169,7 @@ app.include_router(research.router, dependencies=[Depends(get_current_user)])
 app.include_router(legs.router, dependencies=[Depends(get_current_user)])
 app.include_router(covered_call.router, dependencies=[Depends(get_current_user)])
 app.include_router(okrs.router, dependencies=[Depends(get_current_user)])
+app.include_router(watchlist.router, dependencies=[Depends(get_current_user)])
 
 
 # --- Exception handlers ---

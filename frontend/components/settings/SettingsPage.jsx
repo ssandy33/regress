@@ -11,6 +11,7 @@ import DangerZone from './DangerZone';
 import ReconcileJournal from './ReconcileJournal';
 import TradingRulesSection from './TradingRulesSection';
 import TradingObjectivesSection from './TradingObjectivesSection';
+import WatchlistSection from './WatchlistSection';
 import { useJournal } from '../../hooks/useJournal';
 
 function freshnessColor(freshness) {
@@ -49,6 +50,7 @@ export default function SettingsPage() {
     const t = searchParams?.get('tab');
     if (t === 'rules') return 'rules';
     if (t === 'objectives') return 'objectives';
+    if (t === 'watchlist') return 'watchlist';
     return 'general';
   });
   const [settings, setSettings] = useState(null);
@@ -237,11 +239,25 @@ export default function SettingsPage() {
           >
             Trading Objectives
           </button>
+          <button
+            type="button"
+            role="tab"
+            data-testid="settings-watchlist-tab"
+            aria-selected={activeTab === 'watchlist'}
+            onClick={() => setActiveTab('watchlist')}
+            className={tabClass('watchlist')}
+          >
+            Watchlist
+          </button>
         </div>
 
         {activeTab === 'objectives' ? (
           <div role="tabpanel" aria-label="Trading Objectives">
             <TradingObjectivesSection />
+          </div>
+        ) : activeTab === 'watchlist' ? (
+          <div role="tabpanel" aria-label="Watchlist">
+            <WatchlistSection />
           </div>
         ) : activeTab === 'rules' ? (
           <div role="tabpanel" aria-label="Trading Rules">
