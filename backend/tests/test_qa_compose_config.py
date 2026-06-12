@@ -264,6 +264,45 @@ class TestQaSnapshotSelection:
             select_newest_snapshot(tmp_path / "does-not-exist")
 
 
+class TestOpsScriptInvariants:
+    """Text invariants on deploy scripts for the #332 rollout fixes."""
+
+    @pytest.mark.unit
+    def test_backup_sh_targets_exact_prod_volume(self) -> None:
+        """backup.sh resolves the prod volume by exact name, not a loose grep.
+
+        With the QA stack deployed, `grep sqlite_data | head -1` matches
+        `regress-qa_qa_sqlite_data` first (`-` sorts before `_`) and would
+        silently back up the QA database (#332).
+        """
+        content = (DEPLOY_DIR / "backup.sh").read_text()
+        assert 'PROD_VOLUME="regress_sqlite_data"' in content
+        assert 'grep -qx "$PROD_VOLUME"' in content
+        assert "grep sqlite_data | head -1" not in content
+
+    @pytest.mark.unit
+    def test_qa_refresh_db_scrubs_all_encrypted_setting_keys(self) -> None:
+        """qa-refresh-db.sh scrubs every ENCRYPTED_SETTING_KEYS row post-restore.
+
+        QA has no SCHWAB_ENCRYPTION_KEY; the backend's fail-closed startup
+        check refuses to boot while these rows exist (#332). The script's
+        DELETE must cover the canonical key list from app.services.encryption
+        so the two can't drift.
+        """
+        from app.services.encryption import ENCRYPTED_SETTING_KEYS
+
+        content = (DEPLOY_DIR / "qa-refresh-db.sh").read_text()
+        assert "DELETE FROM app_settings" in content
+        for key in ENCRYPTED_SETTING_KEYS:
+            assert f"'{key}'" in content
+
+    @pytest.mark.unit
+    def test_qa_refresh_db_uses_python3_on_host(self) -> None:
+        """Host-side snapshot selection calls python3 — the VPS has no bare python (#332)."""
+        content = (DEPLOY_DIR / "qa-refresh-db.sh").read_text()
+        assert "python3 -m scripts.qa_snapshot" in content
+
+
 class TestQaManualInfraACs:
     """Live-infra ACs that cannot run in CI — recorded as skipped per CLAUDE.md.
 

@@ -26,9 +26,19 @@ echo ""
 echo ">>> Copying SQLite database..."
 CONTAINER_NAME=$(docker compose -f docker-compose.prod.yml ps -q backend 2>/dev/null || true)
 
+# Fully-qualified prod volume name (issue #332). A loose `grep sqlite_data`
+# also matches the QA stack's `regress-qa_qa_sqlite_data` — which sorts FIRST
+# (`-` < `_`), so `head -1` would silently back up the QA database instead.
+PROD_VOLUME="regress_sqlite_data"
+if ! docker volume ls -q | grep -qx "$PROD_VOLUME"; then
+    echo "ERROR: prod volume '$PROD_VOLUME' not found — refusing to guess." >&2
+    docker compose -f docker-compose.prod.yml start backend
+    exit 1
+fi
+
 # Use a temporary container to access the volume
 docker run --rm \
-    -v "$(docker volume ls -q | grep sqlite_data | head -1)":/data \
+    -v "$PROD_VOLUME":/data \
     -v "$BACKUP_DIR":/backup \
     alpine:latest \
     cp /data/regression_tool.db "/backup/${BACKUP_FILE}" 2>/dev/null || {
