@@ -74,12 +74,12 @@ fi
 # 3. Stop qa-backend for a clean SQLite copy (WAL/lock safety)
 # --------------------------------------------------
 echo ">>> Stopping qa-backend..."
-$COMPOSE stop backend
+$COMPOSE stop qa-backend
 echo ""
 
 # From here on qa-backend is down. Restart it on ANY exit so a failed restore
 # can't leave QA offline; the happy path clears the trap before its own restart.
-trap '$COMPOSE start backend || true' EXIT
+trap '$COMPOSE start qa-backend || true' EXIT
 
 # --------------------------------------------------
 # 4. Overwrite the DB in the QA volume via a throwaway alpine container
@@ -109,7 +109,7 @@ echo ""
 # the key — so an unscrubbed restore puts qa-backend in a restart loop. The
 # key list mirrors ENCRYPTED_SETTING_KEYS in app/services/encryption.py.
 echo ">>> Scrubbing Schwab tokens (QA runs without SCHWAB_ENCRYPTION_KEY)..."
-$COMPOSE run --rm --no-deps backend python -c "
+$COMPOSE run --rm --no-deps qa-backend python -c "
 import sqlite3
 conn = sqlite3.connect('/app/data/regression_tool.db')
 cur = conn.execute(
@@ -126,7 +126,7 @@ echo ""
 # --------------------------------------------------
 echo ">>> Restarting qa-backend..."
 trap - EXIT
-$COMPOSE start backend
+$COMPOSE start qa-backend
 echo ""
 
 echo "=== QA DB refresh complete ==="

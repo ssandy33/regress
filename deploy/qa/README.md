@@ -1,7 +1,7 @@
 # QA Environment (issue #330)
 
 A second Docker Compose project (`regress-qa`) on the **same VPS** as prod,
-served at `qa.<domain>`. QA runs only `backend` + `frontend` — no Caddy, no
+served at `qa.<domain>`. QA runs only `qa-backend` + `qa-frontend` — no Caddy, no
 Loki, no Grafana. The **existing prod Caddy** terminates TLS for `qa.<domain>`
 and reverse-proxies to the QA containers across a shared external Docker network
 (`caddy_net`) using the `qa-backend` / `qa-frontend` aliases.
