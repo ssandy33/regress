@@ -99,6 +99,22 @@ jobs:
           path: backend/coverage-integration.xml
           if-no-files-found: ignore
 
+  # Issue #330: validate the QA compose file structurally. `docker compose
+  # config -q` parses + schema-validates docker-compose.qa.yml, so a malformed
+  # QA compose fails CI here (the dynamic mirror of the static assertions in
+  # backend/tests/test_qa_compose_config.py). The DOMAIN env is set so the
+  # ${DOMAIN} interpolation in NEXTAUTH_URL resolves during validation.
+  qa-compose-validate:
+    name: QA compose validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate QA compose file
+        env:
+          DOMAIN: regression.example.com
+        run: docker compose -f docker-compose.qa.yml config -q
+
   frontend-checks:
     name: Frontend checks (lint + build)
     runs-on: ubuntu-latest

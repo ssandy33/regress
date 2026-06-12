@@ -63,3 +63,55 @@
 		}
 	}
 }
+
+# QA site block (issue #330). Same prod Caddy terminates TLS for qa.{$DOMAIN}
+# and reverse-proxies to the QA stack (docker-compose.qa.yml) across the shared
+# external caddy_net using the qa-backend / qa-frontend service aliases.
+#
+# Intentionally NO /grafana handler and NO basic-auth placeholder here: QA has
+# no Grafana, and caddy-entrypoint.sh only injects BASIC_AUTH into the prod
+# block's placeholder, so QA stays open by design. TLS for qa.{$DOMAIN} requires
+# the qa. DNS A record to resolve to the VPS IP before this block is deployed
+# (otherwise ACME issuance fails for QA only; the prod block is unaffected).
+qa.{$DOMAIN} {
+	# Compression
+	encode gzip
+
+	# Security headers (same set as the prod block; CSP is owned by Next.js)
+	header {
+		X-Frame-Options "DENY"
+		X-Content-Type-Options "nosniff"
+		X-XSS-Protection "1; mode=block"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# NextAuth routes — handled by the QA frontend, not the backend
+	handle /api/auth/* {
+		reverse_proxy qa-frontend:8080 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# API reverse proxy
+	handle /api/* {
+		reverse_proxy qa-backend:8000 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	# Frontend reverse proxy
+	handle {
+		reverse_proxy qa-frontend:8080 {
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}

@@ -17,6 +17,12 @@ services:
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-}
       - BASIC_AUTH_PASS=${BASIC_AUTH_PASS:-}
     entrypoint: /entrypoint.sh
+    # Joins the shared external caddy_net so this prod Caddy can reverse-proxy
+    # the QA stack (qa-backend / qa-frontend aliases) for the qa.{$DOMAIN} site
+    # block. See docker-compose.qa.yml and deploy/qa/README.md (issue #330).
+    networks:
+      - default
+      - caddy_net
     depends_on:
       frontend:
         condition: service_healthy
@@ -95,6 +101,9 @@ services:
       - AXIOM_DATASET=${AXIOM_DATASET:-regression-tool}
     volumes:
       - sqlite_data:/app/data
+    networks:
+      - default
+      - caddy_net
     logging:
       driver: loki
       options:
@@ -128,6 +137,9 @@ services:
       - GITHUB_SECRET=${GITHUB_SECRET:-}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-}
       - ALLOWED_USERS=${ALLOWED_USERS:-}
+    networks:
+      - default
+      - caddy_net
     logging:
       driver: loki
       options:
@@ -146,6 +158,18 @@ services:
       resources:
         limits:
           memory: 256M
+
+networks:
+  # Implicit project network, kept for intra-prod service DNS
+  # (caddy -> backend/frontend, grafana -> loki, etc.).
+  default:
+  # Shared cross-stack network the QA stack (docker-compose.qa.yml) also joins,
+  # so this prod Caddy can resolve qa-backend / qa-frontend. Declared external:
+  # neither stack auto-creates it. Create once on the box with
+  # `docker network create caddy_net` (deploy/qa-deploy.sh and deploy/update.sh
+  # both create it defensively). See deploy/qa/README.md (issue #330).
+  caddy_net:
+    external: true
 
 volumes:
   sqlite_data:
