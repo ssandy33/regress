@@ -36,6 +36,9 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             mkdir -p data data/backups
+            # docker-compose.prod.yml declares caddy_net as external (issue
+            # #330) — `up -d` fails if it doesn't exist on the box yet.
+            docker network create caddy_net 2>/dev/null || true
             if git diff --name-only "$OLD_HEAD" HEAD | grep -q "deploy/Caddyfile"; then
               echo "Caddyfile changed — clearing Caddy TLS cache to force cert re-issuance"
               docker compose -f docker-compose.prod.yml rm -sf caddy

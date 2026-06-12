@@ -53,16 +53,20 @@ echo ""
 echo ">>> Waiting for QA services to become healthy..."
 sleep 10
 
+# Success is BOTH services reporting (healthy) — not merely the absence of
+# "unhealthy|starting" output. A container that exited or is restart-looping
+# must fail the deploy, not print a false green.
+EXPECTED_HEALTHY=2
 MAX_RETRIES=12
 RETRY_COUNT=0
 while [ "$RETRY_COUNT" -lt "$MAX_RETRIES" ]; do
-    if $COMPOSE ps | grep -q "unhealthy\|starting"; then
-        echo "  Waiting for services... ($(( RETRY_COUNT + 1 ))/${MAX_RETRIES})"
-        sleep 10
-        RETRY_COUNT=$(( RETRY_COUNT + 1 ))
-    else
+    HEALTHY_COUNT=$($COMPOSE ps | grep -c "(healthy)" || true)
+    if [ "$HEALTHY_COUNT" -ge "$EXPECTED_HEALTHY" ]; then
         break
     fi
+    echo "  Waiting for services... ($(( RETRY_COUNT + 1 ))/${MAX_RETRIES})"
+    sleep 10
+    RETRY_COUNT=$(( RETRY_COUNT + 1 ))
 done
 echo ""
 
@@ -72,6 +76,13 @@ echo ""
 echo ">>> QA container status:"
 $COMPOSE ps
 echo ""
+
+HEALTHY_COUNT=$($COMPOSE ps | grep -c "(healthy)" || true)
+if [ "$HEALTHY_COUNT" -lt "$EXPECTED_HEALTHY" ]; then
+    echo "ERROR: QA deploy failed — only ${HEALTHY_COUNT}/${EXPECTED_HEALTHY} services are healthy." >&2
+    echo "       Inspect with: $COMPOSE ps && $COMPOSE logs --tail=100" >&2
+    exit 1
+fi
 
 echo "=========================================="
 echo ""

@@ -76,23 +76,34 @@ echo ">>> Stopping qa-backend..."
 $COMPOSE stop backend
 echo ""
 
+# From here on qa-backend is down. Restart it on ANY exit so a failed restore
+# can't leave QA offline; the happy path clears the trap before its own restart.
+trap '$COMPOSE start backend || true' EXIT
+
 # --------------------------------------------------
 # 4. Overwrite the DB in the QA volume via a throwaway alpine container
 #    (same volume-access pattern as deploy/backup.sh). In-place, no temp copies.
 # --------------------------------------------------
 echo ">>> Restoring snapshot into $QA_VOLUME (in place)..."
 SNAP_BASENAME="$(basename "$SOURCE_SNAPSHOT")"
+# chown to the qa-backend runtime user (1000:1000 in docker-compose.qa.yml) —
+# the copy runs as root, and a root-owned DB breaks the backend's first write.
+# Stale -wal/-shm sidecars from the previous DB are removed so SQLite can't
+# replay an old WAL against the freshly restored file.
 docker run --rm \
     -v "$RESOLVED_VOLUME":/data \
     -v "$(cd "$(dirname "$SOURCE_SNAPSHOT")" && pwd)":/snapshot:ro \
     alpine:latest \
-    sh -c "cp /snapshot/'$SNAP_BASENAME' /data/regression_tool.db"
+    sh -c "rm -f /data/regression_tool.db-wal /data/regression_tool.db-shm \
+        && cp /snapshot/'$SNAP_BASENAME' /data/regression_tool.db \
+        && chown 1000:1000 /data/regression_tool.db"
 echo ""
 
 # --------------------------------------------------
 # 5. Restart qa-backend (re-opens the fresh DB)
 # --------------------------------------------------
 echo ">>> Restarting qa-backend..."
+trap - EXIT
 $COMPOSE start backend
 echo ""
 

@@ -90,11 +90,13 @@ class TestQaComposeServices:
 
     @pytest.mark.unit
     def test_qa_compose_memory_limits_set_on_all_services(self, qa_config: dict) -> None:
-        """Every service has deploy.resources.limits.memory; sum <= cap."""
+        """Each service carries its documented cap (backend 384M, frontend 192M); sum <= cap."""
+        expected_mb = {"backend": 384, "frontend": 192}
         total = 0
-        for svc in qa_config["services"].values():
-            mem = svc["deploy"]["resources"]["limits"]["memory"]
-            total += _mem_limit_to_mb(mem)
+        for name, svc in qa_config["services"].items():
+            mem = _mem_limit_to_mb(svc["deploy"]["resources"]["limits"]["memory"])
+            assert mem == expected_mb[name]
+            total += mem
         assert total <= QA_MEMORY_CAP_MB
 
     @pytest.mark.unit

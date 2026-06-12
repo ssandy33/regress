@@ -26,6 +26,7 @@ services:
         required: false
     environment:
       - FRED_API_KEY=${FRED_API_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-}
       - DATABASE_URL=sqlite:///./data/regression_tool.db
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
       - ALLOWED_USERS=${ALLOWED_USERS:-}
