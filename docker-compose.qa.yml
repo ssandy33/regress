@@ -1,0 +1,97 @@
+# QA stack (issue #330) — second compose project `regress-qa` on the same VPS.
+#
+# Runs ONLY backend + frontend. No Caddy, no Loki, no Grafana, no host ports:
+# the existing prod Caddy terminates TLS for qa.{$DOMAIN} and reverse-proxies
+# here across the shared external caddy_net via the qa-backend / qa-frontend
+# aliases.
+#
+# Deploy with the regress-qa project name so volumes/containers are namespaced
+# (qa_ prefix + regress-qa_ project prefix => no collision with prod regress_*):
+#   docker compose -p regress-qa -f docker-compose.qa.yml up -d --build
+# (deploy/qa-deploy.sh wraps this.)
+#
+# Observability: Axiom only, routed to the dedicated dataset
+# AXIOM_DATASET=regression-tool-qa (zero backend code change). Container stdout
+# uses Docker's default json-file driver (`docker logs qa-backend`), NOT the
+# loki driver — QA has no Loki/Grafana, and the loki driver is a host-wide
+# plugin that would error on push without a Loki endpoint.
+services:
+  backend:
+    build: ./backend
+    container_name: qa-backend
+    # Run as the non-root appuser (UID/GID 1000) created in backend/Dockerfile.
+    user: "1000:1000"
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      - FRED_API_KEY=${FRED_API_KEY}
+      - DATABASE_URL=sqlite:///./data/regression_tool.db
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      - ALLOWED_USERS=${ALLOWED_USERS:-}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      # No SCHWAB_ENCRYPTION_KEY in QA — QA runs in degraded (no-Schwab) mode.
+      - AXIOM_API_TOKEN=${AXIOM_API_TOKEN:-}
+      - AXIOM_DATASET=${AXIOM_DATASET:-regression-tool-qa}
+    volumes:
+      - qa_sqlite_data:/app/data
+    networks:
+      caddy_net:
+        aliases:
+          - qa-backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          # 4 GB box, comfortable tier (verified ~1.9Gi available). Hard cap —
+          # an OOM-killed QA container restarts and never starves prod.
+          memory: 384M
+
+  frontend:
+    build: ./frontend
+    container_name: qa-frontend
+    # Run as the non-root node user (UID/GID 1000) from the Node base image.
+    user: "1000:1000"
+    environment:
+      - HOSTNAME=0.0.0.0
+      - INTERNAL_API_ORIGIN=http://qa-backend:8000
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      - GITHUB_ID=${GITHUB_ID:-}
+      - GITHUB_SECRET=${GITHUB_SECRET:-}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://qa.${DOMAIN}}
+      - ALLOWED_USERS=${ALLOWED_USERS:-}
+    networks:
+      caddy_net:
+        aliases:
+          - qa-frontend
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://127.0.0.1:8080/', (r) => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+networks:
+  # Shared cross-stack network the prod stack (docker-compose.prod.yml) also
+  # joins, so the prod Caddy resolves qa-backend / qa-frontend. external: true —
+  # neither stack auto-creates it. Create once with `docker network create
+  # caddy_net` (deploy/qa-deploy.sh does this defensively).
+  caddy_net:
+    external: true
+
+volumes:
+  # Real volume name under -p regress-qa is `regress-qa_qa_sqlite_data`
+  # (referenced by deploy/qa-refresh-db.sh). Double-namespaced => no collision
+  # with prod's `regress_sqlite_data`.
+  qa_sqlite_data:

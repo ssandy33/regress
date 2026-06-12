@@ -31,6 +31,26 @@ The regression_tool backend supports optional centralized logging via [Axiom](ht
 
 Unset `AXIOM_API_TOKEN` and restart. Behavior reverts to stdout-only — no Axiom code is exercised, no background thread is started.
 
+## QA dataset (issue #330)
+
+The QA stack (`docker-compose.qa.yml`) is the QA distinguisher for observability:
+it reuses the **same** `AXIOM_API_TOKEN` as prod but routes every event to a
+**dedicated dataset**, `AXIOM_DATASET=regression-tool-qa`, so prod and QA logs
+never interleave. This is a zero-code-change distinguisher — `AXIOM_DATASET` is
+already env-driven.
+
+| | Prod | QA |
+|---|---|---|
+| `AXIOM_DATASET` | `regression-tool` | `regression-tool-qa` |
+| Compose file | `docker-compose.prod.yml` | `docker-compose.qa.yml` |
+| Container stdout | Loki driver → Loki/Grafana | default json-file (`docker logs qa-backend`) |
+
+QA has **no Loki/Grafana** — the loki log driver is a host-wide plugin pointing
+at `localhost:3100`, which QA doesn't run. The QA compose therefore omits the
+`logging:` block entirely and uses Docker's default `json-file` driver. Axiom
+carries the structured logs; `docker logs qa-backend` is the local fallback.
+Create the `regression-tool-qa` dataset in the Axiom UI before first QA deploy.
+
 ## How it works
 
 - `backend/app/logging_axiom.py` implements `AxiomHandler`, a `logging.Handler` subclass.

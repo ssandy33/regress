@@ -1,0 +1,102 @@
+#!/bin/bash
+set -euo pipefail
+
+# ============================================================
+# QA environment — on-demand DB refresh (issue #330)
+# ============================================================
+# Seeds the QA SQLite volume from the newest prod backup snapshot written by
+# deploy/backup.sh (../regress/backups/regression_tool_<timestamp>.db).
+#
+# The restore is an IN-PLACE overwrite of the single regression_tool.db inside
+# the QA volume — it never accumulates copies (the box runs disk-constrained).
+# Re-running is idempotent.
+#
+# Usage (on the VPS, from the QA clone at /root/regress-qa):
+#   bash deploy/qa-refresh-db.sh
+#
+# Overrides:
+#   BACKUP_DIR=/path/to/backups  bash deploy/qa-refresh-db.sh
+#   SNAPSHOT=/path/to/snap.db    bash deploy/qa-refresh-db.sh   # skip selection
+
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$APP_DIR"
+
+COMPOSE="docker compose -p regress-qa -f docker-compose.qa.yml"
+
+# Prod backups live alongside the prod clone (../regress/backups by default).
+BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/../regress/backups}"
+
+# Fully-qualified QA volume name. NOTE: must match `regress-qa_qa_sqlite_data`
+# exactly — a bare `grep sqlite_data` would also match the prod volume
+# `regress_sqlite_data` and risk clobbering prod (see plan risk #5).
+QA_VOLUME="regress-qa_qa_sqlite_data"
+
+echo "=== QA DB refresh ==="
+echo ""
+
+# --------------------------------------------------
+# 1. Select the source snapshot
+# --------------------------------------------------
+if [ -n "${SNAPSHOT:-}" ]; then
+    SOURCE_SNAPSHOT="$SNAPSHOT"
+    if [ ! -f "$SOURCE_SNAPSHOT" ]; then
+        echo "ERROR: SNAPSHOT override not found: $SOURCE_SNAPSHOT" >&2
+        exit 1
+    fi
+else
+    echo ">>> Selecting newest snapshot in $BACKUP_DIR ..."
+    # Pure-Python selection (unit-tested via backend/scripts/qa_snapshot.py).
+    SOURCE_SNAPSHOT="$(cd "$APP_DIR/backend" && python -m scripts.qa_snapshot "$BACKUP_DIR")" || {
+        echo "ERROR: no snapshot found. Run deploy/backup.sh on prod first." >&2
+        exit 1
+    }
+fi
+
+SNAP_SIZE=$(du -h "$SOURCE_SNAPSHOT" | cut -f1)
+SNAP_TIME=$(date -r "$SOURCE_SNAPSHOT" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
+echo "    Source:    $SOURCE_SNAPSHOT"
+echo "    Size:      $SNAP_SIZE"
+echo "    Modified:  $SNAP_TIME"
+echo ""
+
+# --------------------------------------------------
+# 2. Resolve the QA volume exactly (collision-safe)
+# --------------------------------------------------
+RESOLVED_VOLUME=$(docker volume ls -q | grep -x "$QA_VOLUME" || true)
+if [ -z "$RESOLVED_VOLUME" ]; then
+    echo "ERROR: QA volume '$QA_VOLUME' not found. Deploy the QA stack first" >&2
+    echo "       (bash deploy/qa-deploy.sh)." >&2
+    exit 1
+fi
+
+# --------------------------------------------------
+# 3. Stop qa-backend for a clean SQLite copy (WAL/lock safety)
+# --------------------------------------------------
+echo ">>> Stopping qa-backend..."
+$COMPOSE stop backend
+echo ""
+
+# --------------------------------------------------
+# 4. Overwrite the DB in the QA volume via a throwaway alpine container
+#    (same volume-access pattern as deploy/backup.sh). In-place, no temp copies.
+# --------------------------------------------------
+echo ">>> Restoring snapshot into $QA_VOLUME (in place)..."
+SNAP_BASENAME="$(basename "$SOURCE_SNAPSHOT")"
+docker run --rm \
+    -v "$RESOLVED_VOLUME":/data \
+    -v "$(cd "$(dirname "$SOURCE_SNAPSHOT")" && pwd)":/snapshot:ro \
+    alpine:latest \
+    sh -c "cp /snapshot/'$SNAP_BASENAME' /data/regression_tool.db"
+echo ""
+
+# --------------------------------------------------
+# 5. Restart qa-backend (re-opens the fresh DB)
+# --------------------------------------------------
+echo ">>> Restarting qa-backend..."
+$COMPOSE start backend
+echo ""
+
+echo "=== QA DB refresh complete ==="
+echo "    Restored from: $SOURCE_SNAPSHOT ($SNAP_SIZE, $SNAP_TIME)"
+echo "    Into volume:   $QA_VOLUME -> /app/data/regression_tool.db"
+echo ""
