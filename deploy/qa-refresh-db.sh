@@ -46,7 +46,8 @@ if [ -n "${SNAPSHOT:-}" ]; then
 else
     echo ">>> Selecting newest snapshot in $BACKUP_DIR ..."
     # Pure-Python selection (unit-tested via backend/scripts/qa_snapshot.py).
-    SOURCE_SNAPSHOT="$(cd "$APP_DIR/backend" && python -m scripts.qa_snapshot "$BACKUP_DIR")" || {
+    # python3 explicitly — the VPS has no bare `python` (issue #332).
+    SOURCE_SNAPSHOT="$(cd "$APP_DIR/backend" && python3 -m scripts.qa_snapshot "$BACKUP_DIR")" || {
         echo "ERROR: no snapshot found. Run deploy/backup.sh on prod first." >&2
         exit 1
     }
@@ -73,12 +74,12 @@ fi
 # 3. Stop qa-backend for a clean SQLite copy (WAL/lock safety)
 # --------------------------------------------------
 echo ">>> Stopping qa-backend..."
-$COMPOSE stop backend
+$COMPOSE stop qa-backend
 echo ""
 
 # From here on qa-backend is down. Restart it on ANY exit so a failed restore
 # can't leave QA offline; the happy path clears the trap before its own restart.
-trap '$COMPOSE start backend || true' EXIT
+trap '$COMPOSE start qa-backend || true' EXIT
 
 # --------------------------------------------------
 # 4. Overwrite the DB in the QA volume via a throwaway alpine container
@@ -100,11 +101,32 @@ docker run --rm \
 echo ""
 
 # --------------------------------------------------
-# 5. Restart qa-backend (re-opens the fresh DB)
+# 5. Scrub Schwab tokens from the restored snapshot (issue #332)
+# --------------------------------------------------
+# Prod snapshots carry encrypted Schwab tokens in app_settings. QA has no
+# SCHWAB_ENCRYPTION_KEY by design, and the backend's fail-closed startup check
+# (app/main.py _run_security_checks) refuses to boot when tokens exist without
+# the key — so an unscrubbed restore puts qa-backend in a restart loop. The
+# key list mirrors ENCRYPTED_SETTING_KEYS in app/services/encryption.py.
+echo ">>> Scrubbing Schwab tokens (QA runs without SCHWAB_ENCRYPTION_KEY)..."
+$COMPOSE run --rm --no-deps qa-backend python -c "
+import sqlite3
+conn = sqlite3.connect('/app/data/regression_tool.db')
+cur = conn.execute(
+    \"DELETE FROM app_settings WHERE key IN \"
+    \"('schwab_access_token','schwab_refresh_token','schwab_app_key','schwab_app_secret')\"
+)
+conn.commit()
+print(f'    Scrubbed {cur.rowcount} Schwab token row(s)')
+"
+echo ""
+
+# --------------------------------------------------
+# 6. Restart qa-backend (re-opens the fresh DB)
 # --------------------------------------------------
 echo ">>> Restarting qa-backend..."
 trap - EXIT
-$COMPOSE start backend
+$COMPOSE start qa-backend
 echo ""
 
 echo "=== QA DB refresh complete ==="

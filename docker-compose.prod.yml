@@ -101,9 +101,10 @@ services:
       - AXIOM_DATASET=${AXIOM_DATASET:-regression-tool}
     volumes:
       - sqlite_data:/app/data
-    networks:
-      - default
-      - caddy_net
+    # NOT on caddy_net (issue #334): only the prod Caddy joins the shared
+    # network — it reaches this service over the project-default network.
+    # Keeping prod services off caddy_net stops their implicit service-name
+    # DNS aliases from colliding with the QA stack's on the shared network.
     logging:
       driver: loki
       options:
@@ -137,9 +138,7 @@ services:
       - GITHUB_SECRET=${GITHUB_SECRET:-}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-}
       - ALLOWED_USERS=${ALLOWED_USERS:-}
-    networks:
-      - default
-      - caddy_net
+    # NOT on caddy_net — see the backend service note (issue #334).
     logging:
       driver: loki
       options:

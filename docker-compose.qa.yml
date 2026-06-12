@@ -16,7 +16,11 @@
 # loki driver — QA has no Loki/Grafana, and the loki driver is a host-wide
 # plugin that would error on push without a Loki endpoint.
 services:
-  backend:
+  # Service names are qa-prefixed ON PURPOSE (issue #334): Compose adds each
+  # service's NAME as an implicit DNS alias on every attached network. Naming
+  # these `backend`/`frontend` made them answer to prod's service names on the
+  # shared caddy_net, and prod Caddy round-robined live traffic into QA.
+  qa-backend:
     build: ./backend
     container_name: qa-backend
     # Run as the non-root appuser (UID/GID 1000) created in backend/Dockerfile.
@@ -54,7 +58,7 @@ services:
           # an OOM-killed QA container restarts and never starves prod.
           memory: 384M
 
-  frontend:
+  qa-frontend:
     build: ./frontend
     container_name: qa-frontend
     # Run as the non-root node user (UID/GID 1000) from the Node base image.

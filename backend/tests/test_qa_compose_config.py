@@ -68,7 +68,7 @@ class TestQaComposeServices:
     @pytest.mark.unit
     def test_qa_compose_parses_and_has_backend_frontend_only(self, qa_config: dict) -> None:
         """QA defines exactly backend + frontend — no loki/grafana/caddy."""
-        assert set(qa_config["services"].keys()) == {"backend", "frontend"}
+        assert set(qa_config["services"].keys()) == {"qa-backend", "qa-frontend"}
 
     @pytest.mark.unit
     def test_qa_compose_no_host_port_mappings(self, qa_config: dict) -> None:
@@ -85,13 +85,13 @@ class TestQaComposeServices:
     @pytest.mark.unit
     def test_qa_compose_backend_mounts_qa_volume(self, qa_config: dict) -> None:
         """Backend mounts the qa_sqlite_data volume at /app/data."""
-        volumes = qa_config["services"]["backend"]["volumes"]
+        volumes = qa_config["services"]["qa-backend"]["volumes"]
         assert "qa_sqlite_data:/app/data" in volumes
 
     @pytest.mark.unit
     def test_qa_compose_memory_limits_set_on_all_services(self, qa_config: dict) -> None:
         """Each service carries its documented cap (backend 384M, frontend 192M); sum <= cap."""
-        expected_mb = {"backend": 384, "frontend": 192}
+        expected_mb = {"qa-backend": 384, "qa-frontend": 192}
         total = 0
         for name, svc in qa_config["services"].items():
             mem = _mem_limit_to_mb(svc["deploy"]["resources"]["limits"]["memory"])
@@ -102,7 +102,7 @@ class TestQaComposeServices:
     @pytest.mark.unit
     def test_qa_compose_omits_schwab_encryption_key(self, qa_config: dict) -> None:
         """Schwab vars absent — QA runs in degraded (no-Schwab) mode."""
-        env = qa_config["services"]["backend"]["environment"]
+        env = qa_config["services"]["qa-backend"]["environment"]
         env_keys = {item.split("=", 1)[0] for item in env}
         assert "SCHWAB_ENCRYPTION_KEY" not in env_keys
 
@@ -116,21 +116,21 @@ class TestQaComposeServices:
     @pytest.mark.unit
     def test_qa_compose_axiom_dataset_is_qa(self, qa_config: dict) -> None:
         """Backend routes Axiom logs to the dedicated regression-tool-qa dataset."""
-        env = qa_config["services"]["backend"]["environment"]
+        env = qa_config["services"]["qa-backend"]["environment"]
         dataset_line = next(e for e in env if e.startswith("AXIOM_DATASET="))
         assert "regression-tool-qa" in dataset_line
 
     @pytest.mark.unit
     def test_qa_compose_nextauth_url_is_qa_subdomain(self, qa_config: dict) -> None:
         """Frontend NEXTAUTH_URL targets the qa. subdomain."""
-        env = qa_config["services"]["frontend"]["environment"]
+        env = qa_config["services"]["qa-frontend"]["environment"]
         url_line = next(e for e in env if e.startswith("NEXTAUTH_URL="))
         assert "qa." in url_line.split("=", 1)[1]
 
     @pytest.mark.unit
     def test_qa_compose_frontend_api_origin_targets_qa_backend(self, qa_config: dict) -> None:
         """Frontend talks to qa-backend, not the prod backend alias."""
-        env = qa_config["services"]["frontend"]["environment"]
+        env = qa_config["services"]["qa-frontend"]["environment"]
         origin_line = next(e for e in env if e.startswith("INTERNAL_API_ORIGIN="))
         assert "qa-backend" in origin_line
 
@@ -143,16 +143,29 @@ class TestQaComposeNetwork:
         """caddy_net is declared external and both services attach to it."""
         net = qa_config["networks"]["caddy_net"]
         assert net["external"] is True
-        for name in ("backend", "frontend"):
+        for name in ("qa-backend", "qa-frontend"):
             assert "caddy_net" in qa_config["services"][name]["networks"]
 
     @pytest.mark.unit
     def test_qa_compose_service_aliases(self, qa_config: dict) -> None:
         """Services publish the qa-backend / qa-frontend aliases on caddy_net."""
-        backend_net = qa_config["services"]["backend"]["networks"]["caddy_net"]
-        frontend_net = qa_config["services"]["frontend"]["networks"]["caddy_net"]
+        backend_net = qa_config["services"]["qa-backend"]["networks"]["caddy_net"]
+        frontend_net = qa_config["services"]["qa-frontend"]["networks"]["caddy_net"]
         assert "qa-backend" in backend_net["aliases"]
         assert "qa-frontend" in frontend_net["aliases"]
+
+    @pytest.mark.unit
+    def test_qa_service_names_do_not_collide_with_prod(
+        self, qa_config: dict, prod_config: dict
+    ) -> None:
+        """No QA service shares a name with any prod service (issue #334).
+
+        Compose adds each service's NAME as an implicit DNS alias on every
+        attached network. When QA's services were named backend/frontend,
+        they answered to prod's service names on the shared caddy_net and
+        prod's Caddy round-robined live traffic into the QA stack.
+        """
+        assert not set(qa_config["services"]) & set(prod_config["services"])
 
 
 class TestProdComposeNetwork:
@@ -167,6 +180,19 @@ class TestProdComposeNetwork:
     def test_prod_caddy_joins_caddy_net(self, prod_config: dict) -> None:
         """The prod caddy service attaches to caddy_net to route to QA."""
         assert "caddy_net" in prod_config["services"]["caddy"]["networks"]
+
+    @pytest.mark.unit
+    def test_prod_app_services_not_on_caddy_net(self, prod_config: dict) -> None:
+        """Only prod caddy joins the shared network (issue #334).
+
+        Prod backend/frontend stay off caddy_net so their implicit
+        service-name aliases can never be resolved by (or collide with)
+        anything on the shared network; Caddy reaches them over the
+        project-default network.
+        """
+        for name in ("backend", "frontend"):
+            networks = prod_config["services"][name].get("networks") or []
+            assert "caddy_net" not in networks
 
 
 class TestQaCaddyfile:
@@ -262,6 +288,45 @@ class TestQaSnapshotSelection:
 
         with pytest.raises(FileNotFoundError):
             select_newest_snapshot(tmp_path / "does-not-exist")
+
+
+class TestOpsScriptInvariants:
+    """Text invariants on deploy scripts for the #332 rollout fixes."""
+
+    @pytest.mark.unit
+    def test_backup_sh_targets_exact_prod_volume(self) -> None:
+        """backup.sh resolves the prod volume by exact name, not a loose grep.
+
+        With the QA stack deployed, `grep sqlite_data | head -1` matches
+        `regress-qa_qa_sqlite_data` first (`-` sorts before `_`) and would
+        silently back up the QA database (#332).
+        """
+        content = (DEPLOY_DIR / "backup.sh").read_text()
+        assert 'PROD_VOLUME="regress_sqlite_data"' in content
+        assert 'grep -qx "$PROD_VOLUME"' in content
+        assert "grep sqlite_data | head -1" not in content
+
+    @pytest.mark.unit
+    def test_qa_refresh_db_scrubs_all_encrypted_setting_keys(self) -> None:
+        """qa-refresh-db.sh scrubs every ENCRYPTED_SETTING_KEYS row post-restore.
+
+        QA has no SCHWAB_ENCRYPTION_KEY; the backend's fail-closed startup
+        check refuses to boot while these rows exist (#332). The script's
+        DELETE must cover the canonical key list from app.services.encryption
+        so the two can't drift.
+        """
+        from app.services.encryption import ENCRYPTED_SETTING_KEYS
+
+        content = (DEPLOY_DIR / "qa-refresh-db.sh").read_text()
+        assert "DELETE FROM app_settings" in content
+        for key in ENCRYPTED_SETTING_KEYS:
+            assert f"'{key}'" in content
+
+    @pytest.mark.unit
+    def test_qa_refresh_db_uses_python3_on_host(self) -> None:
+        """Host-side snapshot selection calls python3 — the VPS has no bare python (#332)."""
+        content = (DEPLOY_DIR / "qa-refresh-db.sh").read_text()
+        assert "python3 -m scripts.qa_snapshot" in content
 
 
 class TestQaManualInfraACs:
