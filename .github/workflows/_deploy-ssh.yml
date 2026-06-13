@@ -70,7 +70,14 @@ jobs:
             # docker-compose declares caddy_net as external (issue #330) —
             # `up -d` fails if it doesn't exist on the box yet.
             docker network create caddy_net 2>/dev/null || true
-            if git diff --name-only "$OLD_HEAD" HEAD | grep -q "deploy/Caddyfile"; then
+            # This stack may or may not run its own Caddy: prod terminates TLS
+            # itself; QA reuses the prod Caddy and declares no caddy service.
+            if docker compose -f ${{ inputs.compose_file }} config --services | grep -qx caddy; then
+              HAS_CADDY=yes
+            else
+              HAS_CADDY=no
+            fi
+            if [ "$HAS_CADDY" = yes ] && git diff --name-only "$OLD_HEAD" HEAD | grep -q "deploy/Caddyfile"; then
               echo "Caddyfile changed — clearing Caddy TLS cache to force cert re-issuance"
               docker compose -f ${{ inputs.compose_file }} rm -sf caddy
               PROJECT_NAME=$(basename "$(pwd)")
@@ -78,7 +85,9 @@ jobs:
             fi
             docker compose -f ${{ inputs.compose_file }} build --no-cache
             docker compose -f ${{ inputs.compose_file }} up -d
-            docker compose -f ${{ inputs.compose_file }} restart caddy
+            if [ "$HAS_CADDY" = yes ]; then
+              docker compose -f ${{ inputs.compose_file }} restart caddy
+            fi
             docker compose -f ${{ inputs.compose_file }} ps
             docker image prune -f
             ENDSSH
