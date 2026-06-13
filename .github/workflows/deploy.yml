@@ -1,4 +1,13 @@
-name: Deploy to Production
+name: Deploy
+
+# Promotion model (matches ado-pulse):
+#   merge to main ............... → QA   (qa.regression.shawnjsandy.com, tracks main HEAD)
+#   publish a -rc prerelease .... → QA   (validate the exact RC tag before promoting)
+#   publish a full release ...... → PROD (regression.shawnjsandy.com, the exact release tag)
+#   workflow_dispatch ........... → break-glass deploy to either stack
+#
+# Prod no longer auto-deploys on merge. Prod only moves when you publish a
+# GitHub Release — the release IS the deploy gate.
 
 permissions:
   contents: read
@@ -6,51 +15,50 @@ permissions:
 on:
   push:
     branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target stack"
+        type: choice
+        options: [qa, production]
+        default: qa
+      ref:
+        description: "Git ref/tag to deploy (blank = origin/main)"
+        type: string
+        default: ""
 
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
-  deploy:
+  # main HEAD, an RC prerelease, or a manual qa dispatch → QA stack
+  deploy-qa:
     needs: [ci]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy via SSH
-        uses: nick-fields/retry@v4
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_wait_seconds: 30
-          command: |
-            mkdir -p ~/.ssh
-            echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
-            chmod 600 ~/.ssh/deploy_key
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
-              -i ~/.ssh/deploy_key \
-              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'ENDSSH'
-            set -e
-            cd ~/regress
-            OLD_HEAD=$(git rev-parse HEAD)
-            git fetch origin main
-            git reset --hard origin/main
-            mkdir -p data data/backups
-            # docker-compose.prod.yml declares caddy_net as external (issue
-            # #330) — `up -d` fails if it doesn't exist on the box yet.
-            docker network create caddy_net 2>/dev/null || true
-            if git diff --name-only "$OLD_HEAD" HEAD | grep -q "deploy/Caddyfile"; then
-              echo "Caddyfile changed — clearing Caddy TLS cache to force cert re-issuance"
-              docker compose -f docker-compose.prod.yml rm -sf caddy
-              PROJECT_NAME=$(basename "$(pwd)")
-              docker volume rm "${PROJECT_NAME}_caddy_data" || true
-            fi
-            docker compose -f docker-compose.prod.yml build --no-cache
-            docker compose -f docker-compose.prod.yml up -d
-            docker compose -f docker-compose.prod.yml restart caddy
-            docker compose -f docker-compose.prod.yml ps
-            docker image prune -f
-            ENDSSH
-            SSH_EXIT=$?
-            rm -f ~/.ssh/deploy_key
-            exit $SSH_EXIT
+    if: >
+      github.event_name == 'push' ||
+      (github.event_name == 'release' && github.event.release.prerelease == true) ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'qa')
+    uses: ./.github/workflows/_deploy-ssh.yml
+    secrets: inherit
+    with:
+      environment: qa
+      deploy_dir: ~/regress-qa
+      compose_file: docker-compose.qa.yml
+      git_ref: ${{ github.event.release.tag_name || inputs.ref || 'origin/main' }}
+
+  # a full (non-RC) GitHub Release, or a manual production dispatch → PROD stack
+  deploy-prod:
+    needs: [ci]
+    if: >
+      (github.event_name == 'release' && github.event.release.prerelease == false) ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    uses: ./.github/workflows/_deploy-ssh.yml
+    secrets: inherit
+    with:
+      environment: production
+      deploy_dir: ~/regress
+      compose_file: docker-compose.prod.yml
+      git_ref: ${{ github.event.release.tag_name || inputs.ref }}
