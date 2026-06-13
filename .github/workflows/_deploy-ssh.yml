@@ -1,0 +1,87 @@
+name: _deploy-ssh
+
+# Reusable SSH deploy. Called by deploy.yml for both the QA and production
+# stacks (same VPS, separate compose projects). The caller decides which git
+# ref, directory, and compose file to use — this workflow just runs it.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "GitHub Environment name (qa | production)"
+        required: true
+        type: string
+      deploy_dir:
+        description: "Working-tree dir on the box (~/regress-qa | ~/regress)"
+        required: true
+        type: string
+      compose_file:
+        description: "Compose file to build/up (docker-compose.qa.yml | docker-compose.prod.yml)"
+        required: true
+        type: string
+      git_ref:
+        description: "Git ref to check out (origin/main | a release tag)"
+        required: true
+        type: string
+    secrets:
+      DEPLOY_SSH_KEY:
+        required: true
+      DEPLOY_USER:
+        required: true
+      DEPLOY_HOST:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}     # production can require a manual approval gate
+    concurrency:
+      group: deploy-${{ inputs.environment }}   # never two deploys racing the same stack
+      cancel-in-progress: false
+    steps:
+      - name: Guard against empty git ref
+        run: |
+          if [ -z "${{ inputs.git_ref }}" ]; then
+            echo "::error::git_ref is empty — refusing to deploy. For a manual production deploy, supply an explicit tag/ref via the 'ref' input."
+            exit 1
+          fi
+      - name: Deploy via SSH
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: |
+            mkdir -p ~/.ssh
+            echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+            chmod 600 ~/.ssh/deploy_key
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
+              -i ~/.ssh/deploy_key \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'ENDSSH'
+            set -e
+            cd ${{ inputs.deploy_dir }}
+            OLD_HEAD=$(git rev-parse HEAD)
+            git fetch origin --tags --prune
+            git reset --hard ${{ inputs.git_ref }}
+            mkdir -p data data/backups
+            # docker-compose declares caddy_net as external (issue #330) —
+            # `up -d` fails if it doesn't exist on the box yet.
+            docker network create caddy_net 2>/dev/null || true
+            if git diff --name-only "$OLD_HEAD" HEAD | grep -q "deploy/Caddyfile"; then
+              echo "Caddyfile changed — clearing Caddy TLS cache to force cert re-issuance"
+              docker compose -f ${{ inputs.compose_file }} rm -sf caddy
+              PROJECT_NAME=$(basename "$(pwd)")
+              docker volume rm "${PROJECT_NAME}_caddy_data" || true
+            fi
+            docker compose -f ${{ inputs.compose_file }} build --no-cache
+            docker compose -f ${{ inputs.compose_file }} up -d
+            docker compose -f ${{ inputs.compose_file }} restart caddy
+            docker compose -f ${{ inputs.compose_file }} ps
+            docker image prune -f
+            ENDSSH
+            SSH_EXIT=$?
+            rm -f ~/.ssh/deploy_key
+            exit $SSH_EXIT
