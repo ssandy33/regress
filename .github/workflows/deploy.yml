@@ -42,7 +42,10 @@ jobs:
       (github.event_name == 'release' && github.event.release.prerelease == true) ||
       (github.event_name == 'workflow_dispatch' && inputs.environment == 'qa')
     uses: ./.github/workflows/_deploy-ssh.yml
-    secrets: inherit
+    secrets:
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
     with:
       environment: qa
       deploy_dir: ~/regress-qa
@@ -56,7 +59,10 @@ jobs:
       (github.event_name == 'release' && github.event.release.prerelease == false) ||
       (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
     uses: ./.github/workflows/_deploy-ssh.yml
-    secrets: inherit
+    secrets:
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
     with:
       environment: production
       deploy_dir: ~/regress
