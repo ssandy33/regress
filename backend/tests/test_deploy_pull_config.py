@@ -207,20 +207,32 @@ class TestDeploySshPullByDigest:
 
     @pytest.mark.unit
     def test_deploy_yml_threads_digests_to_both_paths(self) -> None:
-        """deploy.yml passes the CI digest outputs to QA + prod deploy calls."""
+        """deploy.yml threads pinned digests to QA + prod deploy calls.
+
+        Bridge edit (SUB-3, #342): the prod path no longer reads the raw CI
+        digest directly. SUB-3 inserted a ``promote-prod`` job that re-tags the
+        recorded QA-validated digest, so ``deploy-prod`` consumes
+        ``needs.promote-prod.outputs.*`` while ``deploy-qa`` still consumes the
+        fresh ``needs.ci.outputs.*``. Both still pull by pinned digest with the
+        GHCR pull token; only the digest *source* differs by environment.
+        """
         config = yaml.safe_load(DEPLOY_WORKFLOW.read_text())
-        for job in ("deploy-qa", "deploy-prod"):
+        digest_source = {
+            "deploy-qa": "needs.ci.outputs",
+            "deploy-prod": "needs.promote-prod.outputs",
+        }
+        for job, source in digest_source.items():
             spec = config["jobs"][job]
-            # needs the ci job so the digest outputs are available.
+            # needs the upstream job so the digest outputs are available.
             assert "ci" in spec["needs"]
             with_block = spec["with"]
             assert (
                 with_block["backend_image_digest"]
-                == "${{ needs.ci.outputs.backend-digest }}"
+                == "${{ %s.backend-digest }}" % source
             )
             assert (
                 with_block["frontend_image_digest"]
-                == "${{ needs.ci.outputs.frontend-digest }}"
+                == "${{ %s.frontend-digest }}" % source
             )
             assert "GHCR_PULL_TOKEN" in spec["secrets"]
 
