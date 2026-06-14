@@ -110,9 +110,12 @@ def get_schwab_credentials() -> tuple[str, str]:
                 .first()
             )
             enc_key = get_encryption_key()
-            if key_entry:
+            # Per-field, env-wins precedence (#221): only consult the DB row
+            # for a half the env did NOT already supply. A stale ``app_settings``
+            # row must never clobber an env-supplied credential.
+            if not app_key and key_entry:
                 app_key = decrypt_value(key_entry.value) if enc_key else key_entry.value
-            if secret_entry:
+            if not app_secret and secret_entry:
                 app_secret = (
                     decrypt_value(secret_entry.value) if enc_key else secret_entry.value
                 )
