@@ -8,6 +8,14 @@ name: Deploy
 #
 # Prod no longer auto-deploys on merge. Prod only moves when you publish a
 # GitHub Release — the release IS the deploy gate.
+#
+# Image-pinned promotion (#324 / SUB-3, ADR #338): the prod path does NOT
+# rebuild. It PROMOTES the exact image digest CI built+pushed to GHCR by
+# registry-side re-tag (`docker buildx imagetools create`) — never a `docker
+# build` or `docker compose build`. The promoted digest is byte-for-byte
+# identical to what QA validated, and the QA-deployed digest is recorded as an
+# auditable run artifact (record-qa-digest job) so the prod deploy is traceable
+# back to its originating CI run.
 
 permissions:
   contents: read
@@ -56,9 +64,112 @@ jobs:
       backend_image_digest: ${{ needs.ci.outputs.backend-digest }}
       frontend_image_digest: ${{ needs.ci.outputs.frontend-digest }}
 
+  # Record the QA-deployed digests as an auditable artifact (#342 / SUB-3,
+  # ADR #338 §3: "QA-tested digest recorded as an auditable artifact").
+  #
+  # QA and prod deploys fire on DIFFERENT events (QA on push/prerelease, prod
+  # on release:published) and so never share a workflow run — a cross-job
+  # output cannot reach the prod path. The recording mechanism therefore has to
+  # be a cross-run, durable record. We write the exact @sha256: digests CI
+  # built+pushed to a run artifact (qa-deployed-digests). This is the auditable
+  # link from the running QA stack back to the originating CI build; the
+  # promote step on a later release run re-tags THESE recorded bytes.
+  record-qa-digest:
+    needs: [ci, deploy-qa]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write recorded QA digests file
+        env:
+          BACKEND_DIGEST: ${{ needs.ci.outputs.backend-digest }}
+          FRONTEND_DIGEST: ${{ needs.ci.outputs.frontend-digest }}
+        run: |
+          {
+            echo "backend-digest=${BACKEND_DIGEST}"
+            echo "frontend-digest=${FRONTEND_DIGEST}"
+          } > qa-deployed-digests.txt
+          echo "Recorded QA-deployed digests:"
+          cat qa-deployed-digests.txt
+
+      - name: Upload recorded QA digests artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-deployed-digests
+          path: qa-deployed-digests.txt
+          if-no-files-found: error
+
+  # Promote the QA-tested digest to the release tag in GHCR (#342 / SUB-3,
+  # ADR #338 §3). This is a REGISTRY-SIDE RE-TAG of the RECORDED digest —
+  # `docker buildx imagetools create` copies the existing manifest under a new
+  # tag. It is NEVER a rebuild and NEVER a publish-time source re-resolution.
+  #
+  # `needs.ci.outputs.{backend,frontend}-digest` is the recorded digest CI
+  # produced for the exact release commit (the same @sha256: bytes QA validated,
+  # since the frontend image is build-time env-agnostic — ADR #338 invariant).
+  # We feed that recorded digest to imagetools create; we do NOT resolve a bare
+  # tag from source. The promoted digest is then handed to deploy-prod so the
+  # box pulls the identical artifact.
+  promote-prod:
+    needs: [ci]
+    if: >
+      (github.event_name == 'release' && github.event.release.prerelease == false) ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend-digest: ${{ needs.ci.outputs.backend-digest }}
+      frontend-digest: ${{ needs.ci.outputs.frontend-digest }}
+    env:
+      # The release tag the promoted image is re-tagged to. On a manual
+      # production dispatch there is no release tag, so fall back to the supplied
+      # ref. The promotion's coordinate of record is always the DIGEST below;
+      # the tag is a human-readable convenience alias.
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
+      # The RECORDED QA-validated digests — read as data, never re-resolved.
+      BACKEND_DIGEST: ${{ needs.ci.outputs.backend-digest }}
+      FRONTEND_DIGEST: ${{ needs.ci.outputs.frontend-digest }}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard against empty release tag or digest
+        run: |
+          if [ -z "${RELEASE_TAG}" ]; then
+            echo "::error::No release tag — refusing to promote. Supply an explicit tag via the 'ref' input for a manual production dispatch."
+            exit 1
+          fi
+          if [ -z "${BACKEND_DIGEST}" ] || [ -z "${FRONTEND_DIGEST}" ]; then
+            echo "::error::Recorded digest missing — refusing to promote. The ci build-and-push-images job must emit backend-digest/frontend-digest."
+            exit 1
+          fi
+
+      # Registry-side re-tag of the RECORDED digest. `imagetools create` copies
+      # the source manifest (referenced by @sha256:) to the release tag without
+      # pulling or rebuilding any layer. NO `docker build` / `docker compose
+      # build` appears anywhere on this prod path (ADR #338 §3, risk R2).
+      - name: Promote backend digest to release tag (re-tag, no rebuild)
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/ssandy33/regress-backend:${RELEASE_TAG} \
+            ghcr.io/ssandy33/regress-backend@${BACKEND_DIGEST}
+
+      - name: Promote frontend digest to release tag (re-tag, no rebuild)
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/ssandy33/regress-frontend:${RELEASE_TAG} \
+            ghcr.io/ssandy33/regress-frontend@${FRONTEND_DIGEST}
+
   # a full (non-RC) GitHub Release, or a manual production dispatch → PROD stack
   deploy-prod:
-    needs: [ci]
+    needs: [ci, promote-prod]
     if: >
       (github.event_name == 'release' && github.event.release.prerelease == false) ||
       (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
@@ -73,7 +184,9 @@ jobs:
       deploy_dir: ~/regress
       compose_file: docker-compose.prod.yml
       git_ref: ${{ github.event.release.tag_name || inputs.ref }}
-      # Pull the digests CI just built+pushed to GHCR (#341/SUB-2). SUB-3 will
-      # replace these with the promoted (re-tagged) QA-validated digest.
-      backend_image_digest: ${{ needs.ci.outputs.backend-digest }}
-      frontend_image_digest: ${{ needs.ci.outputs.frontend-digest }}
+      # Pull the PROMOTED digest (#342/SUB-3) — the same @sha256: bytes QA
+      # validated and that promote-prod re-tagged to the release tag in GHCR.
+      # Sourced from the recorded CI digest, NOT a fresh build — the box never
+      # rebuilds the image.
+      backend_image_digest: ${{ needs.promote-prod.outputs.backend-digest }}
+      frontend_image_digest: ${{ needs.promote-prod.outputs.frontend-digest }}
