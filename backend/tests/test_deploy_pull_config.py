@@ -206,6 +206,21 @@ class TestDeploySshPullByDigest:
         assert "group: deploy-${{ inputs.environment }}" in deploy_ssh_text
 
     @pytest.mark.unit
+    def test_deploy_ci_job_grants_packages_write(self) -> None:
+        """The `ci` reusable-workflow call must grant packages: write.
+
+        Regression guard for the Deploy startup_failure after #345: a called
+        reusable workflow's GITHUB_TOKEN permissions are capped by the caller, so
+        ci.yml's build-and-push-images job (which needs packages: write to push
+        to GHCR) is rejected at graph-build time unless the `ci` job in deploy.yml
+        grants it. Workflow-level default is only contents: read.
+        """
+        config = yaml.safe_load(DEPLOY_WORKFLOW.read_text())
+        ci_perms = config["jobs"]["ci"]["permissions"]
+        assert ci_perms["packages"] == "write"
+        assert ci_perms["contents"] == "read"
+
+    @pytest.mark.unit
     def test_deploy_yml_threads_digests_to_both_paths(self) -> None:
         """deploy.yml threads pinned digests to QA + prod deploy calls.
 

@@ -41,6 +41,15 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
+    # A called reusable workflow's GITHUB_TOKEN permissions are CAPPED by the
+    # caller. ci.yml's build-and-push-images job (SUB-1) needs `packages: write`
+    # to push images to GHCR; the workflow-level default above is only
+    # `contents: read`, so without this grant the called job's request exceeds
+    # the cap and the whole Deploy run fails at startup (zero jobs). Grant the
+    # ci call exactly what it needs — least privilege, scoped to this job.
+    permissions:
+      contents: read
+      packages: write
 
   # main HEAD, an RC prerelease, or a manual qa dispatch → QA stack
   deploy-qa:
