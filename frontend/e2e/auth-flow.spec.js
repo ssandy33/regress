@@ -65,6 +65,14 @@ test.describe('Sign-in page @smoke @e2e', () => {
   test('shows GitHub sign-in button', async ({ page }) => {
     await page.goto('/auth/signin');
     await page.waitForLoadState('networkidle');
+    // #335: the button only renders when GitHub OAuth is configured. When it
+    // isn't (e.g. CI with no GITHUB_ID), the not-configured notice renders
+    // instead — that mutual exclusion is covered by the 'Sign-in GitHub-config
+    // state' spec below. Skip here so this baseline assertion runs only in the
+    // configured state and doesn't fail on a correctly-degraded sign-in page.
+    if (await page.getByTestId('github-not-configured').isVisible().catch(() => false)) {
+      test.skip(true, 'GitHub OAuth not configured — button intentionally hidden (#335)');
+    }
     await expect(page.getByRole('button', { name: /sign in with github/i })).toBeVisible();
   });
 
