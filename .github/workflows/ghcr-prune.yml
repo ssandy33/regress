@@ -1,0 +1,255 @@
+# Deploy-aware GHCR retention prune (SUB-5 of #324, ADR #338)
+#
+# WHY THIS EXISTS
+# ---------------
+# Once SUB-1 (#340) pushes a fresh image on every CI run, the GHCR namespace
+# (ghcr.io/ssandy33/regress-backend + ghcr.io/ssandy33/regress-frontend)
+# accumulates SHA-tagged versions rapidly. GHCR's native retention policy is
+# AGE-ONLY — it cannot tell "this SHA digest is what's live on prod" from "this
+# SHA digest is a 3-week-old PR build." A naive prune-by-age would happily
+# delete the live image or an N-1 rollback candidate.
+#
+# This workflow is therefore DEPLOY-AWARE: before deleting anything it reads the
+# currently-deployed digest(s) and builds a never-delete EXCLUSION list, then
+# only age-prunes what survives that list.
+#
+# DEPLOY-AWARE MECHANISM (the deployed-digest source)
+# ---------------------------------------------------
+# We read the currently-deployed digest from the GitHub Actions run history of
+# the "Deploy" workflow (.github/workflows/deploy.yml) via `gh run` / the GitHub
+# REST API. The most recent SUCCESSFUL Deploy run is the live coordinate; the
+# two prior successful Deploy runs are the N-1 and N-2 rollback candidates
+# (ADR #338: "Rollback = redeploy a previous (image digest, compose ref) pair").
+# We resolve each of those runs' deployed SHA back to its `sha-<short>` image
+# tag and then to the underlying @sha256: digest via `imagetools inspect`.
+#
+# Rationale for choosing the Deploy-run-history source over the alternatives in
+# issue #344's open questions:
+#   * A committed manifest file would couple the prune to a repo write on every
+#     deploy and could drift if a manual/break-glass deploy skipped the commit.
+#   * A GitHub repo/environment variable set on each deploy is viable but is an
+#     extra deploy-time write the deploy job does not perform today.
+#   * The Deploy run history already exists, is authoritative (a deploy only
+#     succeeds if it actually pulled+started the digest), and needs no new
+#     deploy-side plumbing — so the prune stays a pure consumer.
+# Once SUB-2/SUB-3 land their digest job-outputs, this step can read the digest
+# straight from the run's outputs instead of re-resolving via imagetools; the
+# exclusion-list semantics below stay identical.
+#
+# ROLLOUT (issue #344 open question + AC)
+# --------------------------------------
+# Ships DRY-RUN-FIRST. `workflow_dispatch.dry_run` defaults to **true** and the
+# weekly `schedule` cron also runs dry by passing dry_run through. The operator
+# confirms the keep-list from a dry-run before flipping to live deletes. When
+# dry_run is true the workflow logs what it WOULD delete and deletes nothing.
+
+name: GHCR retention prune
+
+on:
+  # Weekly — Mondays 04:17 UTC. Runs DRY by default (see prune step env);
+  # flip DRY_RUN_DEFAULT below to "false" only after a confirmed dry-run.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (log what would be deleted, delete nothing)"
+        type: boolean
+        default: true
+
+# packages: write is required to DELETE old package versions from GHCR.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # The two GHCR repositories this prune governs (frozen contract, ADR #338 §1).
+  BACKEND_PACKAGE: regress-backend
+  FRONTEND_PACKAGE: regress-frontend
+  GHCR_OWNER: ssandy33
+  # Age threshold (days): untagged + sha-tagged versions older than this are
+  # pruning CANDIDATES — but only AFTER the exclusion list is subtracted.
+  AGE_THRESHOLD_DAYS: "30"
+  # Rollback retention depth: live + N-1 + N-2 = 3 most-recent deployed digests
+  # are kept regardless of age (issue #344 resolved default: 3).
+  KEEP_DEPLOYED_DEPTH: "3"
+  # Schedule runs are always dry by default; manual runs honor the input.
+  DRY_RUN_DEFAULT: "true"
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    # A scheduled run and a manual workflow_dispatch could otherwise overlap and
+    # race on the same DELETE operations. Serialize so only one prune runs at a
+    # time; queue (do not cancel) so an in-flight prune is never interrupted
+    # mid-delete.
+    concurrency:
+      group: ghcr-prune
+      cancel-in-progress: false
+    steps:
+      - name: Resolve dry-run mode
+        id: mode
+        env:
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # workflow_dispatch supplies a boolean input; schedule supplies none,
+          # in which case we fall back to the safe DRY_RUN_DEFAULT ("true").
+          if [ -n "${INPUT_DRY_RUN}" ]; then
+            DRY="${INPUT_DRY_RUN}"
+          else
+            DRY="${DRY_RUN_DEFAULT}"
+          fi
+          echo "dry_run=${DRY}" >> "$GITHUB_OUTPUT"
+          echo "Prune dry_run mode: ${DRY}"
+
+      # DEPLOY-AWARE STEP — read the currently-deployed digest(s) FIRST.
+      # This MUST run before any delete decision so the exclusion list is built
+      # from live reality, not from age alone.
+      - name: Read currently-deployed digests (deploy-aware)
+        id: deployed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          GHCR_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          # Authenticate to GHCR FIRST. Without this, a failed `imagetools
+          # inspect` (an auth error rather than a missing tag) would be swallowed
+          # by the per-tag `|| true` below, the exclusion list would come back
+          # empty, and the prune could delete the live/rollback image (risk R3).
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GHCR_ACTOR}" --password-stdin
+
+          # Pull the most-recent SUCCESSFUL "Deploy" workflow runs. The newest is
+          # the LIVE deploy; the next two are the N-1 / N-2 rollback candidates.
+          # We capture each run's head SHA, which maps to its sha-<short> image
+          # tag and thus to the deployed @sha256: digest.
+          DEPTH="${KEEP_DEPLOYED_DEPTH}"
+          echo "Reading the ${DEPTH} most recent successful Deploy runs (live + N-1 + N-2)..."
+          # No `|| true` here: a real API/auth failure MUST fail the step rather
+          # than silently yield an empty deployed-SHA list. Zero matching runs is
+          # a legitimate empty result (gh exits 0) and is handled by the gate below.
+          DEPLOY_SHAS=$(gh run list \
+            --repo "${REPO}" \
+            --workflow "deploy.yml" \
+            --status success \
+            --limit "${DEPTH}" \
+            --json headSha \
+            --jq '.[].headSha')
+
+          # Map each deployed commit SHA to its short sha-<short> image tag and,
+          # where the registry is reachable, to the underlying @sha256: digest.
+          DIGESTS=""
+          for sha in ${DEPLOY_SHAS}; do
+            short="${sha:0:7}"
+            tag="sha-${short}"
+            echo "Deployed coordinate: commit ${sha} -> image tag ${tag}"
+            for pkg in "${BACKEND_PACKAGE}" "${FRONTEND_PACKAGE}"; do
+              ref="ghcr.io/${GHCR_OWNER}/${pkg}:${tag}"
+              # imagetools inspect resolves the tag to its content digest; a tag
+              # that was never pushed / already pruned is a legitimate skip. Auth
+              # failures can no longer cause an empty result here (we logged in
+              # above), and the safety gate below catches any unexpected miss.
+              digest=$(docker buildx imagetools inspect "${ref}" \
+                --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"' || true)
+              if [ -n "${digest}" ]; then
+                echo "  resolved ${ref} -> ${digest}"
+                DIGESTS="${DIGESTS} ${digest}"
+              fi
+            done
+          done
+
+          # SAFETY GATE (risk R3): if successful Deploy runs exist (so live images
+          # SHOULD be resolvable) but we resolved NONE, refuse to prune. Pruning
+          # with an empty exclusion list while live images exist could delete the
+          # live/rollback image. Fail loudly so an operator investigates.
+          if [ -n "${DEPLOY_SHAS}" ] && [ -z "${DIGESTS// /}" ]; then
+            echo "::error::Deploy runs exist but no deployed digests resolved; refusing to prune with an empty exclusion list (risk R3)."
+            exit 1
+          fi
+
+          # The deployed-digest exclusion set: live + N-1 + N-2, never deleted
+          # regardless of age. Newline-delimited for the prune step to consume.
+          {
+            echo "deployed_digests<<EOF"
+            for d in ${DIGESTS}; do echo "${d}"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Deployed-digest keep-list (live + N-1 + N-2):"
+          for d in ${DIGESTS}; do echo "  KEEP ${d}"; done
+
+      - name: Prune old GHCR versions (exclusions first, then age)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ steps.mode.outputs.dry_run }}
+          DEPLOYED_DIGESTS: ${{ steps.deployed.outputs.deployed_digests }}
+        run: |
+          set -euo pipefail
+          THRESHOLD_DAYS="${AGE_THRESHOLD_DAYS}"
+          CUTOFF_EPOCH=$(date -u -d "${THRESHOLD_DAYS} days ago" +%s)
+          echo "Age cutoff: versions older than ${THRESHOLD_DAYS} days (epoch ${CUTOFF_EPOCH}) are candidates."
+          echo "Dry run: ${DRY_RUN}"
+
+          # Build the deployed-digest exclusion set into a lookup.
+          declare -A EXCLUDED_DIGEST
+          while IFS= read -r d; do
+            [ -n "${d}" ] && EXCLUDED_DIGEST["${d}"]=1
+          done <<< "${DEPLOYED_DIGESTS}"
+          echo "Deployed digests excluded from delete: ${!EXCLUDED_DIGEST[*]:-<none>}"
+
+          prune_package() {
+            local pkg="$1"
+            echo "=== Pruning package: ${pkg} ==="
+            # List every container version for this user-owned package.
+            local versions
+            versions=$(gh api \
+              --paginate \
+              "/users/${GHCR_OWNER}/packages/container/${pkg}/versions" \
+              --jq '.[] | {id: .id, created: .created_at, digest: .name, tags: (.metadata.container.tags // [])}' \
+              || echo "")
+
+            # Walk each version. EXCLUSION list is applied FIRST; the age rule is
+            # only consulted for versions that survived all exclusions.
+            echo "${versions}" | while IFS= read -r row; do
+              [ -z "${row}" ] && continue
+              local id created digest tags
+              id=$(echo "${row}" | jq -r '.id')
+              created=$(echo "${row}" | jq -r '.created')
+              digest=$(echo "${row}" | jq -r '.digest')
+              tags=$(echo "${row}" | jq -r '.tags | join(",")')
+
+              # --- EXCLUSION 1: release-tagged versions (any v* tag) are kept
+              #     forever — these back rollback-to-a-release and audit. ---
+              if echo ",${tags}," | grep -Eq ',v[0-9]+\.[0-9]+\.[0-9]+'; then
+                echo "  KEEP (release tag) id=${id} tags=[${tags}]"
+                continue
+              fi
+
+              # --- EXCLUSION 2: the live + N-1 + N-2 deployed digests. ---
+              if [ -n "${EXCLUDED_DIGEST[${digest}]:-}" ]; then
+                echo "  KEEP (deployed live/N-1/N-2) id=${id} digest=${digest}"
+                continue
+              fi
+
+              # --- AGE RULE (applied ONLY after the exclusions above). Untagged
+              #     + sha-tagged versions older than the threshold are deleted. ---
+              local created_epoch
+              created_epoch=$(date -u -d "${created}" +%s 2>/dev/null || echo 0)
+              if [ "${created_epoch}" -ge "${CUTOFF_EPOCH}" ]; then
+                echo "  KEEP (within ${THRESHOLD_DAYS}d) id=${id} created=${created} tags=[${tags}]"
+                continue
+              fi
+
+              # Survived exclusions, failed the age rule -> delete candidate.
+              if [ "${DRY_RUN}" = "true" ]; then
+                echo "  WOULD DELETE id=${id} created=${created} tags=[${tags}] (dry run)"
+              else
+                echo "  DELETING id=${id} created=${created} tags=[${tags}]"
+                gh api --method DELETE \
+                  "/users/${GHCR_OWNER}/packages/container/${pkg}/versions/${id}"
+              fi
+            done
+          }
+
+          prune_package "${BACKEND_PACKAGE}"
+          prune_package "${FRONTEND_PACKAGE}"
+          echo "Prune complete (dry_run=${DRY_RUN})."

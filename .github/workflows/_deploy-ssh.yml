@@ -23,12 +23,29 @@ on:
         description: "Git ref to check out (origin/main | a release tag)"
         required: true
         type: string
+      backend_image_digest:
+        description: "GHCR backend image digest (sha256:...) from build-and-push-images (#341/SUB-2)"
+        required: true
+        type: string
+      frontend_image_digest:
+        description: "GHCR frontend image digest (sha256:...) from build-and-push-images (#341/SUB-2)"
+        required: true
+        type: string
     secrets:
       DEPLOY_SSH_KEY:
         required: true
       DEPLOY_USER:
         required: true
       DEPLOY_HOST:
+        required: true
+      # Fine-grained, repo-scoped read:packages PAT for pulling the CI-built
+      # images from GHCR on the box (#341/SUB-2, ADR #338 §7). The box must
+      # never hold push scope. MANUAL PREREQUISITE: create the GHCR_PULL_TOKEN
+      # repo secret in the GitHub console before the QA live-validation deploy —
+      # the config/test work does not need it, but the deploy `docker login`
+      # step below will fail without it. Expiry must not block break-glass
+      # rollback; rotate ahead of expiry.
+      GHCR_PULL_TOKEN:
         required: true
 
 permissions:
@@ -58,10 +75,34 @@ jobs:
             mkdir -p ~/.ssh
             echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
             chmod 600 ~/.ssh/deploy_key
+            # Pass the digests, GHCR actor + pull token as POSITIONAL ARGS to the
+            # remote `bash -s` ($1..$4). This keeps the heredoc SINGLE-QUOTED
+            # (<<'ENDSSH') so the existing $(...) / $VAR expressions still run on
+            # the BOX, not the runner — the build->pull swap must not change that.
+            # Actions masks the secret token in logs.
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
               -i ~/.ssh/deploy_key \
-              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'ENDSSH'
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              'bash -s' -- \
+              '${{ inputs.backend_image_digest }}' \
+              '${{ inputs.frontend_image_digest }}' \
+              '${{ github.actor }}' \
+              '${{ secrets.GHCR_PULL_TOKEN }}' <<'ENDSSH'
             set -e
+            # Image-pinned deploy (#341/SUB-2, ADR #338): the compose files now
+            # reference ghcr.io/ssandy33/regress-{backend,frontend}@${...DIGEST}.
+            # Positional args from `bash -s --` above. Exported so `docker compose
+            # pull/up` resolve the @sha256: image refs.
+            export BACKEND_IMAGE_DIGEST="$1"
+            export FRONTEND_IMAGE_DIGEST="$2"
+            GHCR_ACTOR="$3"
+            GHCR_PULL_TOKEN="$4"
+            # Authenticate to GHCR with the repo-scoped read:packages PAT so the
+            # box can pull the private images. --password-stdin keeps the token
+            # off the process list. The box never holds push scope. Requires the
+            # GHCR_PULL_TOKEN repo secret (manual GitHub-console prerequisite —
+            # see the secrets block above).
+            echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
             cd ${{ inputs.deploy_dir }}
             OLD_HEAD=$(git rev-parse HEAD)
             git fetch origin --tags --prune
@@ -83,12 +124,61 @@ jobs:
               PROJECT_NAME=$(basename "$(pwd)")
               docker volume rm "${PROJECT_NAME}_caddy_data" || true
             fi
-            docker compose -f ${{ inputs.compose_file }} build --no-cache
+            # Pull the CI-built images by @sha256: digest from GHCR (#341/SUB-2,
+            # ADR #338) instead of rebuilding on the box — prod runs the exact
+            # artifact CI tested. Compose/Caddyfile still arrive via the
+            # `git reset --hard` above.
+            docker compose -f ${{ inputs.compose_file }} pull
             docker compose -f ${{ inputs.compose_file }} up -d
             if [ "$HAS_CADDY" = yes ]; then
               docker compose -f ${{ inputs.compose_file }} restart caddy
             fi
             docker compose -f ${{ inputs.compose_file }} ps
+            # Post-deploy smoke gate (#343/SUB-4, ADR #338 §5): fail the deploy
+            # (non-zero exit) if the app does not actually serve after `up -d`.
+            # A container can start but immediately exit or serve a 502 — `up -d`
+            # + `ps` alone would let that ship silently (the v1.0.0 #229 outage).
+            #
+            # Target = the frontend's /auth/signin endpoint (the #232-fixed
+            # meaningful signal). Probing it INSIDE the frontend container with
+            # `compose exec` on 127.0.0.1:8080 mirrors the #232 healthcheck
+            # exactly and works identically for QA and prod: neither stack
+            # publishes a host port (prod is reached via Caddy on 80/443, QA via
+            # the prod Caddy on caddy_net), so there is no mapped port to curl
+            # from the box — and going through Caddy would couple the gate to
+            # TLS/DNS rather than to whether the app serves. We resolve the
+            # frontend service name from the compose file so this handles both
+            # the prod `frontend` and the QA `qa-frontend` service.
+            #
+            # Soft-fail semantics (open question in #343): the gate asserts the
+            # app SERVES (HTTP status < 400 on a rendered page), NOT data-layer
+            # health — a degraded Schwab/FRED dependency does not fail the deploy.
+            SMOKE_PATH="/auth/signin"
+            FRONTEND_SVC=$(docker compose -f ${{ inputs.compose_file }} config --services | grep -E '(^|-)frontend$' | head -1)
+            if [ -z "$FRONTEND_SVC" ]; then
+              echo "::error::Smoke gate: could not resolve a frontend service from ${{ inputs.compose_file }} — refusing to mark deploy healthy."
+              exit 1
+            fi
+            echo "Smoke gate: probing ${FRONTEND_SVC} http://127.0.0.1:8080${SMOKE_PATH} (status < 400 == serving)"
+            SMOKE_OK=no
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              CODE=$(docker compose -f ${{ inputs.compose_file }} exec -T "$FRONTEND_SVC" \
+                node -e "const http=require('http');http.get('http://127.0.0.1:8080'+process.argv[1],r=>{process.stdout.write(String(r.statusCode));process.exit(0)}).on('error',()=>{process.stdout.write('000');process.exit(0)})" \
+                "$SMOKE_PATH" 2>/dev/null || echo "000")
+              echo "Smoke gate attempt ${attempt}/10: HTTP ${CODE}"
+              if [ "$CODE" -ge 200 ] 2>/dev/null && [ "$CODE" -lt 400 ] 2>/dev/null; then
+                SMOKE_OK=yes
+                break
+              fi
+              sleep 6
+            done
+            if [ "$SMOKE_OK" != yes ]; then
+              echo "::error::Smoke gate FAILED: ${FRONTEND_SVC}${SMOKE_PATH} did not serve (status < 400) after 10 attempts — the app is not serving. Failing the deploy."
+              docker compose -f ${{ inputs.compose_file }} ps
+              docker compose -f ${{ inputs.compose_file }} logs --tail=50 "$FRONTEND_SVC" || true
+              exit 1
+            fi
+            echo "Smoke gate PASSED: ${FRONTEND_SVC}${SMOKE_PATH} is serving."
             docker image prune -f
             ENDSSH
             SSH_EXIT=$?
