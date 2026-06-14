@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 
 from app.models.database import WatchlistTicker
@@ -63,17 +64,28 @@ def add_ticker(db: DBSession, raw_ticker: str) -> list[str]:
     Normalizes ``raw_ticker`` to uppercase. Adding a ticker that already
     exists is a no-op — no duplicate row, no error (PRD #213 R2). Returns the
     full, current watchlist.
+
+    The insert is **atomic**: the present-check is only a cheap fast-path, and
+    the ``IntegrityError`` catch is what makes the add correct under
+    concurrency (#326). Two callers can both pass ``db.get(...) is None`` and
+    race to a second ``INSERT`` on the ``ticker`` primary key; the loser's
+    ``IntegrityError`` is caught and rolled back to the idempotent no-op
+    instead of surfacing as a generic 500.
     """
     ticker = normalize_ticker(raw_ticker)
     existing = db.get(WatchlistTicker, ticker)
     if existing is None:
-        db.add(
-            WatchlistTicker(
-                ticker=ticker,
-                added_at=datetime.now(timezone.utc).isoformat(),
+        try:
+            db.add(
+                WatchlistTicker(
+                    ticker=ticker,
+                    added_at=datetime.now(timezone.utc).isoformat(),
+                )
             )
-        )
-        db.commit()
+            db.commit()
+        except IntegrityError:
+            # Already present (concurrent add raced us) — idempotent no-op.
+            db.rollback()
     return list_watchlist(db)
 
 

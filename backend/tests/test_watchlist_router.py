@@ -10,6 +10,35 @@ across two engine sessions, which the in-memory fixture cannot model).
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.models.database import Base, WatchlistTicker
+from app.services.watchlist import add_ticker, list_watchlist
+
+
+@pytest.fixture()
+def db_session():
+    """In-memory SQLite session for direct service-level watchlist tests.
+
+    Mirrors the conftest ``client`` fixture's engine setup but yields a raw
+    session so the atomic-add tests (#326) can drive ``add_ticker`` directly
+    and exercise the ``IntegrityError`` path the concurrency race triggers.
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    TestSessionLocal = sessionmaker(bind=engine)
+    db = TestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+        engine.dispose()
 
 
 # --- GET /api/watchlist ---
@@ -114,10 +143,77 @@ def test_post_empty_ticker_returns_422(client, blank):
 
 
 @pytest.mark.integration
-def test_get_list_is_returned_in_stable_order(client):
-    """I10 — the list endpoint returns tickers oldest-added first."""
-    for symbol in ("AAPL", "MSFT", "NVDA"):
-        client.post("/api/watchlist", json={"ticker": symbol})
-    resp = client.get("/api/watchlist")
-    assert resp.status_code == 200
-    assert resp.json() == {"tickers": ["AAPL", "MSFT", "NVDA"]}
+def test_get_list_is_returned_in_stable_order(db_session):
+    """I10 — the list endpoint returns tickers oldest-added first (#326 nit).
+
+    Rewritten off the router path to seed **distinct** ``added_at`` values so
+    the assertion genuinely proves insertion-order sort. The original
+    three-rapid-POST version could share an identical ``added_at`` and pass by
+    the alphabetical (``AAPL < MSFT < NVDA``) tiebreaker accident rather than
+    by true oldest-first ordering. Here the rows are inserted in reverse
+    alphabetical order with increasing timestamps, so an alpha-only sort would
+    fail and only an ``added_at``-primary sort produces the expected list.
+    """
+    db_session.add_all(
+        [
+            WatchlistTicker(ticker="NVDA", added_at="2026-01-01T00:00:00+00:00"),
+            WatchlistTicker(ticker="MSFT", added_at="2026-01-02T00:00:00+00:00"),
+            WatchlistTicker(ticker="AAPL", added_at="2026-01-03T00:00:00+00:00"),
+        ]
+    )
+    db_session.commit()
+    assert list_watchlist(db_session) == ["NVDA", "MSFT", "AAPL"]
+
+
+# --- add_ticker atomicity (#326 — present-check-then-insert race) ---
+
+
+@pytest.mark.integration
+def test_add_ticker_duplicate_integrityerror_is_noop(db_session):
+    """A pre-existing row + a forced insert path is an idempotent no-op (#326).
+
+    Simulates the concurrency race: two callers both pass the present-check
+    and race to ``INSERT`` the same primary key. We pre-insert the row, then
+    bypass the fast-path present-check so ``add_ticker`` attempts the insert
+    and trips the ``ticker`` PK ``IntegrityError`` — which must be caught,
+    rolled back, and collapsed to the documented no-op (returns the unchanged
+    list, never raises). This exercises the exact code path the race triggers;
+    genuinely concurrent two-thread racing is not deterministically assertable
+    in-process (per the Wave 3 pilot lesson on not faking concurrency).
+    """
+    db_session.add(
+        WatchlistTicker(ticker="AAPL", added_at="2026-01-01T00:00:00+00:00")
+    )
+    db_session.commit()
+
+    # Force the insert path even though the row exists: patch the fast-path
+    # present-check to report "absent" so the service reaches the INSERT.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(db_session, "get", lambda *a, **k: None)
+        result = add_ticker(db_session, "AAPL")
+
+    # No raise; the unchanged single-entry list is returned.
+    assert result == ["AAPL"]
+    assert list_watchlist(db_session) == ["AAPL"]
+
+
+@pytest.mark.integration
+def test_add_ticker_atomic_no_check_then_insert_gap(db_session):
+    """The success path commits exactly one row; re-adding does not raise (#326).
+
+    Proves the happy path is unchanged (one row committed) and that a second
+    ``add_ticker`` of the same ticker is an idempotent no-op even when the
+    insert is attempted — the atomic ``try/except IntegrityError`` guard, not
+    the present-check, is what makes the duplicate safe.
+    """
+    first = add_ticker(db_session, "msft")
+    assert first == ["MSFT"]
+    assert db_session.query(WatchlistTicker).count() == 1
+
+    # Force the insert path on the duplicate add — must not raise.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(db_session, "get", lambda *a, **k: None)
+        second = add_ticker(db_session, "msft")
+
+    assert second == ["MSFT"]
+    assert db_session.query(WatchlistTicker).count() == 1
