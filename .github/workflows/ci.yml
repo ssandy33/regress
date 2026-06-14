@@ -115,6 +115,105 @@ jobs:
           DOMAIN: regression.example.com
         run: docker compose -f docker-compose.qa.yml config -q
 
+  # Image-pinned promotion (#324 / SUB-1, ADR #338): build both images once
+  # in CI and push them to GHCR tagged by commit SHA (and the release tag on a
+  # release). Downstream sub-issues pull a registry-pinned digest instead of
+  # rebuilding on the VPS. Additive — nothing in the deploy path consumes these
+  # outputs yet (SUB-2 wires deploy.yml).
+  #
+  # PRs build but DO NOT push (push is gated on event_name != 'pull_request')
+  # so fork PRs can't push to the repo's GHCR namespace. Push uses the built-in
+  # GITHUB_TOKEN with packages: write — no separate PAT is needed for pushing
+  # to the repo's own namespace (the box's pull-side PAT is a SUB-2 concern).
+  build-and-push-images:
+    name: Build + push images (GHCR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend-digest: ${{ steps.build-backend.outputs.digest }}
+      frontend-digest: ${{ steps.build-frontend.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Env-agnostic invariant guard (ADR #338): the frontend image must be
+      # build-time environment-agnostic — no NEXT_PUBLIC_* value may differ
+      # QA↔prod, or digest-promotion is void for the frontend. The only allowed
+      # build-baked var is NEXT_PUBLIC_API_URL (resolves to '' → relative URLs
+      # at build; see frontend/api/client.js). Fail CI if any OTHER NEXT_PUBLIC_*
+      # appears in the frontend source.
+      - name: Guard — no new env-baked NEXT_PUBLIC_* in frontend
+        run: |
+          offenders=$(grep -rhoE 'NEXT_PUBLIC_[A-Z0-9_]+' frontend \
+            --include='*.js' --include='*.jsx' --include='*.ts' --include='*.tsx' \
+            --exclude-dir=node_modules --exclude-dir=.next \
+            | sort -u | grep -vx 'NEXT_PUBLIC_API_URL' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::New build-baked NEXT_PUBLIC_* var(s) break the env-agnostic frontend image (ADR #338):"
+            echo "$offenders"
+            exit 1
+          fi
+          echo "OK — only NEXT_PUBLIC_API_URL is build-baked (resolves to relative URL)."
+
+      - name: Compute backend image tags
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ssandy33/regress-backend
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=tag
+          # ADR #338: :latest is never a deploy coordinate.
+          flavor: |
+            latest=false
+
+      - name: Compute frontend image tags
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ssandy33/regress-frontend
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=tag
+          # ADR #338: :latest is never a deploy coordinate.
+          flavor: |
+            latest=false
+
+      - name: Build + push backend image
+        id: build-backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build + push frontend image
+        id: build-frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   frontend-checks:
     name: Frontend checks (lint + build)
     runs-on: ubuntu-latest
