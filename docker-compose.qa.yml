@@ -7,8 +7,9 @@
 #
 # Deploy with the regress-qa project name so volumes/containers are namespaced
 # (qa_ prefix + regress-qa_ project prefix => no collision with prod regress_*):
-#   docker compose -p regress-qa -f docker-compose.qa.yml up -d --build
-# (deploy/qa-deploy.sh wraps this.)
+#   docker compose -p regress-qa -f docker-compose.qa.yml pull && \
+#     docker compose -p regress-qa -f docker-compose.qa.yml up -d
+# (deploy/qa-deploy.sh wraps this; images come from GHCR by digest, #341.)
 #
 # Observability: Axiom only, routed to the dedicated dataset
 # AXIOM_DATASET=regression-tool-qa (zero backend code change). Container stdout
@@ -21,7 +22,11 @@ services:
   # these `backend`/`frontend` made them answer to prod's service names on the
   # shared caddy_net, and prod Caddy round-robined live traffic into QA.
   qa-backend:
-    build: ./backend
+    # Image-pinned deploy (#341 / SUB-2, ADR #338): pull the CI-built artifact
+    # from GHCR by @sha256: digest. Same image as prod (build-time env-agnostic);
+    # only runtime `environment:` differs. BACKEND_IMAGE_DIGEST is exported by
+    # _deploy-ssh.yml from the build-and-push-images job before `compose pull`.
+    image: ghcr.io/ssandy33/regress-backend@${BACKEND_IMAGE_DIGEST}
     container_name: qa-backend
     # Run as the non-root appuser (UID/GID 1000) created in backend/Dockerfile.
     user: "1000:1000"
@@ -59,7 +64,9 @@ services:
           memory: 384M
 
   qa-frontend:
-    build: ./frontend
+    # Image-pinned deploy (#341 / SUB-2, ADR #338): pull by @sha256: digest.
+    # FRONTEND_IMAGE_DIGEST is exported by _deploy-ssh.yml before `compose pull`.
+    image: ghcr.io/ssandy33/regress-frontend@${FRONTEND_IMAGE_DIGEST}
     container_name: qa-frontend
     # Run as the non-root node user (UID/GID 1000) from the Node base image.
     user: "1000:1000"

@@ -82,7 +82,11 @@ services:
           memory: 128M
 
   backend:
-    build: ./backend
+    # Image-pinned deploy (#341 / SUB-2, ADR #338): pull the exact CI-built
+    # artifact from GHCR by @sha256: digest instead of rebuilding on the box.
+    # BACKEND_IMAGE_DIGEST is exported by .github/workflows/_deploy-ssh.yml from
+    # the build-and-push-images job's backend-digest output before `compose pull`.
+    image: ghcr.io/ssandy33/regress-backend@${BACKEND_IMAGE_DIGEST}
     # No ports exposed — only accessible via Caddy through Docker network
     # Run as the non-root appuser (UID/GID 1000) created in backend/Dockerfile.
     # See SECURITY.md section 2.
@@ -125,7 +129,10 @@ services:
           memory: 512M
 
   frontend:
-    build: ./frontend
+    # Image-pinned deploy (#341 / SUB-2, ADR #338): pull by @sha256: digest.
+    # FRONTEND_IMAGE_DIGEST is exported by _deploy-ssh.yml from the
+    # build-and-push-images job's frontend-digest output before `compose pull`.
+    image: ghcr.io/ssandy33/regress-frontend@${FRONTEND_IMAGE_DIGEST}
     # No ports exposed to host — only accessible via Caddy through Docker network
     # Run as the non-root node user (UID/GID 1000) from the Node base image.
     # See SECURITY.md section 2.

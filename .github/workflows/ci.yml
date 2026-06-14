@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main]
   workflow_call:
+    # Surface the build-and-push-images digests to callers (deploy.yml) so the
+    # deploy job can pull the exact CI-built artifact by @sha256: (#341/SUB-2).
+    # Job-level outputs only reach a reusable-workflow caller when re-exported
+    # here at the workflow_call level.
+    outputs:
+      backend-digest:
+        description: "GHCR backend image digest (sha256:...) from build-and-push-images"
+        value: ${{ jobs.build-and-push-images.outputs.backend-digest }}
+      frontend-digest:
+        description: "GHCR frontend image digest (sha256:...) from build-and-push-images"
+        value: ${{ jobs.build-and-push-images.outputs.frontend-digest }}
 
 permissions:
   contents: read

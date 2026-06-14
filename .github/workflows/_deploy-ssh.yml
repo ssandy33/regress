@@ -23,12 +23,29 @@ on:
         description: "Git ref to check out (origin/main | a release tag)"
         required: true
         type: string
+      backend_image_digest:
+        description: "GHCR backend image digest (sha256:...) from build-and-push-images (#341/SUB-2)"
+        required: true
+        type: string
+      frontend_image_digest:
+        description: "GHCR frontend image digest (sha256:...) from build-and-push-images (#341/SUB-2)"
+        required: true
+        type: string
     secrets:
       DEPLOY_SSH_KEY:
         required: true
       DEPLOY_USER:
         required: true
       DEPLOY_HOST:
+        required: true
+      # Fine-grained, repo-scoped read:packages PAT for pulling the CI-built
+      # images from GHCR on the box (#341/SUB-2, ADR #338 §7). The box must
+      # never hold push scope. MANUAL PREREQUISITE: create the GHCR_PULL_TOKEN
+      # repo secret in the GitHub console before the QA live-validation deploy —
+      # the config/test work does not need it, but the deploy `docker login`
+      # step below will fail without it. Expiry must not block break-glass
+      # rollback; rotate ahead of expiry.
+      GHCR_PULL_TOKEN:
         required: true
 
 permissions:
@@ -58,10 +75,34 @@ jobs:
             mkdir -p ~/.ssh
             echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
             chmod 600 ~/.ssh/deploy_key
+            # Pass the digests, GHCR actor + pull token as POSITIONAL ARGS to the
+            # remote `bash -s` ($1..$4). This keeps the heredoc SINGLE-QUOTED
+            # (<<'ENDSSH') so the existing $(...) / $VAR expressions still run on
+            # the BOX, not the runner — the build->pull swap must not change that.
+            # Actions masks the secret token in logs.
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
               -i ~/.ssh/deploy_key \
-              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} 'bash -s' <<'ENDSSH'
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              'bash -s' -- \
+              '${{ inputs.backend_image_digest }}' \
+              '${{ inputs.frontend_image_digest }}' \
+              '${{ github.actor }}' \
+              '${{ secrets.GHCR_PULL_TOKEN }}' <<'ENDSSH'
             set -e
+            # Image-pinned deploy (#341/SUB-2, ADR #338): the compose files now
+            # reference ghcr.io/ssandy33/regress-{backend,frontend}@${...DIGEST}.
+            # Positional args from `bash -s --` above. Exported so `docker compose
+            # pull/up` resolve the @sha256: image refs.
+            export BACKEND_IMAGE_DIGEST="$1"
+            export FRONTEND_IMAGE_DIGEST="$2"
+            GHCR_ACTOR="$3"
+            GHCR_PULL_TOKEN="$4"
+            # Authenticate to GHCR with the repo-scoped read:packages PAT so the
+            # box can pull the private images. --password-stdin keeps the token
+            # off the process list. The box never holds push scope. Requires the
+            # GHCR_PULL_TOKEN repo secret (manual GitHub-console prerequisite —
+            # see the secrets block above).
+            echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
             cd ${{ inputs.deploy_dir }}
             OLD_HEAD=$(git rev-parse HEAD)
             git fetch origin --tags --prune
@@ -83,7 +124,11 @@ jobs:
               PROJECT_NAME=$(basename "$(pwd)")
               docker volume rm "${PROJECT_NAME}_caddy_data" || true
             fi
-            docker compose -f ${{ inputs.compose_file }} build --no-cache
+            # Pull the CI-built images by @sha256: digest from GHCR (#341/SUB-2,
+            # ADR #338) instead of rebuilding on the box — prod runs the exact
+            # artifact CI tested. Compose/Caddyfile still arrive via the
+            # `git reset --hard` above.
+            docker compose -f ${{ inputs.compose_file }} pull
             docker compose -f ${{ inputs.compose_file }} up -d
             if [ "$HAS_CADDY" = yes ]; then
               docker compose -f ${{ inputs.compose_file }} restart caddy

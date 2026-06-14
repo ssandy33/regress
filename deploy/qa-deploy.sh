@@ -41,10 +41,18 @@ git pull
 echo ""
 
 # --------------------------------------------------
-# 3. Build and start the QA stack
+# 3. Pull the CI-built images by digest and start the QA stack
 # --------------------------------------------------
-echo ">>> Building and starting QA containers..."
-$COMPOSE up -d --build
+# Image-pinned deploy (#341/SUB-2, ADR #338): the QA compose now references
+# ghcr.io/ssandy33/regress-{backend,frontend}@${...DIGEST} instead of building
+# from source — parity with the CI deploy path. For a manual run, export the
+# digests CI emitted (build-and-push-images job outputs) and `docker login
+# ghcr.io` with a read:packages PAT first:
+#   export BACKEND_IMAGE_DIGEST='sha256:...'  FRONTEND_IMAGE_DIGEST='sha256:...'
+#   echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u <user> --password-stdin
+echo ">>> Pulling and starting QA containers..."
+$COMPOSE pull
+$COMPOSE up -d
 echo ""
 
 # --------------------------------------------------
