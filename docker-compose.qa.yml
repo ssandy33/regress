@@ -75,8 +75,16 @@ services:
       caddy_net:
         aliases:
           - qa-frontend
+    # Probe /auth/signin directly (issue #232) — kept identical to
+    # docker-compose.prod.yml so QA is the validation harness for this change.
+    # The old probe hit `/`, whose 307 redirect (< 400) passed the instant
+    # Next.js was listening, so a broken app reported healthy. /auth/signin is
+    # a real rendered, middleware-excluded page that renders in both auth-on
+    # and auth-off deployments; a 200 proves the render pipeline produced HTML.
+    # Container-layer AC validated via the QA healthy/unhealthy/auth-redirect
+    # cycle (not the pytest/Playwright pyramid); see PR #232 body.
     healthcheck:
-      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://127.0.0.1:8080/', (r) => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://127.0.0.1:8080/auth/signin', (r) => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
