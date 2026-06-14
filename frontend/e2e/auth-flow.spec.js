@@ -164,3 +164,53 @@ test.describe('Issue #80: NEXTAUTH_SECRET-only auth enablement @smoke @e2e', () 
     expect(partialWarnings).toHaveLength(0);
   });
 });
+
+/**
+ * Issue #335 — half-configured GitHub OAuth on the sign-in page.
+ *
+ * When NEXTAUTH_SECRET is set but GITHUB_ID/GITHUB_SECRET are blank (the QA
+ * default before a dedicated OAuth app is registered), the sign-in page used
+ * to render a "Sign in with GitHub" button that handed off to github.com with
+ * an empty client_id and 404'd. The fix renders a self-explanatory
+ * "GitHub OAuth is not configured for this environment" message instead, and
+ * never renders the button in that state.
+ *
+ * Whether GITHUB_ID is set is fixed at dev-server startup, so this spec
+ * branches on the rendered state rather than forcing an env: it asserts the
+ * not-configured message and the GitHub button are mutually exclusive and that
+ * exactly one of them renders. To exercise the not-configured branch
+ * deterministically, run the dev server with a blank GITHUB_ID + a set
+ * NEXTAUTH_SECRET.
+ *
+ * AC2 (startup warning when NEXTAUTH_SECRET set + creds empty) is a
+ * server-process log line emitted at module load, not cleanly assertable from
+ * Playwright's browser context — verified via the container log on the QA
+ * stack instead. Documented here per CLAUDE.md's manual-AC convention.
+ */
+test.describe('Sign-in GitHub-config state @smoke @e2e', () => {
+  test('renders exactly one of the GitHub button or the not-configured notice', async ({ page }) => {
+    await page.goto('/auth/signin');
+    await page.waitForLoadState('networkidle');
+
+    const button = page.getByRole('button', { name: /sign in with github/i });
+    const notice = page.getByTestId('github-not-configured');
+
+    const buttonVisible = await button.isVisible().catch(() => false);
+    const noticeVisible = await notice.isVisible().catch(() => false);
+
+    // Mutually exclusive: exactly one of the two states is rendered.
+    expect(buttonVisible).not.toBe(noticeVisible);
+
+    if (noticeVisible) {
+      // Not-configured branch: the message is shown and the button is absent.
+      await expect(notice).toContainText(
+        /GitHub OAuth is not configured for this environment/i
+      );
+      await expect(button).toHaveCount(0);
+    } else {
+      // Configured branch: the working button renders unchanged (#335 AC4).
+      await expect(button).toBeVisible();
+      await expect(notice).toHaveCount(0);
+    }
+  });
+});

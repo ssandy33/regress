@@ -8,6 +8,22 @@ const allowedUsers = process.env.ALLOWED_USERS
       .filter(Boolean)
   : [];
 
+// Operator-facing startup warning (issue #335): NEXTAUTH_SECRET alone enables
+// the middleware auth gate, so the sign-in page renders — but without GITHUB_ID
+// /GITHUB_SECRET the GitHub button would hand off with an empty client_id and
+// 404 on GitHub. Surface the half-configured state in the logs so it is
+// self-explanatory rather than a silent failure. The in-page message (see
+// app/auth/signin) handles the end-user side.
+if (
+  process.env.NEXTAUTH_SECRET &&
+  !(process.env.GITHUB_ID && process.env.GITHUB_SECRET)
+) {
+  console.warn(
+    "[auth] NEXTAUTH_SECRET is set but GITHUB_ID/GITHUB_SECRET are missing — " +
+      "GitHub sign-in is disabled until both are configured (issue #335).",
+  );
+}
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
   providers: [
