@@ -79,6 +79,13 @@ env:
 jobs:
   prune:
     runs-on: ubuntu-latest
+    # A scheduled run and a manual workflow_dispatch could otherwise overlap and
+    # race on the same DELETE operations. Serialize so only one prune runs at a
+    # time; queue (do not cancel) so an in-flight prune is never interrupted
+    # mid-delete.
+    concurrency:
+      group: ghcr-prune
+      cancel-in-progress: false
     steps:
       - name: Resolve dry-run mode
         id: mode
@@ -103,21 +110,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          GHCR_ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
+          # Authenticate to GHCR FIRST. Without this, a failed `imagetools
+          # inspect` (an auth error rather than a missing tag) would be swallowed
+          # by the per-tag `|| true` below, the exclusion list would come back
+          # empty, and the prune could delete the live/rollback image (risk R3).
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GHCR_ACTOR}" --password-stdin
+
           # Pull the most-recent SUCCESSFUL "Deploy" workflow runs. The newest is
           # the LIVE deploy; the next two are the N-1 / N-2 rollback candidates.
           # We capture each run's head SHA, which maps to its sha-<short> image
           # tag and thus to the deployed @sha256: digest.
           DEPTH="${KEEP_DEPLOYED_DEPTH}"
           echo "Reading the ${DEPTH} most recent successful Deploy runs (live + N-1 + N-2)..."
+          # No `|| true` here: a real API/auth failure MUST fail the step rather
+          # than silently yield an empty deployed-SHA list. Zero matching runs is
+          # a legitimate empty result (gh exits 0) and is handled by the gate below.
           DEPLOY_SHAS=$(gh run list \
             --repo "${REPO}" \
             --workflow "deploy.yml" \
             --status success \
             --limit "${DEPTH}" \
             --json headSha \
-            --jq '.[].headSha' || true)
+            --jq '.[].headSha')
 
           # Map each deployed commit SHA to its short sha-<short> image tag and,
           # where the registry is reachable, to the underlying @sha256: digest.
@@ -128,8 +145,10 @@ jobs:
             echo "Deployed coordinate: commit ${sha} -> image tag ${tag}"
             for pkg in "${BACKEND_PACKAGE}" "${FRONTEND_PACKAGE}"; do
               ref="ghcr.io/${GHCR_OWNER}/${pkg}:${tag}"
-              # imagetools inspect resolves the tag to its content digest; if the
-              # tag is not (yet) pushed this is skipped without failing the prune.
+              # imagetools inspect resolves the tag to its content digest; a tag
+              # that was never pushed / already pruned is a legitimate skip. Auth
+              # failures can no longer cause an empty result here (we logged in
+              # above), and the safety gate below catches any unexpected miss.
               digest=$(docker buildx imagetools inspect "${ref}" \
                 --format '{{json .Manifest.Digest}}' 2>/dev/null | tr -d '"' || true)
               if [ -n "${digest}" ]; then
@@ -138,6 +157,15 @@ jobs:
               fi
             done
           done
+
+          # SAFETY GATE (risk R3): if successful Deploy runs exist (so live images
+          # SHOULD be resolvable) but we resolved NONE, refuse to prune. Pruning
+          # with an empty exclusion list while live images exist could delete the
+          # live/rollback image. Fail loudly so an operator investigates.
+          if [ -n "${DEPLOY_SHAS}" ] && [ -z "${DIGESTS// /}" ]; then
+            echo "::error::Deploy runs exist but no deployed digests resolved; refusing to prune with an empty exclusion list (risk R3)."
+            exit 1
+          fi
 
           # The deployed-digest exclusion set: live + N-1 + N-2, never deleted
           # regardless of age. Newline-delimited for the prune step to consume.

@@ -116,6 +116,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # packages: write is required so `docker buildx imagetools create` can
+      # re-tag (write a new manifest reference for) the recorded digest in GHCR.
       packages: write
     outputs:
       backend-digest: ${{ needs.ci.outputs.backend-digest }}

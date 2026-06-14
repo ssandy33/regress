@@ -146,7 +146,12 @@ jobs:
       backend-digest: ${{ steps.build-backend.outputs.digest }}
       frontend-digest: ${{ steps.build-frontend.outputs.digest }}
     steps:
+      # persist-credentials: false — this job authenticates to GHCR explicitly
+      # via docker/login-action and never pushes git, so the default persisted
+      # checkout token is unnecessary token exposure.
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

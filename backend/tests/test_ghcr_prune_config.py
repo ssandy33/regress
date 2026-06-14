@@ -182,6 +182,49 @@ class TestPruneAgeRuleOnlyAfterExclusions:
         assert "--method DELETE" in prune_text
 
 
+class TestPruneSafetyHardening:
+    """CodeRabbit Phase 5.5 hardening (#345): the prune must not race on DELETE
+    and must never run with an empty exclusion list caused by a swallowed auth
+    failure (risk R3)."""
+
+    @pytest.mark.unit
+    def test_prune_job_has_concurrency_group(self, prune_config: dict) -> None:
+        """A concurrency group serializes scheduled + manual runs (no DELETE race)."""
+        job = prune_config["jobs"]["prune"]
+        assert "concurrency" in job, "prune job needs a concurrency group"
+        assert job["concurrency"]["group"] == "ghcr-prune"
+        # Queue rather than cancel so an in-flight prune is never killed mid-delete.
+        assert job["concurrency"]["cancel-in-progress"] is False
+
+    @pytest.mark.unit
+    def test_deployed_step_authenticates_to_ghcr(self, prune_text: str) -> None:
+        """Digest resolution logs into GHCR first so auth errors can't silently
+        empty the exclusion list."""
+        assert "docker login ghcr.io" in prune_text
+
+    @pytest.mark.unit
+    def test_deployed_step_fails_safe_on_empty_exclusion(
+        self, prune_text: str
+    ) -> None:
+        """If Deploy runs exist but no digests resolve, the step exits non-zero
+        instead of pruning with an empty exclusion list (risk R3 gate)."""
+        # The gate guards on "deploy SHAs present but digests empty" then exits 1.
+        assert '[ -n "${DEPLOY_SHAS}" ]' in prune_text
+        assert "refusing to prune with an empty exclusion list" in prune_text
+        gate_idx = prune_text.index("refusing to prune with an empty exclusion list")
+        exit_idx = prune_text.index("exit 1", gate_idx)
+        assert exit_idx > gate_idx
+
+    @pytest.mark.unit
+    def test_deploy_run_list_not_error_suppressed(self, prune_text: str) -> None:
+        """The `gh run list` digest read must not carry `|| true` (a real API
+        failure has to fail the step, not yield an empty deployed-SHA list)."""
+        marker = "--jq '.[].headSha'"
+        assert marker in prune_text
+        line = next(ln for ln in prune_text.splitlines() if marker in ln)
+        assert "|| true" not in line
+
+
 class TestPruneLiveManualAC:
     """Live-validation AC that cannot run in CI — recorded as skipped per CLAUDE.md.
 
