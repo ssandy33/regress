@@ -46,11 +46,15 @@ jobs:
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
     with:
       environment: qa
       deploy_dir: ~/regress-qa
       compose_file: docker-compose.qa.yml
       git_ref: ${{ github.event.release.tag_name || inputs.ref || 'origin/main' }}
+      # Pull the digests CI just built+pushed to GHCR (#341/SUB-2).
+      backend_image_digest: ${{ needs.ci.outputs.backend-digest }}
+      frontend_image_digest: ${{ needs.ci.outputs.frontend-digest }}
 
   # a full (non-RC) GitHub Release, or a manual production dispatch → PROD stack
   deploy-prod:
@@ -63,8 +67,13 @@ jobs:
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
     with:
       environment: production
       deploy_dir: ~/regress
       compose_file: docker-compose.prod.yml
       git_ref: ${{ github.event.release.tag_name || inputs.ref }}
+      # Pull the digests CI just built+pushed to GHCR (#341/SUB-2). SUB-3 will
+      # replace these with the promoted (re-tagged) QA-validated digest.
+      backend_image_digest: ${{ needs.ci.outputs.backend-digest }}
+      frontend_image_digest: ${{ needs.ci.outputs.frontend-digest }}
