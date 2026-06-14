@@ -109,12 +109,13 @@ class TestGetSchwabCredentials:
 
     @pytest.mark.unit
     def test_get_schwab_credentials_partial_env(self, db_session_factory):
-        """Only one env var set — falls through to the DB fallback path.
+        """Env key set + DB rows for both — the env key wins per-field (#221).
 
         ``get_schwab_credentials`` only short-circuits when *both* env vars
-        are set. With one missing, it enters the DB branch, and any DB row
-        found overwrites the corresponding value — including the half that
-        was supplied via env. This documents the actual two-tier behavior.
+        are set. With one missing it enters the DB branch, but the fix makes
+        resolution **per-field, env-wins**: an env-supplied half is never
+        clobbered by a stale ``app_settings`` row. Here the env key survives
+        and only the missing secret is filled from the DB.
         """
         _seed(
             db_session_factory,
@@ -128,8 +129,52 @@ class TestGetSchwabCredentials:
             mock_settings.schwab_app_secret = ""
             enc_settings.schwab_encryption_key = TEST_KEY
             app_key, app_secret = get_schwab_credentials()
-        # Both DB rows present — both halves are taken from the DB.
+        # Env key wins; only the empty secret half is filled from the DB.
+        assert app_key == "env_key"
+        assert app_secret == "db_secret"
+
+    @pytest.mark.unit
+    def test_partial_env_secret_set_db_both(self, db_session_factory):
+        """Env *secret* set + DB rows for both — env secret wins (#221).
+
+        Symmetric to ``test_get_schwab_credentials_partial_env``: the
+        env-supplied secret survives and only the missing key is filled
+        from the DB.
+        """
+        _seed(
+            db_session_factory,
+            schwab_app_key=encrypt_value("db_key", key=TEST_KEY),
+            schwab_app_secret=encrypt_value("db_secret", key=TEST_KEY),
+        )
+        with patch("app.config.settings") as mock_settings, patch(
+            "app.models.database.SessionLocal", db_session_factory
+        ), patch("app.services.encryption.settings") as enc_settings:
+            mock_settings.schwab_app_key = ""
+            mock_settings.schwab_app_secret = "env_secret"
+            enc_settings.schwab_encryption_key = TEST_KEY
+            app_key, app_secret = get_schwab_credentials()
         assert app_key == "db_key"
+        assert app_secret == "env_secret"
+
+    @pytest.mark.unit
+    def test_partial_env_no_conflicting_db_row(self, db_session_factory):
+        """Env key set, only a DB *secret* row present — env key preserved (#221).
+
+        No DB key row exists to (incorrectly) clobber the env-supplied key,
+        and the missing secret half is filled from its DB row.
+        """
+        _seed(
+            db_session_factory,
+            schwab_app_secret=encrypt_value("db_secret", key=TEST_KEY),
+        )
+        with patch("app.config.settings") as mock_settings, patch(
+            "app.models.database.SessionLocal", db_session_factory
+        ), patch("app.services.encryption.settings") as enc_settings:
+            mock_settings.schwab_app_key = "env_key"
+            mock_settings.schwab_app_secret = ""
+            enc_settings.schwab_encryption_key = TEST_KEY
+            app_key, app_secret = get_schwab_credentials()
+        assert app_key == "env_key"
         assert app_secret == "db_secret"
 
     @pytest.mark.unit
