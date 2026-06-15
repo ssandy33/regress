@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy.orm import Session as DBSession
 
 from app.services import journal
-from app.services.dashboard_legs import build_option_mark_index, derive_open_legs
+from app.services.dashboard_legs import build_option_leg_index, derive_open_legs
 from app.services.rules_config import load_rules_config
 from app.services.schwab_client import SchwabClient
 
@@ -47,6 +47,17 @@ DISCLAIMER_TEXT: str = (
     "trading advice. Option mid prices are estimates, may be stale, and "
     "exclude commissions; the decision to buy to close is yours."
 )
+
+# Scenario grid (issue #319, Decision 1): fixed offsets of the current
+# underlying S — one down, one flat, two up. Strike-independent so it does not
+# degenerate for deep-ITM legs (where S ≫ K). Order down→up matches the spec
+# table. Swap this one line to revisit the grid.
+SCENARIO_OFFSETS: list[tuple[float, str]] = [
+    (-0.10, "−10%"),
+    (0.0, "Flat"),
+    (0.05, "+5%"),
+    (0.10, "+10%"),
+]
 
 # Maps the position's derived strategy label to the human context phrase used
 # in the leg header sub-line. Unknown strategies fall back to "position".
@@ -118,6 +129,128 @@ def _build_economics(leg: dict) -> dict[str, Any]:
     }
 
 
+def _degraded_analysis() -> dict[str, Any]:
+    """Full-degrade analysis body — neither a live mid nor an underlying price."""
+    return {
+        "available": False,
+        "intrinsic": None,
+        "extrinsic": None,
+        "extrinsic_pct_of_mid": None,
+        "option_mid": None,
+        "btc_breakeven": None,
+        "underlying": None,
+        "breakeven_delta": None,
+        "scenarios": [],
+    }
+
+
+def _build_analysis(leg: dict, current_price: float | None) -> dict[str, Any]:
+    """Compute the BTC decision-math block for one leg (issue #319).
+
+    Pure function — no I/O, never raises on bad input (a thrown exception would
+    500 the whole page). Reads only ``leg["type"]`` / ``leg["strike"]`` /
+    ``leg["current_mid"]`` / ``leg["quantity"]`` and the live underlying
+    ``current_price``. Consumes no option delta/greek — the decomposition,
+    breakeven, and scenarios are all expressible in S, K, O, n.
+
+    Degrade gates:
+
+    - No underlying ``S`` → ``available: False`` (intrinsic is uncomputable
+      without ``S``), regardless of the mid.
+    - ``S`` present, mid ``O`` missing → greek-null: intrinsic computable,
+      extrinsic / breakeven / scenarios null. ``available: True``.
+    - Both present → fully populated.
+
+    Per-share figures (intrinsic / extrinsic / option_mid) are NOT scaled; the
+    scenario dollars use the same ``× contracts × 100`` scaling as
+    :func:`_build_economics` so the figures are directly comparable.
+    """
+    current_mid = leg.get("current_mid")  # per-share, None ⇒ no live mark
+    strike_raw = leg.get("strike")
+
+    # Can't compute intrinsic without the underlying or the strike.
+    if current_price is None or strike_raw is None:
+        return _degraded_analysis()
+
+    # Gate puts out of the covered-call decision math (v1.7.0 is CC-scoped).
+    # The breakeven / let-assign / BTC-and-hold equations below are
+    # call-specific (btc_breakeven = K + O, let_assign = K·n·100, etc.); they
+    # produce misleading numbers for a short put. Until put equations exist,
+    # return the not-applicable shape so the panel never displays call-math
+    # for a put. Gate after the S/K degrade check, before any call computation.
+    if leg.get("type") == "put":
+        return _degraded_analysis()
+
+    s = float(current_price)
+    k = float(strike_raw)
+    intrinsic = max(0.0, s - k)
+
+    # Greek-null: underlying live, option mid missing (illiquid strike).
+    # Intrinsic still computes; everything that needs O degrades.
+    if current_mid is None:
+        return {
+            "available": True,
+            "intrinsic": round(intrinsic, 2),
+            "extrinsic": None,
+            "extrinsic_pct_of_mid": None,
+            "option_mid": None,
+            "btc_breakeven": None,
+            "underlying": round(s, 2),
+            "breakeven_delta": None,
+            "scenarios": [],
+        }
+
+    o = float(current_mid)
+    # Clamp negative extrinsic (stale mid drives O < intrinsic) to 0 — a valid
+    # "no time value left" reading for deep-ITM at expiry. We do NOT flip
+    # available false on a clamp (Decision 2).
+    extrinsic = max(0.0, o - intrinsic)
+    extrinsic_pct_of_mid = round(extrinsic / o, 4) if o != 0 else None
+
+    btc_breakeven = k + o  # = S + extrinsic
+    breakeven_delta = s - btc_breakeven
+
+    contracts = int(leg.get("quantity") or 1)
+    scale = contracts * 100
+    let_assign = round(k * scale, 2)
+    scenarios: list[dict[str, Any]] = []
+    for offset, label in SCENARIO_OFFSETS:
+        # Round the scenario underlying to the displayed price first, then
+        # derive the dollar figures from it — so the table's BTC+hold / Δ
+        # columns reconcile with the underlying shown in the same row.
+        s_e = round(s * (1.0 + offset), 2)
+        btc_and_hold = round((s_e - o) * scale, 2)
+        delta = round(btc_and_hold - let_assign, 2)
+        if delta > 0:
+            winner = "btc"
+        elif delta < 0:
+            winner = "assign"
+        else:
+            winner = "tie"
+        scenarios.append(
+            {
+                "underlying": round(s_e, 2),
+                "label": label,
+                "let_assign": let_assign,
+                "btc_and_hold": btc_and_hold,
+                "delta": delta,
+                "winner": winner,
+            }
+        )
+
+    return {
+        "available": True,
+        "intrinsic": round(intrinsic, 2),
+        "extrinsic": round(extrinsic, 2),
+        "extrinsic_pct_of_mid": extrinsic_pct_of_mid,
+        "option_mid": round(o, 2),
+        "btc_breakeven": round(btc_breakeven, 2),
+        "underlying": round(s, 2),
+        "breakeven_delta": round(breakeven_delta, 2),
+        "scenarios": scenarios,
+    }
+
+
 def _reshape_leg(leg: dict, position: dict) -> dict[str, Any]:
     """Reshape the internal ``derive_open_legs`` leg dict into the API ``leg``."""
     return {
@@ -166,8 +299,12 @@ def build_btc_detail(
         float(current_price_raw) if current_price_raw is not None else None
     )
     chain = client.get_option_chain(ticker)
-    marks = build_option_mark_index(
-        {ticker: chain} if isinstance(chain, dict) else {}
+    # Richer per-leg index carrying delta (issue #318) — same shared path as the
+    # dashboard, so the BTC screen sees the identical delta. Spot is threaded
+    # for the Black-Scholes delta fallback on illiquid strikes.
+    marks = build_option_leg_index(
+        {ticker: chain} if isinstance(chain, dict) else {},
+        spots_by_ticker={ticker: current_price},
     )
 
     open_legs = derive_open_legs(
@@ -188,6 +325,7 @@ def build_btc_detail(
         return None
 
     economics = _build_economics(leg)
+    analysis = _build_analysis(leg, current_price)
     verdict = leg.get("verdict") or "hold"
     state = "no-rule-triggered" if verdict == "hold" else "populated"
 
@@ -196,6 +334,7 @@ def build_btc_detail(
         "leg": _reshape_leg(leg, position),
         "verdict": verdict,
         "economics": economics,
+        "analysis": analysis,
         "triggered_rules": leg.get("triggered_rules") or [],
         "disclaimer": DISCLAIMER_TEXT,
     }

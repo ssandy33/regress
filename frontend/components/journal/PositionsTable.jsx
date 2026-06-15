@@ -5,6 +5,29 @@ function formatCurrency(value) {
   return `$${Number(value).toFixed(2)}`;
 }
 
+/**
+ * Per-share basis cell (issue #320). Renders the per-share value with a muted
+ * non-tabular `/sh` affordance so it can't be misread as a total. The currency
+ * number keeps `tabular-nums` so digits align with the other right-aligned
+ * columns. `value == null` (shares === 0, backend sends null) renders an
+ * em-dash — never `$0.00` / Infinity.
+ */
+function PerShareBasis({ value, testid }) {
+  if (value == null) {
+    return (
+      <span data-testid={testid} className="text-slate-400 dark:text-slate-500">
+        —
+      </span>
+    );
+  }
+  return (
+    <span data-testid={testid}>
+      <span className="tabular-nums">{formatCurrency(value)}</span>
+      <span className="text-xs text-slate-400 dark:text-slate-500 ml-1">/sh</span>
+    </span>
+  );
+}
+
 function StatusBadge({ status }) {
   const isOpen = status === 'open';
   return (
@@ -144,9 +167,19 @@ export default function PositionsTable({
             >
               <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{pos.ticker}</td>
               <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{pos.shares}</td>
-              <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{formatCurrency(pos.broker_cost_basis)}</td>
+              <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">
+                <PerShareBasis
+                  value={pos.broker_cost_basis_per_share}
+                  testid="position-broker-basis-per-share"
+                />
+              </td>
               <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{formatCurrency(pos.total_premiums)}</td>
-              <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{formatCurrency(pos.adjusted_cost_basis)}</td>
+              <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">
+                <PerShareBasis
+                  value={pos.adjusted_cost_basis_per_share}
+                  testid="position-adjusted-basis-per-share"
+                />
+              </td>
               <td className="px-4 py-3 text-right text-slate-700 dark:text-slate-300">{formatCurrency(pos.min_compliant_cc_strike)}</td>
               <td className="px-4 py-3 text-center"><StatusBadge status={pos.status} /></td>
               <td className="px-4 py-3 text-right">

@@ -229,17 +229,16 @@ function EconomicsTile({ testId, label, value, valueClass }) {
   );
 }
 
-function BtcEconomicsPanel({ economics, verdict }) {
+function BtcEconomicsPanel({ economics, analysis }) {
   const pricingLive = economics.pricing_source === 'live';
   const captured = economics.captured_pct;
-  // The % captured tile reads emerald when the leg cleared the user's
-  // profit-take threshold (verdict tells us, no threshold parsing needed).
-  const pctClass =
-    verdict === 'profit_take_review' && captured !== null && captured !== undefined
-      ? 'text-emerald-700 dark:text-emerald-300'
-      : pricingLive
-        ? 'text-slate-900 dark:text-white'
-        : 'text-slate-400 dark:text-slate-500';
+  // The honest decision signal that replaces the misleading "% premium
+  // captured" tile in the BTC detail context (issue #319). Comes from the
+  // analysis decomposition, NOT captured_pct.
+  const extrinsicPct = analysis?.extrinsic_pct_of_mid;
+  const extrinsicPctClass = pricingLive
+    ? 'text-slate-900 dark:text-white'
+    : 'text-slate-400 dark:text-slate-500';
   const estPl = economics.est_pl_if_closed;
   let estPlClass = 'text-slate-400 dark:text-slate-500';
   if (estPl !== null && estPl !== undefined) {
@@ -296,10 +295,10 @@ function BtcEconomicsPanel({ economics, verdict }) {
             value={formatDollar(economics.credit_received)}
           />
           <EconomicsTile
-            testId="btc-detail-economics-tile-pct-captured"
-            label="% premium captured"
-            value={formatPct(economics.captured_pct)}
-            valueClass={pctClass}
+            testId="btc-detail-economics-tile-extrinsic-pct"
+            label="Extrinsic % of mid"
+            value={formatPct(extrinsicPct)}
+            valueClass={extrinsicPctClass}
           />
           <EconomicsTile
             testId="btc-detail-economics-tile-est-pl"
@@ -308,9 +307,20 @@ function BtcEconomicsPanel({ economics, verdict }) {
             valueClass={estPlClass}
           />
         </div>
+        {captured !== null && captured !== undefined && (
+          <p
+            data-testid="btc-detail-economics-captured-raw-note"
+            className="text-xs text-slate-400 dark:text-slate-500 mt-3"
+          >
+            Premium captured (raw):{' '}
+            <span className="tabular-nums">{formatPct(captured)}</span> —
+            distorted by intrinsic value on deep-ITM legs; see BTC Analysis
+            below.
+          </p>
+        )}
         <p
           data-testid="btc-detail-economics-caption"
-          className="text-xs text-slate-500 dark:text-slate-400 mt-3"
+          className="text-xs text-slate-500 dark:text-slate-400 mt-1"
         >
           {caption}
         </p>
@@ -407,18 +417,296 @@ function RuleAuditPanel({ rules, verdict }) {
   );
 }
 
+// --- BtcAnalysisPanel (issue #319) -----------------------------------------
+
+// Section 1 figure (decomposition trio) — smaller than EconomicsTile, 3-up.
+function AnalysisFigure({ testId, label, value, valueClass, note }) {
+  return (
+    <div data-testid={testId}>
+      <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {label}
+      </div>
+      <div
+        className={`text-2xl font-semibold tabular-nums mt-1 ${
+          valueClass || 'text-slate-900 dark:text-white'
+        }`}
+      >
+        {value}
+      </div>
+      {note && (
+        <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+          {note}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ANALYSIS_HEADING = 'BTC Analysis — let assign vs. buy to close';
+
+function BtcAnalysisPanel({ analysis, optionType }) {
+  if (!analysis) return null;
+
+  // Put legs are gated out of the covered-call decision math (v1.7.0 is
+  // CC-scoped). The backend returns the degraded analysis shape for a put,
+  // which is indistinguishable from a pricing-degrade on the wire — so we use
+  // the leg's option_type to render an honest "covered-call-only" affordance
+  // instead of "pricing unavailable", which would read as a data error.
+  const isPut = optionType === 'P';
+
+  // Render states: put-not-applicable (CC-only), full-degrade
+  // (available === false), greek-null (available, but no option mid →
+  // intrinsic-only), and populated.
+  const degraded = !isPut && analysis.available === false;
+  const greekNull = !isPut && !degraded && analysis.option_mid === null;
+  const populated = !isPut && !degraded && !greekNull;
+
+  let degradeAttr;
+  if (isPut) degradeAttr = 'put-not-applicable';
+  else if (greekNull) degradeAttr = 'greek-null';
+
+  return (
+    <div
+      data-testid="btc-analysis"
+      data-degrade={degradeAttr}
+      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+    >
+      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+        <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+          {ANALYSIS_HEADING}
+        </h3>
+        {(degraded || greekNull || isPut) && (
+          <span
+            data-testid="btc-analysis-degraded-badge"
+            className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400"
+          >
+            {isPut
+              ? 'Covered-call only'
+              : greekNull
+              ? 'Option mid missing'
+              : 'Pricing unavailable'}
+          </span>
+        )}
+      </div>
+
+      <div className="p-4 space-y-5">
+        {isPut ? (
+          // Put legs: the assign-vs-BTC decision math is covered-call-only in
+          // v1.7.0. Show an honest not-applicable affordance rather than the
+          // call-math decomposition (which would be wrong for a short put) or
+          // the "pricing unavailable" copy (which would read as a data error).
+          <p
+            data-testid="btc-analysis-put-na"
+            className="text-sm text-slate-500 dark:text-slate-400 max-w-prose"
+          >
+            Decision math is covered-call-only right now. This is a put leg, so
+            the let-assign vs. buy-to-close comparison isn&apos;t shown. The rule
+            audit below still applies.
+          </p>
+        ) : (
+          <>
+        {/* Section 1 — decomposition trio */}
+        <div className={`grid grid-cols-3 gap-4 ${degraded ? 'opacity-60' : ''}`}>
+          <AnalysisFigure
+            testId="btc-analysis-intrinsic"
+            label="Intrinsic value"
+            value={formatDollar(analysis.intrinsic)}
+            valueClass={
+              analysis.intrinsic === null || analysis.intrinsic === undefined
+                ? 'text-slate-400 dark:text-slate-500'
+                : undefined
+            }
+          />
+          <AnalysisFigure
+            testId="btc-analysis-extrinsic"
+            label="Extrinsic (time) value"
+            value={formatDollar(analysis.extrinsic)}
+            valueClass={
+              analysis.extrinsic === null || analysis.extrinsic === undefined
+                ? 'text-slate-400 dark:text-slate-500'
+                : undefined
+            }
+            note={greekNull ? 'Needs option mid' : undefined}
+          />
+          <AnalysisFigure
+            testId="btc-analysis-extrinsic-pct"
+            label="Extrinsic % of mid"
+            value={formatPct(analysis.extrinsic_pct_of_mid)}
+            valueClass={
+              analysis.extrinsic_pct_of_mid === null ||
+              analysis.extrinsic_pct_of_mid === undefined
+                ? 'text-slate-400 dark:text-slate-500'
+                : undefined
+            }
+          />
+        </div>
+
+        {/* Sections 2 + 3 — only when fully populated */}
+        {populated ? (
+          <>
+            <div className="border-t border-slate-100 dark:border-slate-700/50 pt-4">
+              <p
+                data-testid="btc-analysis-breakeven"
+                className="text-sm text-slate-800 dark:text-slate-100"
+              >
+                <span className="font-semibold">
+                  BTC breakeven at expiration:{' '}
+                  <span className="tabular-nums">
+                    {formatDollar(analysis.btc_breakeven)}
+                  </span>
+                </span>
+                <span className="text-slate-500 dark:text-slate-400">
+                  {' · '}Underlying{' '}
+                  <span className="tabular-nums">
+                    {formatDollar(analysis.underlying)}
+                  </span>{' '}
+                </span>
+                <span
+                  data-testid="btc-analysis-breakeven-delta"
+                  className={`tabular-nums font-medium ${
+                    analysis.breakeven_delta === 0
+                      ? 'text-slate-700 dark:text-slate-200'
+                      : analysis.breakeven_delta < 0
+                      ? 'text-red-700 dark:text-red-300'
+                      : 'text-emerald-700 dark:text-emerald-300'
+                  }`}
+                >
+                  ({formatSignedDollar(analysis.breakeven_delta)}{' '}
+                  {analysis.breakeven_delta === 0
+                    ? 'at breakeven'
+                    : analysis.breakeven_delta < 0
+                    ? 'below breakeven'
+                    : 'above breakeven'}
+                  )
+                </span>
+              </p>
+              <p
+                data-testid="btc-analysis-guidance"
+                className="text-sm text-slate-600 dark:text-slate-300 mt-2 max-w-prose"
+              >
+                The stock must rise above your BTC breakeven (
+                <span className="font-medium tabular-nums">
+                  {formatDollar(analysis.btc_breakeven)}
+                </span>
+                ) by expiration for buying to close to beat letting the shares
+                get called away. That&apos;s{' '}
+                <span className="font-medium tabular-nums">
+                  {formatDollar(analysis.extrinsic)}
+                </span>{' '}
+                of remaining time value the stock has to clear. Below breakeven,
+                letting it assign keeps more.
+              </p>
+            </div>
+
+            <div className="border-t border-slate-100 dark:border-slate-700/50 pt-4">
+              <table
+                data-testid="btc-analysis-scenario-table"
+                className="w-full text-sm"
+              >
+                <thead>
+                  <tr className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
+                    <th scope="col" className="text-left font-medium pb-2">
+                      Underlying @ exp
+                    </th>
+                    <th scope="col" className="text-left font-medium pb-2">
+                      Let assign
+                    </th>
+                    <th scope="col" className="text-left font-medium pb-2">
+                      BTC + hold
+                    </th>
+                    <th scope="col" className="text-left font-medium pb-2">
+                      Δ (BTC − assign)
+                    </th>
+                    <th scope="col" className="text-left font-medium pb-2">
+                      Winner
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analysis.scenarios.map((s, i) => {
+                    const btcWins = s.winner === 'btc';
+                    const isTie = s.winner === 'tie';
+                    const deltaClass = btcWins
+                      ? 'text-emerald-700 dark:text-emerald-300 font-medium'
+                      : 'text-slate-700 dark:text-slate-200';
+                    const winnerLabel = isTie
+                      ? 'Tie'
+                      : btcWins
+                      ? 'BTC wins'
+                      : 'Assign wins';
+                    return (
+                      <tr
+                        key={s.label}
+                        data-testid={`btc-analysis-scenario-row-${i}`}
+                        className="text-slate-700 dark:text-slate-200 border-b border-slate-100 dark:border-slate-700/50 last:border-b-0"
+                      >
+                        <td className="py-2 tabular-nums">
+                          {formatDollar(s.underlying)}{' '}
+                          <span className="text-slate-400">({s.label})</span>
+                        </td>
+                        <td className="py-2 tabular-nums">
+                          {formatDollar(s.let_assign)}
+                        </td>
+                        <td className="py-2 tabular-nums">
+                          {formatDollar(s.btc_and_hold)}
+                        </td>
+                        <td
+                          data-testid={`btc-analysis-scenario-delta-${i}`}
+                          className={`py-2 tabular-nums ${deltaClass}`}
+                        >
+                          {formatSignedDollar(s.delta)}
+                        </td>
+                        <td
+                          className={`py-2 ${
+                            btcWins ? 'text-emerald-700 dark:text-emerald-300' : ''
+                          }`}
+                        >
+                          {winnerLabel}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">
+                Net dollars per scenario, pre-commission. Δ &gt; 0 means buying
+                to close beats letting assign at that price.
+              </p>
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-700/50 pt-4">
+            {greekNull
+              ? 'The option chain returned no mark for this strike, so breakeven and the assign-vs-BTC scenarios can’t be computed. Intrinsic value is shown from the live underlying.'
+              : 'Decomposition, breakeven, and scenarios need a live option mark and underlying price. They’ll appear once pricing reconnects.'}
+          </p>
+        )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // --- BtcDetailView ---------------------------------------------------------
 
 export default function BtcDetailView({ data }) {
   if (!data || !data.leg) return null;
-  const { leg, verdict, economics, triggered_rules: rules = [], disclaimer } =
-    data;
+  const {
+    leg,
+    verdict,
+    economics,
+    analysis,
+    triggered_rules: rules = [],
+    disclaimer,
+  } = data;
 
   return (
     <div className="space-y-4">
       <LegHeader leg={leg} verdict={verdict} />
       <RecommendedActionBlock data={data} />
-      <BtcEconomicsPanel economics={economics} verdict={verdict} />
+      <BtcEconomicsPanel economics={economics} analysis={analysis} />
+      <BtcAnalysisPanel analysis={analysis} optionType={leg.option_type} />
       <RuleAuditPanel rules={rules} verdict={verdict} />
 
       <footer

@@ -121,9 +121,154 @@
         "title": "Body_import_csv_preview_api_journal_import_csv_preview_post",
         "type": "object"
       },
-      "BtcDetailResponse": {
-        "description": "Top-level response for ``GET /api/positions/{id}/legs/{legId}/btc``.\n\nComposes the leg identity, the §R6 rule-monitor verdict + audit (reused\nverbatim from :func:`app.services.rule_monitor.evaluate_leg_rules` via\n``derive_open_legs``), and the buy-to-close economics block. A 404 with\n``{\"detail\": \"Leg not found\"}`` is returned for an unknown / closed leg.",
+      "BtcAnalysis": {
+        "description": "BTC decision-math block: decomposition, breakeven, scenarios (issue #319).\n\n``available`` gates the panel: ``False`` when neither a live option mid nor\nan underlying price is resolvable. When ``available`` is ``True`` but the\noption mid is missing (illiquid strike / greek-null), ``intrinsic`` is still\npopulated while ``extrinsic`` / ``btc_breakeven`` / ``scenarios`` degrade to\nnull / empty. Per-share figures (intrinsic / extrinsic / option_mid) are NOT\nscaled; the scenario dollars ARE (× contracts × 100).",
         "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "breakeven_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breakeven Delta"
+          },
+          "btc_breakeven": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Btc Breakeven"
+          },
+          "extrinsic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extrinsic"
+          },
+          "extrinsic_pct_of_mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extrinsic Pct Of Mid"
+          },
+          "intrinsic": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intrinsic"
+          },
+          "option_mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Mid"
+          },
+          "scenarios": {
+            "items": {
+              "$ref": "#/components/schemas/BtcAnalysisScenario"
+            },
+            "title": "Scenarios",
+            "type": "array"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Underlying"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "BtcAnalysis",
+        "type": "object"
+      },
+      "BtcAnalysisScenario": {
+        "description": "One assign-vs-buy-to-close scenario row (issue #319).\n\nAll money figures are whole-position dollars (per-share × contracts × 100)\nto match the economics block convention. ``delta = btc_and_hold -\nlet_assign``; ``winner`` is ``\"btc\"`` when ``delta > 0``, ``\"assign\"`` when\n``delta < 0``, ``\"tie\"`` at exact breakeven.",
+        "properties": {
+          "btc_and_hold": {
+            "title": "Btc And Hold",
+            "type": "number"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "number"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "let_assign": {
+            "title": "Let Assign",
+            "type": "number"
+          },
+          "underlying": {
+            "title": "Underlying",
+            "type": "number"
+          },
+          "winner": {
+            "enum": [
+              "btc",
+              "assign",
+              "tie"
+            ],
+            "title": "Winner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "underlying",
+          "label",
+          "let_assign",
+          "btc_and_hold",
+          "delta",
+          "winner"
+        ],
+        "title": "BtcAnalysisScenario",
+        "type": "object"
+      },
+      "BtcDetailResponse": {
+        "description": "Top-level response for ``GET /api/positions/{id}/legs/{legId}/btc``.\n\nComposes the leg identity, the §R6 rule-monitor verdict + audit (reused\nverbatim from :func:`app.services.rule_monitor.evaluate_leg_rules` via\n``derive_open_legs``), the buy-to-close economics block, and the BTC\ndecision-math analysis block (issue #319). A 404 with\n``{\"detail\": \"Leg not found\"}`` is returned for an unknown / closed leg.",
+        "properties": {
+          "analysis": {
+            "$ref": "#/components/schemas/BtcAnalysis"
+          },
           "disclaimer": {
             "anyOf": [
               {
@@ -172,7 +317,8 @@
           "state",
           "leg",
           "verdict",
-          "economics"
+          "economics",
+          "analysis"
         ],
         "title": "BtcDetailResponse",
         "type": "object"
@@ -1538,6 +1684,17 @@
             "title": "Adjusted Cost Basis",
             "type": "number"
           },
+          "adjusted_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjusted Cost Basis Per Share"
+          },
           "broker_cost_basis": {
             "anyOf": [
               {
@@ -1548,6 +1705,17 @@
               }
             ],
             "title": "Broker Cost Basis"
+          },
+          "broker_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Cost Basis Per Share"
           },
           "current_price": {
             "anyOf": [
@@ -3246,9 +3414,31 @@
             "title": "Adjusted Cost Basis",
             "type": "number"
           },
+          "adjusted_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjusted Cost Basis Per Share"
+          },
           "broker_cost_basis": {
             "title": "Broker Cost Basis",
             "type": "number"
+          },
+          "broker_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Cost Basis Per Share"
           },
           "closed_at": {
             "anyOf": [

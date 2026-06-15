@@ -602,3 +602,32 @@ def test_update_position_ignores_strategy_field(client):
     assert resp.status_code == 200
     # Seeded label persists because recomputer was not invoked from PUT.
     assert resp.json()["strategy"] == "csp"
+
+
+# --- Issue #320: per-share cost basis surfaces on the positions endpoint ---
+
+
+@pytest.mark.integration
+def test_position_response_includes_per_share_basis(client):
+    """The positions endpoint emits round(total / shares, 4) per-share fields."""
+    _create_position(client, shares=100, broker_cost_basis=2856.0)
+    resp = client.get("/api/journal/positions")
+    assert resp.status_code == 200
+    pos = resp.json()["positions"][0]
+    assert pos["broker_cost_basis_per_share"] == 28.56
+    # No trades → adjusted == broker total, so adjusted per-share matches.
+    assert pos["adjusted_cost_basis_per_share"] == 28.56
+
+
+@pytest.mark.integration
+def test_position_response_adjusted_per_share_nets_premiums(client):
+    """Adjusted per-share reflects premium-reduced basis, divided by shares."""
+    pos = _create_position(client, shares=100, broker_cost_basis=5000.0).json()
+    # sell_put premium 1.50 × 1 contract × 100 = 150 gross premium collected.
+    _create_trade(client, pos["id"], premium=1.50, quantity=1)
+    resp = client.get(f"/api/journal/positions/{pos['id']}")
+    assert resp.status_code == 200
+    data = resp.json()
+    # adjusted total = 5000 - 150 = 4850 → /100 = 48.50/sh.
+    assert data["broker_cost_basis_per_share"] == 50.0
+    assert data["adjusted_cost_basis_per_share"] == 48.5

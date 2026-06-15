@@ -23,7 +23,7 @@ from app.services import journal as journal_service
 from app.services.action_engine import compute_next_actions
 from app.services.alpha_vantage_client import get_cached_next_earnings_date
 from app.services.dashboard_legs import (
-    build_option_mark_index,
+    build_option_leg_index,
     derive_open_legs,
     parse_iso_to_utc,
 )
@@ -320,6 +320,16 @@ def _build_position_rows(
                 # Broker basis is surfaced so the Positions card can render
                 # the dual-line "broker / adjusted" cost-basis cell (#151).
                 "broker_cost_basis": position.get("broker_cost_basis"),
+                # Per-share basis (#320) — the card renders these so the
+                # cost-basis cell aligns with the per-share Current column.
+                # Already computed (and shares==0 → null guarded) by the
+                # journal producer; thread them straight through.
+                "broker_cost_basis_per_share": position.get(
+                    "broker_cost_basis_per_share"
+                ),
+                "adjusted_cost_basis_per_share": position.get(
+                    "adjusted_cost_basis_per_share"
+                ),
             }
         )
     # Sort by notional desc (None last), then ticker asc.
@@ -683,7 +693,9 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         open_leg_tickers, schwab_configured=schwab_configured
     )
     schwab_failed = schwab_failed or chains_failed
-    option_marks = build_option_mark_index(option_chains)
+    # Richer per-leg index carrying delta (issue #318). Spot is threaded so the
+    # Black-Scholes delta fallback can run on illiquid strikes.
+    option_marks = build_option_leg_index(option_chains, spots_by_ticker=quotes_by_ticker)
 
     # Legs derive purely from in-memory data + the quote/mark maps. Earnings
     # lookup is cache-hit-only — the request path must not block on AV.

@@ -16,6 +16,8 @@ from __future__ import annotations
 import pytest
 
 from app.services.btc_detail import (
+    SCENARIO_OFFSETS,
+    _build_analysis,
     _build_economics,
     _moneyness_label,
     _position_label,
@@ -149,3 +151,196 @@ class TestMoneynessLabel:
     def test_unknown_when_no_moneyness(self):
         assert _moneyness_label({"moneyness": None}) == "Unknown"
         assert _moneyness_label({}) == "Unknown"
+
+
+class TestBuildAnalysis:
+    """BTC decision-math block (issue #319). Pure-function unit tests — no DB,
+    no app, no Schwab. Computes from S (underlying), K (strike), O (mid), n.
+    """
+
+    @staticmethod
+    def _call_leg(strike=14.5, mid=1.93, quantity=1):
+        return {
+            "type": "call",
+            "strike": strike,
+            "current_mid": mid,
+            "quantity": quantity,
+        }
+
+    @pytest.mark.unit
+    def test_intrinsic_extrinsic_split_itm_call(self):
+        # F 14.5C, S=16.29, O=1.93 → intrinsic 1.79, extrinsic 0.14.
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        assert a["available"] is True
+        assert a["intrinsic"] == 1.79
+        assert a["extrinsic"] == 0.14
+
+    @pytest.mark.unit
+    def test_intrinsic_zero_for_otm_call(self):
+        # S below strike → call intrinsic 0; extrinsic is the whole mid.
+        a = _build_analysis(self._call_leg(strike=20.0, mid=0.50), current_price=16.29)
+        assert a["intrinsic"] == 0.0
+        assert a["extrinsic"] == 0.50
+
+    @pytest.mark.unit
+    def test_put_leg_returns_not_applicable_not_call_math(self):
+        # BRIDGE EDIT (CodeRabbit triage, v1.7.0): this test previously asserted
+        # put intrinsic/extrinsic (max(0, K-S)). The decision math is now
+        # covered-call-only — put legs are gated to the not-applicable shape so
+        # the call-specific breakeven/scenario equations never run for a put.
+        # See test_put_leg_is_gated_out_of_cc_decision_math for the full assert.
+        leg = {"type": "put", "strike": 20.0, "current_mid": 4.30, "quantity": 1}
+        a = _build_analysis(leg, current_price=16.0)
+        assert a["available"] is False
+        assert a["intrinsic"] is None
+        assert a["extrinsic"] is None
+
+    @pytest.mark.unit
+    def test_extrinsic_pct_of_mid_is_ratio(self):
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        # 0.14 / 1.93 ≈ 0.0725.
+        assert a["extrinsic_pct_of_mid"] == pytest.approx(0.0725, abs=1e-4)
+
+    @pytest.mark.unit
+    def test_extrinsic_pct_null_when_mid_zero(self):
+        a = _build_analysis(self._call_leg(strike=14.5, mid=0.0), current_price=16.29)
+        # O == 0 → division guard yields null; breakeven K+0 still valid.
+        assert a["extrinsic_pct_of_mid"] is None
+        assert a["btc_breakeven"] == 14.5
+
+    @pytest.mark.unit
+    def test_negative_extrinsic_clamps_to_zero(self):
+        # Stale mid below intrinsic (O=1.50 < intrinsic 1.79) → clamp to 0.
+        a = _build_analysis(self._call_leg(mid=1.50), current_price=16.29)
+        assert a["extrinsic"] == 0.0
+        # Still available — a clamp is not a degrade (Decision 2).
+        assert a["available"] is True
+
+    @pytest.mark.unit
+    def test_btc_breakeven_is_strike_plus_mid(self):
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        assert a["btc_breakeven"] == 16.43  # 14.5 + 1.93
+
+    @pytest.mark.unit
+    def test_breakeven_delta_is_signed_underlying_minus_breakeven(self):
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        # 16.29 - 16.43 = -0.14 (below breakeven).
+        assert a["breakeven_delta"] == -0.14
+
+    @pytest.mark.unit
+    def test_scenario_grid_has_four_rows_one_down_one_flat_two_up(self):
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        labels = [s["label"] for s in a["scenarios"]]
+        assert labels == ["−10%", "Flat", "+5%", "+10%"]
+        assert len(a["scenarios"]) == 4
+
+    @pytest.mark.unit
+    def test_scenario_let_assign_is_strike_times_n_times_100(self):
+        a = _build_analysis(self._call_leg(quantity=2), current_price=16.29)
+        # 14.5 × 2 × 100 = 2900, constant across scenarios.
+        for s in a["scenarios"]:
+            assert s["let_assign"] == 2900.0
+
+    @pytest.mark.unit
+    def test_scenario_btc_and_hold_and_delta_math(self):
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        flat = next(s for s in a["scenarios"] if s["label"] == "Flat")
+        # (16.29 - 1.93) × 1 × 100 = 1436.00; Δ = 1436 - 1450 = -14.
+        assert flat["btc_and_hold"] == 1436.0
+        assert flat["delta"] == -14.0
+
+    @pytest.mark.unit
+    def test_scenario_winner_btc_when_delta_positive(self):
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        up = next(s for s in a["scenarios"] if s["label"] == "+5%")
+        assert up["delta"] > 0
+        assert up["winner"] == "btc"
+
+    @pytest.mark.unit
+    def test_scenario_winner_tie_at_exact_breakeven(self):
+        # Construct a leg whose +10% scenario lands exactly at breakeven.
+        # Want S_e = K + O at offset +0.10 → S × 1.10 = K + O.
+        # Pick S=10, O=1 → K+O = S×1.10 = 11 → K = 10. intrinsic max(0,10-10)=0,
+        # extrinsic = 1, breakeven 11; +10% S_e = 11.0 → delta 0 → tie.
+        leg = {"type": "call", "strike": 10.0, "current_mid": 1.0, "quantity": 1}
+        a = _build_analysis(leg, current_price=10.0)
+        up = next(s for s in a["scenarios"] if s["label"] == "+10%")
+        assert up["delta"] == 0.0
+        assert up["winner"] == "tie"
+
+    @pytest.mark.unit
+    def test_canonical_F_14_5C_fixture_matches_spec(self):
+        a = _build_analysis(self._call_leg(), current_price=16.29)
+        assert a["intrinsic"] == 1.79
+        assert a["extrinsic"] == 0.14
+        assert a["extrinsic_pct_of_mid"] == pytest.approx(0.0725, abs=1e-4)
+        assert a["option_mid"] == 1.93
+        assert a["btc_breakeven"] == 16.43
+        assert a["underlying"] == 16.29
+        assert a["breakeven_delta"] == -0.14
+        deltas = {s["label"]: s["delta"] for s in a["scenarios"]}
+        assert deltas["−10%"] == -177.0
+        assert deltas["Flat"] == -14.0
+        assert deltas["+5%"] == 67.0
+        assert deltas["+10%"] == 149.0
+
+    @pytest.mark.unit
+    def test_available_false_when_no_mid_and_no_price(self):
+        leg = {"type": "call", "strike": 14.5, "current_mid": None, "quantity": 1}
+        a = _build_analysis(leg, current_price=None)
+        assert a["available"] is False
+        assert a["intrinsic"] is None
+        assert a["scenarios"] == []
+
+    @pytest.mark.unit
+    def test_greek_null_intrinsic_only_when_mid_missing(self):
+        # Underlying live, option mid missing → intrinsic only, rest null.
+        leg = {"type": "call", "strike": 14.5, "current_mid": None, "quantity": 1}
+        a = _build_analysis(leg, current_price=16.29)
+        assert a["available"] is True
+        assert a["intrinsic"] == 1.79
+        assert a["extrinsic"] is None
+        assert a["btc_breakeven"] is None
+        assert a["breakeven_delta"] is None
+        assert a["scenarios"] == []
+
+    @pytest.mark.unit
+    def test_does_not_raise_on_null_quantity(self):
+        # Null quantity must default to 1 contract, not crash scenario scaling.
+        leg = {"type": "call", "strike": 14.5, "current_mid": 1.93, "quantity": None}
+        a = _build_analysis(leg, current_price=16.29)
+        assert a["scenarios"][0]["let_assign"] == 1450.0  # 14.5 × 1 × 100
+
+    @pytest.mark.unit
+    def test_scenario_offsets_constant_is_frozen(self):
+        assert SCENARIO_OFFSETS == [
+            (-0.10, "−10%"),
+            (0.0, "Flat"),
+            (0.05, "+5%"),
+            (0.10, "+10%"),
+        ]
+
+    @pytest.mark.unit
+    def test_put_leg_is_gated_out_of_cc_decision_math(self):
+        # v1.7.0 decision math is covered-call-only. A short put must NOT get
+        # the call-specific breakeven / let-assign / BTC-and-hold equations —
+        # those produce misleading numbers for a put. The service returns the
+        # not-applicable (degraded) shape so the panel never shows call-math.
+        leg = {"type": "put", "strike": 20.0, "current_mid": 4.30, "quantity": 1}
+        a = _build_analysis(leg, current_price=16.0)
+        assert a["available"] is False
+        # No call-style figures — all decision-math fields are null/empty.
+        assert a["intrinsic"] is None
+        assert a["extrinsic"] is None
+        assert a["btc_breakeven"] is None
+        assert a["breakeven_delta"] is None
+        assert a["scenarios"] == []
+
+    @pytest.mark.unit
+    def test_put_leg_gate_matches_full_degrade_shape(self):
+        # The put gate reuses the exact full-degrade shape — no new fields, so
+        # no schema change / openapi regen is required.
+        from app.services.btc_detail import _degraded_analysis
+
+        put_leg = {"type": "put", "strike": 20.0, "current_mid": 4.30, "quantity": 1}
+        assert _build_analysis(put_leg, current_price=16.0) == _degraded_analysis()
