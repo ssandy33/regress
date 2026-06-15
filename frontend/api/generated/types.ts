@@ -1449,15 +1449,74 @@ export interface components {
             file: string;
         };
         /**
+         * BtcAnalysis
+         * @description BTC decision-math block: decomposition, breakeven, scenarios (issue #319).
+         *
+         *     ``available`` gates the panel: ``False`` when neither a live option mid nor
+         *     an underlying price is resolvable. When ``available`` is ``True`` but the
+         *     option mid is missing (illiquid strike / greek-null), ``intrinsic`` is still
+         *     populated while ``extrinsic`` / ``btc_breakeven`` / ``scenarios`` degrade to
+         *     null / empty. Per-share figures (intrinsic / extrinsic / option_mid) are NOT
+         *     scaled; the scenario dollars ARE (× contracts × 100).
+         */
+        BtcAnalysis: {
+            /** Available */
+            available: boolean;
+            /** Breakeven Delta */
+            breakeven_delta?: number | null;
+            /** Btc Breakeven */
+            btc_breakeven?: number | null;
+            /** Extrinsic */
+            extrinsic?: number | null;
+            /** Extrinsic Pct Of Mid */
+            extrinsic_pct_of_mid?: number | null;
+            /** Intrinsic */
+            intrinsic?: number | null;
+            /** Option Mid */
+            option_mid?: number | null;
+            /** Scenarios */
+            scenarios?: components["schemas"]["BtcAnalysisScenario"][];
+            /** Underlying */
+            underlying?: number | null;
+        };
+        /**
+         * BtcAnalysisScenario
+         * @description One assign-vs-buy-to-close scenario row (issue #319).
+         *
+         *     All money figures are whole-position dollars (per-share × contracts × 100)
+         *     to match the economics block convention. ``delta = btc_and_hold -
+         *     let_assign``; ``winner`` is ``"btc"`` when ``delta > 0``, ``"assign"`` when
+         *     ``delta < 0``, ``"tie"`` at exact breakeven.
+         */
+        BtcAnalysisScenario: {
+            /** Btc And Hold */
+            btc_and_hold: number;
+            /** Delta */
+            delta: number;
+            /** Label */
+            label: string;
+            /** Let Assign */
+            let_assign: number;
+            /** Underlying */
+            underlying: number;
+            /**
+             * Winner
+             * @enum {string}
+             */
+            winner: "btc" | "assign" | "tie";
+        };
+        /**
          * BtcDetailResponse
          * @description Top-level response for ``GET /api/positions/{id}/legs/{legId}/btc``.
          *
          *     Composes the leg identity, the §R6 rule-monitor verdict + audit (reused
          *     verbatim from :func:`app.services.rule_monitor.evaluate_leg_rules` via
-         *     ``derive_open_legs``), and the buy-to-close economics block. A 404 with
+         *     ``derive_open_legs``), the buy-to-close economics block, and the BTC
+         *     decision-math analysis block (issue #319). A 404 with
          *     ``{"detail": "Leg not found"}`` is returned for an unknown / closed leg.
          */
         BtcDetailResponse: {
+            analysis: components["schemas"]["BtcAnalysis"];
             /** Disclaimer */
             disclaimer?: string | null;
             economics: components["schemas"]["BtcEconomics"];

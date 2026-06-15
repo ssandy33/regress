@@ -1151,12 +1151,52 @@ class BtcEconomics(BaseModel):
     pricing_source: Literal["live", "stub", "unavailable"]
 
 
+class BtcAnalysisScenario(BaseModel):
+    """One assign-vs-buy-to-close scenario row (issue #319).
+
+    All money figures are whole-position dollars (per-share × contracts × 100)
+    to match the economics block convention. ``delta = btc_and_hold -
+    let_assign``; ``winner`` is ``"btc"`` when ``delta > 0``, ``"assign"`` when
+    ``delta < 0``, ``"tie"`` at exact breakeven.
+    """
+
+    underlying: float  # S_e — underlying at this expiration scenario
+    label: str  # "−10%" | "Flat" | "+5%" | "+10%"
+    let_assign: float  # K × n × 100  (whole-position $)
+    btc_and_hold: float  # (S_e − O) × n × 100  (whole-position $)
+    delta: float  # btc_and_hold − let_assign (signed; >0 ⇒ BTC wins)
+    winner: Literal["btc", "assign", "tie"]
+
+
+class BtcAnalysis(BaseModel):
+    """BTC decision-math block: decomposition, breakeven, scenarios (issue #319).
+
+    ``available`` gates the panel: ``False`` when neither a live option mid nor
+    an underlying price is resolvable. When ``available`` is ``True`` but the
+    option mid is missing (illiquid strike / greek-null), ``intrinsic`` is still
+    populated while ``extrinsic`` / ``btc_breakeven`` / ``scenarios`` degrade to
+    null / empty. Per-share figures (intrinsic / extrinsic / option_mid) are NOT
+    scaled; the scenario dollars ARE (× contracts × 100).
+    """
+
+    available: bool
+    intrinsic: Optional[float] = None
+    extrinsic: Optional[float] = None
+    extrinsic_pct_of_mid: Optional[float] = None
+    option_mid: Optional[float] = None
+    btc_breakeven: Optional[float] = None
+    underlying: Optional[float] = None
+    breakeven_delta: Optional[float] = None
+    scenarios: list[BtcAnalysisScenario] = Field(default_factory=list)
+
+
 class BtcDetailResponse(BaseModel):
     """Top-level response for ``GET /api/positions/{id}/legs/{legId}/btc``.
 
     Composes the leg identity, the §R6 rule-monitor verdict + audit (reused
     verbatim from :func:`app.services.rule_monitor.evaluate_leg_rules` via
-    ``derive_open_legs``), and the buy-to-close economics block. A 404 with
+    ``derive_open_legs``), the buy-to-close economics block, and the BTC
+    decision-math analysis block (issue #319). A 404 with
     ``{"detail": "Leg not found"}`` is returned for an unknown / closed leg.
     """
 
@@ -1164,6 +1204,7 @@ class BtcDetailResponse(BaseModel):
     leg: BtcLeg
     verdict: DASHBOARD_VERDICT
     economics: BtcEconomics
+    analysis: BtcAnalysis
     triggered_rules: list[DashboardRuleEvaluation] = Field(default_factory=list)
     disclaimer: Optional[str] = None
 

@@ -107,8 +107,46 @@ function populatedPayload(overrides = {}) {
       pricing_source: 'live',
       ...overrides.economics,
     },
+    analysis:
+      overrides.analysis !== undefined ? overrides.analysis : analysisBlock(),
     triggered_rules: overrides.triggered_rules || triggeredRules(verdict),
     disclaimer: DISCLAIMER,
+  };
+}
+
+// Canonical F 14.5C analysis block (issue #319): S=16.29, K=14.5, O=1.93 →
+// intrinsic 1.79, extrinsic 0.14, ext% 7%, breakeven 16.43, delta −0.14.
+function analysisBlock(overrides = {}) {
+  return {
+    available: true,
+    intrinsic: 1.79,
+    extrinsic: 0.14,
+    extrinsic_pct_of_mid: 0.0725,
+    option_mid: 1.93,
+    btc_breakeven: 16.43,
+    underlying: 16.29,
+    breakeven_delta: -0.14,
+    scenarios: [
+      { underlying: 14.66, label: '−10%', let_assign: 1450.0, btc_and_hold: 1273.0, delta: -177.0, winner: 'assign' },
+      { underlying: 16.29, label: 'Flat', let_assign: 1450.0, btc_and_hold: 1436.0, delta: -14.0, winner: 'assign' },
+      { underlying: 17.1, label: '+5%', let_assign: 1450.0, btc_and_hold: 1517.0, delta: 67.0, winner: 'btc' },
+      { underlying: 17.92, label: '+10%', let_assign: 1450.0, btc_and_hold: 1599.0, delta: 149.0, winner: 'btc' },
+    ],
+    ...overrides,
+  };
+}
+
+function degradedAnalysisBlock() {
+  return {
+    available: false,
+    intrinsic: null,
+    extrinsic: null,
+    extrinsic_pct_of_mid: null,
+    option_mid: null,
+    btc_breakeven: null,
+    underlying: null,
+    breakeven_delta: null,
+    scenarios: [],
   };
 }
 
@@ -130,6 +168,7 @@ function pricingUnavailablePayload() {
       pricing_as_of: null,
       pricing_source: 'unavailable',
     },
+    analysis: degradedAnalysisBlock(),
   });
 }
 
@@ -245,9 +284,12 @@ test.describe('BTC detail screen — route + states @e2e', () => {
     await expect(
       page.getByTestId('btc-detail-economics-tile-credit'),
     ).toContainText('$38.34');
+    // BRIDGE EDIT (issue #319): the 4th tile "% premium captured"
+    // (btc-detail-economics-tile-pct-captured) was replaced by the honest
+    // "Extrinsic % of mid" tile. The old assertion is removed here.
     await expect(
-      page.getByTestId('btc-detail-economics-tile-pct-captured'),
-    ).toContainText('59%');
+      page.getByTestId('btc-detail-economics-tile-extrinsic-pct'),
+    ).toContainText('7%');
     await expect(
       page.getByTestId('btc-detail-economics-tile-est-pl'),
     ).toContainText('+$22.62');
@@ -532,5 +574,146 @@ test.describe('BTC detail — journal close-leg pre-fill (issue #244) @e2e', () 
     // The journal opens on the position; no form auto-opens, no error.
     await expect(page.getByTestId('trade-history')).toBeVisible();
     await expect(page.getByTestId('trade-entry-form')).toHaveCount(0);
+  });
+});
+
+// --- Tests: BTC Analysis panel (issue #319) --------------------------------
+
+test.describe('BTC Analysis panel — decision math @e2e', () => {
+  test('renders decomposition, breakeven, and ≥4-row scenario table for ITM fixture @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(page, populatedPayload());
+    await openBtcDetail(page);
+
+    const panel = page.getByTestId('btc-analysis');
+    await expect(panel).toBeVisible();
+    // Section 1 — decomposition trio.
+    await expect(page.getByTestId('btc-analysis-intrinsic')).toContainText(
+      '$1.79',
+    );
+    await expect(page.getByTestId('btc-analysis-extrinsic')).toContainText(
+      '$0.14',
+    );
+    await expect(page.getByTestId('btc-analysis-extrinsic-pct')).toContainText(
+      '7%',
+    );
+    // Section 2 — breakeven line.
+    await expect(page.getByTestId('btc-analysis-breakeven')).toContainText(
+      '$16.43',
+    );
+    // Section 3 — ≥4-row scenario table.
+    await expect(
+      page.getByTestId('btc-analysis-scenario-table'),
+    ).toBeVisible();
+    for (let i = 0; i < 4; i += 1) {
+      await expect(
+        page.getByTestId(`btc-analysis-scenario-row-${i}`),
+      ).toBeVisible();
+    }
+    // The up scenarios favor BTC; the down/flat favor assign.
+    await expect(page.getByTestId('btc-analysis-scenario-row-0')).toContainText(
+      'Assign wins',
+    );
+    await expect(page.getByTestId('btc-analysis-scenario-row-2')).toContainText(
+      'BTC wins',
+    );
+  });
+
+  test('breakeven line shows signed delta vs underlying @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(page, populatedPayload());
+    await openBtcDetail(page);
+
+    const delta = page.getByTestId('btc-analysis-breakeven-delta');
+    // Signed (−) + dollar literal + direction word, never NaN.
+    await expect(delta).toContainText('-$0.14');
+    await expect(delta).toContainText('below breakeven');
+  });
+
+  test('guidance copy explains breakeven intuition @e2e', async ({ page }) => {
+    await mockBtcDetail(page, populatedPayload());
+    await openBtcDetail(page);
+
+    await expect(page.getByTestId('btc-analysis-guidance')).toContainText(
+      'must rise above your BTC breakeven',
+    );
+    await expect(page.getByTestId('btc-analysis-guidance')).toContainText(
+      'letting it assign keeps more',
+    );
+  });
+
+  test('4th economics tile shows Extrinsic % of mid; raw %CAPT demoted to footnote @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(page, populatedPayload());
+    await openBtcDetail(page);
+
+    // The replaced tile reads the honest extrinsic% signal.
+    await expect(
+      page.getByTestId('btc-detail-economics-tile-extrinsic-pct'),
+    ).toContainText('Extrinsic % of mid');
+    await expect(
+      page.getByTestId('btc-detail-economics-tile-extrinsic-pct'),
+    ).toContainText('7%');
+    // The old misleading tile is gone.
+    await expect(
+      page.getByTestId('btc-detail-economics-tile-pct-captured'),
+    ).toHaveCount(0);
+    // captured_pct survives as a muted, labelled footnote.
+    const note = page.getByTestId('btc-detail-economics-captured-raw-note');
+    await expect(note).toBeVisible();
+    await expect(note).toContainText('Premium captured (raw)');
+    await expect(note).toContainText('59%');
+  });
+
+  test('degraded state shows badge + em-dash, never NaN @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(page, pricingUnavailablePayload());
+    await openBtcDetail(page);
+
+    await expect(page.getByTestId('btc-analysis')).toBeVisible();
+    await expect(
+      page.getByTestId('btc-analysis-degraded-badge'),
+    ).toBeVisible();
+    // Decomposition figures show the em-dash, never NaN.
+    await expect(page.getByTestId('btc-analysis-intrinsic')).toContainText('—');
+    await expect(page.getByTestId('btc-analysis')).not.toContainText('NaN');
+    // No scenario table when unavailable.
+    await expect(
+      page.getByTestId('btc-analysis-scenario-table'),
+    ).toHaveCount(0);
+  });
+
+  // Review follow-up (#319): an exact-tie scenario (delta 0, winner 'tie',
+  // breakeven_delta 0) must render "Tie" / "at breakeven", not "Assign wins"
+  // or "above breakeven". The backend emits 'tie' at exact delta === 0.
+  test('renders "Tie" winner + "at breakeven" for an exact-tie scenario @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(
+      page,
+      populatedPayload({
+        analysis: analysisBlock({
+          breakeven_delta: 0,
+          scenarios: [
+            { underlying: 16.43, label: 'Flat', let_assign: 1450.0, btc_and_hold: 1450.0, delta: 0.0, winner: 'tie' },
+            { underlying: 17.1, label: '+5%', let_assign: 1450.0, btc_and_hold: 1517.0, delta: 67.0, winner: 'btc' },
+          ],
+        }),
+      }),
+    );
+    await openBtcDetail(page);
+
+    const tieRow = page.getByTestId('btc-analysis-scenario-row-0');
+    await expect(tieRow).toContainText('Tie');
+    await expect(tieRow).not.toContainText('Assign wins');
+    await expect(tieRow).not.toContainText('BTC wins');
+    // Breakeven line reads neutral "at breakeven" at exact 0, not "above".
+    const delta = page.getByTestId('btc-analysis-breakeven-delta');
+    await expect(delta).toContainText('at breakeven');
+    await expect(delta).not.toContainText('above breakeven');
   });
 });
