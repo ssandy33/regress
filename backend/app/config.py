@@ -24,6 +24,19 @@ class Settings(BaseSettings):
     cache_ttl_monthly_days: int = 7
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 
+    # Deployment-environment discriminator (issue #349). Drives the QA seed
+    # guard: ``seed-qa`` is hard-blocked when ``app_env == "production"`` so
+    # synthetic test data can never be written to the prod database. Defaults
+    # to ``"development"`` — prod compose sets ``APP_ENV=production`` explicitly.
+    app_env: str = "development"
+
+    # Pricing-source mode (issue #349). ``"live"`` uses the real Schwab
+    # market-data client; ``"stub"`` swaps in a deterministic in-DB stub
+    # provider for the QA environment (where there is no Schwab feed). Defaults
+    # to ``"live"`` and is never overridden in prod compose, so the stub path is
+    # unreachable on production by configuration.
+    pricing_mode: str = "live"
+
     # Axiom centralized logging (optional). When ``axiom_api_token`` is unset
     # the Axiom handler is not attached and behavior is identical to today.
     # See ``backend/app/logging_axiom.py`` and ``deploy/LOGGING.md``.
