@@ -95,6 +95,11 @@ services:
       - path: ./backend/.env
         required: false
     environment:
+      # APP_ENV=production hard-blocks the `seed-qa` CLI (issue #349): synthetic
+      # test data can never be written to the prod database. PRICING_MODE is
+      # intentionally NOT set here, so it defaults to "live" — the QA stub
+      # pricing path is unreachable on prod by configuration.
+      - APP_ENV=production
       - FRED_API_KEY=${FRED_API_KEY}
       - DATABASE_URL=sqlite:///./data/regression_tool.db
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}

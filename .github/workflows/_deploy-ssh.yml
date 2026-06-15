@@ -179,6 +179,27 @@ jobs:
               exit 1
             fi
             echo "Smoke gate PASSED: ${FRONTEND_SVC}${SMOKE_PATH} is serving."
+            # QA-only auto-seed (#349): keep QA populated with the 7 v1.7
+            # decision-support archetypes after every deploy so #318/#319/#320
+            # are always acceptance-testable on QA. The seed CLI is idempotent
+            # (tagged delete-then-reseed — non-destructive to manual QA rows)
+            # and its DTE-relative fixtures refresh each run, so time-sensitive
+            # archetypes (e.g. the "Watch ≤14 DTE" leg) stay valid over time.
+            #
+            # Double-guarded against prod: this step only runs when the caller
+            # passed environment=qa, AND `seed-qa` itself hard-blocks
+            # APP_ENV=production before any write. Prod's compose sets
+            # APP_ENV=production and never reaches this branch.
+            if [ "${{ inputs.environment }}" = "qa" ]; then
+              BACKEND_SVC=$(docker compose -f ${{ inputs.compose_file }} config --services | grep -E '(^|-)backend$' | head -1)
+              if [ -z "$BACKEND_SVC" ]; then
+                echo "::error::QA auto-seed: could not resolve a backend service from ${{ inputs.compose_file }} — refusing to mark deploy healthy."
+                exit 1
+              fi
+              echo "QA auto-seed: running 'python -m app.cli seed-qa' in ${BACKEND_SVC}"
+              docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" python -m app.cli seed-qa
+              echo "QA auto-seed: complete."
+            fi
             docker image prune -f
             ENDSSH
             SSH_EXIT=$?

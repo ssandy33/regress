@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic_settings import BaseSettings
 
@@ -23,6 +23,21 @@ class Settings(BaseSettings):
     cache_ttl_daily_hours: int = 24
     cache_ttl_monthly_days: int = 7
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
+
+    # Deployment-environment discriminator (issue #349). Drives the QA seed
+    # guard: ``seed-qa`` is hard-blocked when ``app_env == "production"`` so
+    # synthetic test data can never be written to the prod database. Defaults
+    # to ``"development"`` — prod compose sets ``APP_ENV=production`` explicitly.
+    # Constrained to a Literal so a typo/casing drift fails closed at startup
+    # rather than silently bypassing the seed/stub safety switches (#349).
+    app_env: Literal["development", "qa", "production"] = "development"
+
+    # Pricing-source mode (issue #349). ``"live"`` uses the real Schwab
+    # market-data client; ``"stub"`` swaps in a deterministic in-DB stub
+    # provider for the QA environment (where there is no Schwab feed). Defaults
+    # to ``"live"`` and is never overridden in prod compose, so the stub path is
+    # unreachable on production by configuration.
+    pricing_mode: Literal["live", "stub"] = "live"
 
     # Axiom centralized logging (optional). When ``axiom_api_token`` is unset
     # the Axiom handler is not attached and behavior is identical to today.

@@ -31,10 +31,19 @@ from typing import Any
 
 from sqlalchemy.orm import Session as DBSession
 
+from app.config import settings
 from app.services import journal
 from app.services.dashboard_legs import build_option_leg_index, derive_open_legs
+from app.services.market_client import get_market_client
 from app.services.rules_config import load_rules_config
-from app.services.schwab_client import SchwabClient
+
+# ``SchwabClient`` is re-exported into this module's namespace as the stable
+# monkeypatch surface the BTC-detail integration tests target
+# (``app.services.btc_detail.SchwabClient.get_quote`` / ``.get_option_chain``).
+# The live quote/chain fetch now goes through :func:`get_market_client` (issue
+# #349), which instantiates this same class object, so patching the method here
+# still intercepts the live calls. Kept as an explicit re-export, not dead code.
+from app.services.schwab_client import SchwabClient  # noqa: F401  (test patch surface)
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +127,10 @@ def _build_economics(leg: dict) -> dict[str, Any]:
     # construction with the dashboard column (spec §10 note 2).
     captured_pct = (leg.get("profit_target_status") or {}).get("captured_pct")
     est_pl_if_closed = round(credit_received - cost_to_close, 2)
+    # Label the source "stub" on the QA stub-pricing path (issue #349) so the
+    # frozen ``pricing_source="stub"`` schema value is finally reachable; "live"
+    # everywhere else. This is the only place the literal is chosen.
+    pricing_source = "stub" if settings.pricing_mode == "stub" else "live"
     return {
         "credit_received": credit_received,
         "current_option_mid": round(float(current_mid), 4),
@@ -125,7 +138,7 @@ def _build_economics(leg: dict) -> dict[str, Any]:
         "captured_pct": captured_pct,
         "est_pl_if_closed": est_pl_if_closed,
         "pricing_as_of": datetime.now(timezone.utc).isoformat(),
-        "pricing_source": "live",
+        "pricing_source": pricing_source,
     }
 
 
@@ -290,7 +303,9 @@ def build_btc_detail(
 
     # Resolve the live price + option chain for THIS position's ticker only.
     # A single quote + single chain — far cheaper than the dashboard fan-out.
-    client = SchwabClient()
+    # The factory returns the live Schwab client (prod default) or the
+    # deterministic stub client on the QA pricing_mode=="stub" path (issue #349).
+    client = get_market_client(db)
     quote = client.get_quote(ticker)
     current_price_raw = quote.get("lastPrice") if isinstance(quote, dict) else None
     if current_price_raw is None and isinstance(quote, dict):

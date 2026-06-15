@@ -1,4 +1,14 @@
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text, create_engine, event
+from sqlalchemy import (
+    Column,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    event,
+)
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 from app.config import settings
@@ -214,6 +224,65 @@ class WatchlistTicker(Base):
 
     ticker = Column(String, primary_key=True)  # uppercase-normalized symbol
     added_at = Column(String, nullable=False)  # ISO datetime — audit + stable sort
+
+
+class QuoteStub(Base):
+    """Deterministic underlying quote for the QA stub-pricing layer (issue #349).
+
+    Internal table — never a route response model. Seeded and torn down by
+    ``seed-qa`` (cascaded with the synthetic positions). Read only by
+    :class:`app.services.market_client.StubSchwabClient` when
+    ``settings.pricing_mode == "stub"`` (QA only); the prod path never
+    constructs the stub client, so this table stays empty on production.
+
+    One row per ticker (``ticker`` is the primary key). ``last_price`` is the
+    synthetic underlying price returned in the Schwab-shaped quote dict.
+
+    The project has no Alembic — ``Base.metadata.create_all(bind=engine)`` is
+    idempotent, so an existing deployment grows the table on next startup.
+    Rollback path is a manual ``DROP TABLE quote_stubs``.
+    """
+
+    __tablename__ = "quote_stubs"
+
+    ticker = Column(String, primary_key=True)  # underlying symbol
+    last_price = Column(Float, nullable=False)  # synthetic last price
+
+
+class OptionMarkStub(Base):
+    """Deterministic option mark for the QA stub-pricing layer (issue #349).
+
+    Internal table — never a route response model. Seeded and torn down by
+    ``seed-qa``. Read only by :class:`app.services.market_client.StubSchwabClient`
+    when ``settings.pricing_mode == "stub"`` (QA only).
+
+    One row per ``(ticker, strike, expiration, option_type)`` leg. The stub
+    client reassembles these rows into a Schwab-shaped ``callExpDateMap`` /
+    ``putExpDateMap`` chain so ``build_option_leg_index`` parses them unchanged.
+    ``delta`` is nullable: omitting it (and the row entirely) lets an archetype
+    model the "no live option mark" degrade path.
+
+    Rollback path is a manual ``DROP TABLE option_mark_stubs``.
+    """
+
+    __tablename__ = "option_mark_stubs"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker",
+            "strike",
+            "expiration",
+            "option_type",
+            name="uq_option_mark_stub_leg",
+        ),
+    )
+
+    id = Column(String, primary_key=True)  # UUID4
+    ticker = Column(String, nullable=False, index=True)
+    strike = Column(Float, nullable=False)
+    expiration = Column(String, nullable=False)  # YYYY-MM-DD
+    option_type = Column(String, nullable=False)  # "call" | "put"
+    mid = Column(Float, nullable=False)  # synthetic option mid (per-share)
+    delta = Column(Float, nullable=True)  # signed live delta, nullable
 
 
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
