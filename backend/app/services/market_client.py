@@ -97,10 +97,10 @@ class StubSchwabClient:
     def get_option_chain(
         self,
         ticker: str,
-        contract_type: str = "ALL",
-        from_date: str | None = None,
-        to_date: str | None = None,
-        strike_count: int | None = None,
+        contract_type: str = "ALL",  # noqa: ARG002 — signature parity with SchwabClient
+        from_date: str | None = None,  # noqa: ARG002
+        to_date: str | None = None,  # noqa: ARG002
+        strike_count: int | None = None,  # noqa: ARG002
     ) -> dict:
         """Return a Schwab-shaped option chain dict from the stub marks table.
 
@@ -154,13 +154,27 @@ def get_market_client(db: DBSession) -> SchwabClient | StubSchwabClient:
     bound to ``db`` (QA only); any other value (including the prod default
     ``"live"``) yields the real :class:`SchwabClient`. ``db`` is accepted
     unconditionally so call sites are uniform; the live client ignores it.
+
+    **Prod-safety guard (defense-in-depth):** stub construction is refused
+    outright when ``app_env == "production"``, regardless of ``pricing_mode``.
+    The configuration invariant (prod never sets ``PRICING_MODE``) is the first
+    line of defense; this guard ensures a single stray prod env override cannot
+    swap real market data for synthetic stub rows. Mirrors the ``seed-qa`` prod
+    guard so the safety is by design, not by convention.
     """
-    if settings.pricing_mode == "stub":
+    if settings.pricing_mode == "stub" and settings.app_env != "production":
         logger.info(
             "market_client.select",
             extra={"event": "market_client.select", "outcome": "success"},
         )
         return StubSchwabClient(db)
+    if settings.pricing_mode == "stub":
+        # pricing_mode=stub requested on production — refuse and fall back to
+        # the live client so prod can never serve synthetic data.
+        logger.warning(
+            "market_client.select",
+            extra={"event": "market_client.select", "outcome": "degraded"},
+        )
     return SchwabClient()
 
 

@@ -1,4 +1,14 @@
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text, create_engine, event
+from sqlalchemy import (
+    Column,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+    event,
+)
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 from app.config import settings
@@ -256,6 +266,15 @@ class OptionMarkStub(Base):
     """
 
     __tablename__ = "option_mark_stubs"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker",
+            "strike",
+            "expiration",
+            "option_type",
+            name="uq_option_mark_stub_leg",
+        ),
+    )
 
     id = Column(String, primary_key=True)  # UUID4
     ticker = Column(String, nullable=False, index=True)

@@ -42,7 +42,7 @@ def test_assert_seed_allowed_permits_non_production(env):
     """Non-prod environments proceed without raising."""
     with patch("app.services.seed_qa.settings") as mock_settings:
         mock_settings.app_env = env
-        assert_seed_allowed() is None
+        assert assert_seed_allowed() is None
 
 
 # --- Archetype contract (Components 2-3) ---
@@ -244,10 +244,25 @@ def test_stub_client_returns_empty_chain_when_no_marks():
 
 @pytest.mark.unit
 def test_get_market_client_factory_selects_by_mode():
-    """live → SchwabClient; stub → StubSchwabClient."""
+    """live → SchwabClient; stub → StubSchwabClient (non-prod)."""
     db = _FakeDB()
     with patch("app.services.market_client.settings") as mock_settings:
+        mock_settings.app_env = "qa"
         mock_settings.pricing_mode = "live"
         assert isinstance(get_market_client(db), SchwabClient)
         mock_settings.pricing_mode = "stub"
         assert isinstance(get_market_client(db), StubSchwabClient)
+
+
+@pytest.mark.unit
+def test_get_market_client_refuses_stub_on_production():
+    """Defense-in-depth: pricing_mode=stub on production falls back to live.
+
+    The configuration invariant (prod never sets PRICING_MODE) is the first
+    guard; this proves a stray prod override still cannot serve synthetic data.
+    """
+    db = _FakeDB()
+    with patch("app.services.market_client.settings") as mock_settings:
+        mock_settings.app_env = "production"
+        mock_settings.pricing_mode = "stub"
+        assert isinstance(get_market_client(db), SchwabClient)

@@ -30,6 +30,7 @@ premium-bearing trades to make ``adjusted_cost_basis`` differ from broker basis.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -409,6 +410,7 @@ def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
     surface construction errors) and returns counts of zero.
     """
     assert_seed_allowed()
+    start = time.monotonic()
     now = datetime.now(timezone.utc)
     archetypes = build_archetypes(now)
 
@@ -429,13 +431,15 @@ def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
     for archetype in archetypes:
         try:
             stub_count = _insert_archetype(db, archetype, now=now)
-        except Exception:
+        except Exception as exc:
             db.rollback()
             logger.exception(
                 "seed_qa.archetype_failed",
                 extra={
                     "event": "seed_qa.archetype_failed",
                     "outcome": "failed",
+                    "duration_ms": round((time.monotonic() - start) * 1000, 2),
+                    "error_class": type(exc).__name__,
                     "archetype": archetype.key,
                 },
             )
@@ -454,6 +458,7 @@ def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
         extra={
             "event": "seed_qa.complete",
             "outcome": "success" if result.ok else "degraded",
+            "duration_ms": round((time.monotonic() - start) * 1000, 2),
             "app_env": settings.app_env,
             "positions_seeded": result.positions_seeded,
             "quotes_seeded": result.quotes_seeded,
