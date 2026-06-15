@@ -34,6 +34,12 @@ services:
       - path: ./backend/.env
         required: false
     environment:
+      # APP_ENV=qa permits the `seed-qa` CLI (issue #349); PRICING_MODE=stub
+      # swaps in the deterministic in-DB stub-pricing provider so the v1.7
+      # covered-call surfaces (#318/#319) render their intended states without
+      # a live Schwab feed (QA runs in degraded, no-Schwab mode).
+      - APP_ENV=qa
+      - PRICING_MODE=stub
       - FRED_API_KEY=${FRED_API_KEY}
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-}
       - DATABASE_URL=sqlite:///./data/regression_tool.db
