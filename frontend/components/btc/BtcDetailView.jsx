@@ -229,7 +229,7 @@ function EconomicsTile({ testId, label, value, valueClass }) {
   );
 }
 
-function BtcEconomicsPanel({ economics, analysis, verdict }) {
+function BtcEconomicsPanel({ economics, analysis }) {
   const pricingLive = economics.pricing_source === 'live';
   const captured = economics.captured_pct;
   // The honest decision signal that replaces the misleading "% premium
@@ -533,13 +533,20 @@ function BtcAnalysisPanel({ analysis }) {
                 <span
                   data-testid="btc-analysis-breakeven-delta"
                   className={`tabular-nums font-medium ${
-                    analysis.breakeven_delta < 0
+                    analysis.breakeven_delta === 0
+                      ? 'text-slate-700 dark:text-slate-200'
+                      : analysis.breakeven_delta < 0
                       ? 'text-red-700 dark:text-red-300'
                       : 'text-emerald-700 dark:text-emerald-300'
                   }`}
                 >
                   ({formatSignedDollar(analysis.breakeven_delta)}{' '}
-                  {analysis.breakeven_delta < 0 ? 'below' : 'above'} breakeven)
+                  {analysis.breakeven_delta === 0
+                    ? 'at breakeven'
+                    : analysis.breakeven_delta < 0
+                    ? 'below breakeven'
+                    : 'above breakeven'}
+                  )
                 </span>
               </p>
               <p
@@ -587,9 +594,15 @@ function BtcAnalysisPanel({ analysis }) {
                 <tbody>
                   {analysis.scenarios.map((s, i) => {
                     const btcWins = s.winner === 'btc';
+                    const isTie = s.winner === 'tie';
                     const deltaClass = btcWins
                       ? 'text-emerald-700 dark:text-emerald-300 font-medium'
                       : 'text-slate-700 dark:text-slate-200';
+                    const winnerLabel = isTie
+                      ? 'Tie'
+                      : btcWins
+                      ? 'BTC wins'
+                      : 'Assign wins';
                     return (
                       <tr
                         key={s.label}
@@ -617,7 +630,7 @@ function BtcAnalysisPanel({ analysis }) {
                             btcWins ? 'text-emerald-700 dark:text-emerald-300' : ''
                           }`}
                         >
-                          {btcWins ? 'BTC wins' : 'Assign wins'}
+                          {winnerLabel}
                         </td>
                       </tr>
                     );
@@ -659,11 +672,7 @@ export default function BtcDetailView({ data }) {
     <div className="space-y-4">
       <LegHeader leg={leg} verdict={verdict} />
       <RecommendedActionBlock data={data} />
-      <BtcEconomicsPanel
-        economics={economics}
-        analysis={analysis}
-        verdict={verdict}
-      />
+      <BtcEconomicsPanel economics={economics} analysis={analysis} />
       <BtcAnalysisPanel analysis={analysis} />
       <RuleAuditPanel rules={rules} verdict={verdict} />
 

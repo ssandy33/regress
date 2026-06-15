@@ -686,4 +686,34 @@ test.describe('BTC Analysis panel — decision math @e2e', () => {
       page.getByTestId('btc-analysis-scenario-table'),
     ).toHaveCount(0);
   });
+
+  // Review follow-up (#319): an exact-tie scenario (delta 0, winner 'tie',
+  // breakeven_delta 0) must render "Tie" / "at breakeven", not "Assign wins"
+  // or "above breakeven". The backend emits 'tie' at exact delta === 0.
+  test('renders "Tie" winner + "at breakeven" for an exact-tie scenario @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(
+      page,
+      populatedPayload({
+        analysis: analysisBlock({
+          breakeven_delta: 0,
+          scenarios: [
+            { underlying: 16.43, label: 'Flat', let_assign: 1450.0, btc_and_hold: 1450.0, delta: 0.0, winner: 'tie' },
+            { underlying: 17.1, label: '+5%', let_assign: 1450.0, btc_and_hold: 1517.0, delta: 67.0, winner: 'btc' },
+          ],
+        }),
+      }),
+    );
+    await openBtcDetail(page);
+
+    const tieRow = page.getByTestId('btc-analysis-scenario-row-0');
+    await expect(tieRow).toContainText('Tie');
+    await expect(tieRow).not.toContainText('Assign wins');
+    await expect(tieRow).not.toContainText('BTC wins');
+    // Breakeven line reads neutral "at breakeven" at exact 0, not "above".
+    const delta = page.getByTestId('btc-analysis-breakeven-delta');
+    await expect(delta).toContainText('at breakeven');
+    await expect(delta).not.toContainText('above breakeven');
+  });
 });
