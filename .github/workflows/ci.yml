@@ -80,6 +80,16 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python -m scripts.check_tdd_red --diff-base ${{ github.event.pull_request.base.sha }}
 
+      # Test-traceability matrix (test-traceability ADR, extends PRD #261):
+      # --check is the coverage gate — fail if any known AC-ID has zero covering
+      # @pytest.mark.ac(...) tests. --summary renders the AC->test matrix to the
+      # job summary (the "test plan with results" view). Always runs (push + PR);
+      # offline + deterministic (pure-AST, no suite import, no network).
+      - name: Test traceability matrix (coverage gate + job summary)
+        id: test_matrix
+        if: always()
+        run: python -m scripts.gen_test_matrix --check --summary
+
   backend-integration:
     name: Backend tests (integration)
     runs-on: ubuntu-latest

@@ -58,6 +58,7 @@ def _seed_count(db) -> int:
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC9")
 def test_seed_inserts_all_seven_archetypes(db_session):
     """AC: all archetypes present — seven seeded positions after a seed run."""
     with patch("app.services.seed_qa.settings") as mock_settings:
@@ -72,6 +73,7 @@ def test_seed_inserts_all_seven_archetypes(db_session):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC8")
 def test_seed_is_idempotent(db_session):
     """AC: repeatable reseed — running twice yields 7 positions, not 14."""
     with patch("app.services.seed_qa.settings") as mock_settings:
@@ -85,6 +87,7 @@ def test_seed_is_idempotent(db_session):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC8")
 def test_seed_preserves_untagged_rows(db_session):
     """AC: non-destructive — a manually-added position survives reseed."""
     manual = Position(
@@ -112,6 +115,7 @@ def test_seed_preserves_untagged_rows(db_session):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC10")
 def test_seed_dry_run_writes_nothing(db_session):
     """AC: dry-run — dry_run=True writes no positions or stub rows."""
     with patch("app.services.seed_qa.settings") as mock_settings:
@@ -125,6 +129,7 @@ def test_seed_dry_run_writes_nothing(db_session):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC9")
 def test_seed_nonzero_exit_on_archetype_failure(db_session):
     """AC: exits non-zero on failure — a failed insert surfaces the key.
 
@@ -153,6 +158,7 @@ def test_seed_nonzero_exit_on_archetype_failure(db_session):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC5")
 def test_csp_archetype_persists_zero_share_basis(db_session):
     """Archetype 5: CSP persists with 0 shares → per-share basis is None (#320)."""
     with patch("app.services.seed_qa.settings") as mock_settings:
@@ -168,6 +174,7 @@ def test_csp_archetype_persists_zero_share_basis(db_session):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC7")
 def test_equity_archetype_adjusted_basis_differs_from_broker(db_session):
     """Archetype 7: premium-bearing trades make adjusted/sh ≠ broker/sh (#320)."""
     with patch("app.services.seed_qa.settings") as mock_settings:

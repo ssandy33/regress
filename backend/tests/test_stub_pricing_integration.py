@@ -85,6 +85,7 @@ def _leg_id_for_position(payload, position_id) -> str:
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC1", "349-AC2", "349-AC3")
 def test_dashboard_assignment_risk_high_watch_low_with_stub(stub_db):
     """AC #318: archetypes 1/2/3 render High/Watch/Low off the stub feed."""
     payload = build_dashboard_payload(stub_db)
@@ -95,6 +96,7 @@ def test_dashboard_assignment_risk_high_watch_low_with_stub(stub_db):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC4")
 def test_btc_panel_populated_with_stub(stub_db):
     """AC #319 live-mark path: archetype 4 → populated panel, pricing_source=stub."""
     payload = build_dashboard_payload(stub_db)
@@ -110,6 +112,7 @@ def test_btc_panel_populated_with_stub(stub_db):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC6")
 def test_btc_degraded_when_mark_missing(stub_db):
     """AC #319 degraded path: archetype 6 → '—' sentinel, pricing_source=unavailable."""
     payload = build_dashboard_payload(stub_db)
@@ -125,6 +128,7 @@ def test_btc_degraded_when_mark_missing(stub_db):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC5")
 def test_csp_btc_is_not_applicable(stub_db):
     """AC #319 CC-only gate: archetype 5 (CSP) → analysis not available."""
     payload = build_dashboard_payload(stub_db)
@@ -138,6 +142,7 @@ def test_csp_btc_is_not_applicable(stub_db):
 
 
 @pytest.mark.integration
+@pytest.mark.ac("349-AC4")
 def test_stub_client_snapshots_data_and_retains_no_session(stub_db):
     """Regression (#349): the stub client must snapshot its data at
     construction and NOT touch the DB session afterwards.

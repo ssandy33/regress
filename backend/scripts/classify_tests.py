@@ -74,8 +74,16 @@ logger = logging.getLogger(__name__)
 CLASSIFIER_MARKERS: tuple[str, ...] = ("unit", "integration", "tdd_red")
 
 # Markers we ignore (pytest built-ins or non-classifier marks).
+#
+# ``ac`` is the requirement-traceability marker (test-traceability ADR,
+# extends PRD #261). It is ADDITIVE — a test carries ``@pytest.mark.ac(...)``
+# alongside its single classifier marker — so the classifier must ignore it
+# here, exactly as it ignores ``parametrize`` / ``skip``. Without this entry
+# the one-classifier-per-test rule is unaffected anyway (``ac`` is simply not
+# in ``CLASSIFIER_MARKERS``); it is listed for documentation + symmetry with
+# the gen_test_matrix collector that consumes it.
 NON_CLASSIFIER_MARKERS: frozenset[str] = frozenset(
-    {"parametrize", "skip", "skipif", "xfail", "usefixtures", "filterwarnings"}
+    {"parametrize", "skip", "skipif", "xfail", "usefixtures", "filterwarnings", "ac"}
 )
 
 

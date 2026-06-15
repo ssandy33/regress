@@ -49,7 +49,14 @@ PYTEST_INI = REPO_BACKEND / "pytest.ini"
 
 @pytest.mark.unit
 def test_pytest_ini_registers_three_markers():
-    """pytest.ini declares unit / integration / tdd_red and nothing else as classifier markers."""
+    """pytest.ini declares the three classifier markers (unit / integration / tdd_red).
+
+    Any additional registered marker MUST be a known non-classifier marker
+    (e.g. ``ac``, the requirement-traceability tag from the test-traceability
+    ADR), so the unit/integration/tdd_red partition the classifier enforces is
+    never silently widened. The classifier ignores ``ac`` via its
+    ``NON_CLASSIFIER_MARKERS`` set.
+    """
     assert PYTEST_INI.exists(), f"missing {PYTEST_INI}"
     cfg = configparser.ConfigParser()
     cfg.read(PYTEST_INI)
@@ -59,8 +66,17 @@ def test_pytest_ini_registers_three_markers():
         for line in raw_markers.splitlines()
         if line.strip() and ":" in line
     }
-    assert declared == {"unit", "integration", "tdd_red"}, (
-        f"pytest.ini classifier markers mismatch — got {declared}"
+    classifiers = {"unit", "integration", "tdd_red"}
+    assert classifiers <= declared, (
+        f"pytest.ini must register the three classifier markers — got {declared}"
+    )
+    # Every extra registered marker must be a recognised non-classifier marker.
+    extras = declared - classifiers
+    unexpected = extras - classify_tests.NON_CLASSIFIER_MARKERS
+    assert not unexpected, (
+        f"pytest.ini registers unexpected marker(s) {unexpected} — a new marker "
+        "must be added to classify_tests.NON_CLASSIFIER_MARKERS if it is not a "
+        "classifier."
     )
 
 
