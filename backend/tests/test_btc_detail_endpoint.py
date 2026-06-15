@@ -334,6 +334,71 @@ def test_btc_detail_404_for_position_leg_mismatch(client):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Analysis block (issue #319) — decomposition / breakeven / scenarios
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_btc_detail_response_carries_analysis_block(client):
+    """The analysis block wires through end-to-end with correct decomposition."""
+    _seed_position(client)
+    # S = 16.29 (quote), K = 15.0, O = 1.93 → intrinsic 1.29, extrinsic 0.64.
+    _seed_trade(client, strike=15.0)
+    chain = _chain(15.0, 1.93)
+    with _patch_schwab(quote_price=16.29, chain=chain):
+        resp = client.get("/api/positions/pos-ford/legs/leg-ford-15c/btc")
+    assert resp.status_code == 200, resp.text
+    analysis = resp.json()["analysis"]
+    assert analysis["available"] is True
+    assert analysis["intrinsic"] == 1.29  # max(0, 16.29 - 15.0)
+    assert analysis["extrinsic"] == 0.64  # 1.93 - 1.29
+    assert analysis["option_mid"] == 1.93
+    assert analysis["underlying"] == 16.29
+    assert analysis["extrinsic_pct_of_mid"] is not None
+
+
+@pytest.mark.integration
+def test_btc_detail_analysis_scenarios_have_four_rows(client):
+    _seed_position(client)
+    _seed_trade(client, strike=15.0)
+    with _patch_schwab(quote_price=16.29, chain=_chain(15.0, 1.93)):
+        resp = client.get("/api/positions/pos-ford/legs/leg-ford-15c/btc")
+    scenarios = resp.json()["analysis"]["scenarios"]
+    assert len(scenarios) == 4
+    assert [s["label"] for s in scenarios] == ["−10%", "Flat", "+5%", "+10%"]
+    # Each row carries the assign-vs-BTC comparison fields.
+    for s in scenarios:
+        assert s["winner"] in {"btc", "assign", "tie"}
+        assert s["delta"] == round(s["btc_and_hold"] - s["let_assign"], 2)
+
+
+@pytest.mark.integration
+def test_btc_detail_analysis_breakeven_matches_strike_plus_mid(client):
+    _seed_position(client)
+    _seed_trade(client, strike=15.0)
+    with _patch_schwab(quote_price=16.29, chain=_chain(15.0, 1.93)):
+        resp = client.get("/api/positions/pos-ford/legs/leg-ford-15c/btc")
+    analysis = resp.json()["analysis"]
+    assert analysis["btc_breakeven"] == 16.93  # 15.0 + 1.93
+    assert analysis["breakeven_delta"] == -0.64  # 16.29 - 16.93
+
+
+@pytest.mark.integration
+def test_btc_detail_analysis_available_false_when_no_mark(client):
+    """No option mark AND no underlying → analysis degrades to available:false."""
+    _seed_position(client)
+    _seed_trade(client)
+    # No mark for the contract and no live quote price.
+    with _patch_schwab(quote_price=None, chain={}):
+        resp = client.get("/api/positions/pos-ford/legs/leg-ford-15c/btc")
+    assert resp.status_code == 200
+    analysis = resp.json()["analysis"]
+    assert analysis["available"] is False
+    assert analysis["intrinsic"] is None
+    assert analysis["scenarios"] == []
+
+
 @pytest.mark.integration
 def test_btc_detail_500_uses_generic_detail_on_quote_failure(client):
     _seed_position(client)
