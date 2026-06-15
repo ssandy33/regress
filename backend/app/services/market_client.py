@@ -51,21 +51,48 @@ class StubSchwabClient:
     """
 
     def __init__(self, db: DBSession) -> None:
-        """Bind the stub client to a request-scoped DB session."""
-        self._db = db
+        """Snapshot the stub tables into memory up-front (issue #349).
+
+        The dashboard fetches quotes and option chains concurrently via a
+        ``ThreadPoolExecutor`` (``dashboard._fetch_quotes_parallel`` /
+        ``_fetch_option_chains_parallel``). A SQLAlchemy ``Session`` and its
+        underlying SQLite connection are NOT thread-safe — querying ``db`` from
+        those worker threads raises ``sqlite3.InterfaceError: bad parameter or
+        other API misuse``, which silently degrades every leg to the no-data
+        path (assignment-risk collapses to ``"low"``). We therefore read every
+        stub row ONCE here, in the constructing thread, into plain in-memory
+        dicts; :meth:`get_quote` / :meth:`get_option_chain` then serve from
+        memory and never touch the session (or ORM-managed objects) again.
+        """
+        self._quotes: dict[str, float] = {
+            row.ticker: row.last_price for row in db.query(QuoteStub).all()
+        }
+        self._marks: dict[str, list[dict]] = {}
+        for row in db.query(OptionMarkStub).all():
+            self._marks.setdefault(row.ticker, []).append(
+                {
+                    "option_type": row.option_type,
+                    "expiration": row.expiration,
+                    "strike": row.strike,
+                    "mid": row.mid,
+                    "delta": row.delta,
+                }
+            )
 
     def get_quote(self, ticker: str) -> dict:
-        """Return a Schwab-shaped quote dict for ``ticker`` from the stub table.
+        """Return a Schwab-shaped quote dict for ``ticker`` from the snapshot.
 
         Mirrors :meth:`SchwabClient.get_quote`: returns a ``quote``-node dict
         carrying ``lastPrice`` / ``mark``. Raises :class:`SchwabClientError`
         when no stub row exists (same contract as the live client's no-data
         case), so the dashboard's per-ticker guard degrades that ticker.
+        Reads only the in-memory snapshot — thread-safe under the parallel
+        fetch fan-out.
         """
-        row = self._db.query(QuoteStub).filter(QuoteStub.ticker == ticker).first()
-        if row is None:
+        last_price = self._quotes.get(ticker)
+        if last_price is None:
             raise SchwabClientError(f"No stub quote for '{ticker}'")
-        return {"lastPrice": row.last_price, "mark": row.last_price}
+        return {"lastPrice": last_price, "mark": last_price}
 
     def get_option_chain(
         self,
@@ -89,29 +116,28 @@ class StubSchwabClient:
         tradable ticker still returns a payload — the specific illiquid strike
         is simply absent — so the leg degrades to ``current_mid=None`` and the
         BTC panel renders its ``"—"`` sentinel rather than 500-ing the page.
+
+        Reads only the in-memory snapshot taken in :meth:`__init__` — safe to
+        call from the parallel-fetch worker threads.
         """
-        rows = (
-            self._db.query(OptionMarkStub)
-            .filter(OptionMarkStub.ticker == ticker)
-            .all()
-        )
+        rows = self._marks.get(ticker, [])
         call_map: dict[str, dict] = {}
         put_map: dict[str, dict] = {}
         for row in rows:
-            target = call_map if row.option_type == "call" else put_map
+            target = call_map if row["option_type"] == "call" else put_map
             # Schwab keys expirations as "YYYY-MM-DD:DTE"; build_option_leg_index
             # only reads the date prefix, so a ":0" DTE suffix is a harmless,
             # parser-compatible filler.
-            exp_key = f"{row.expiration}:0"
-            strike_key = f"{row.strike:.1f}"
+            exp_key = f"{row['expiration']}:0"
+            strike_key = f"{row['strike']:.1f}"
             contract: dict = {
-                "strikePrice": row.strike,
-                "mark": row.mid,
-                "bid": row.mid,
-                "ask": row.mid,
+                "strikePrice": row["strike"],
+                "mark": row["mid"],
+                "bid": row["mid"],
+                "ask": row["mid"],
             }
-            if row.delta is not None:
-                contract["delta"] = row.delta
+            if row["delta"] is not None:
+                contract["delta"] = row["delta"]
             target.setdefault(exp_key, {})[strike_key] = [contract]
 
         return {

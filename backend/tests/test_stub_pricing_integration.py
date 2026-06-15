@@ -135,3 +135,31 @@ def test_csp_btc_is_not_applicable(stub_db):
     assert detail is not None
     # The BTC decision math gates puts out (CC-scoped) → not available.
     assert detail["analysis"]["available"] is False
+
+
+@pytest.mark.integration
+def test_stub_client_snapshots_data_and_retains_no_session(stub_db):
+    """Regression (#349): the stub client must snapshot its data at
+    construction and NOT touch the DB session afterwards.
+
+    The dashboard calls ``get_quote`` / ``get_option_chain`` from
+    ``ThreadPoolExecutor`` workers; a SQLAlchemy ``Session`` and its SQLite
+    connection used cross-thread raise ``sqlite3.InterfaceError: bad parameter
+    or other API misuse``, which silently degraded every leg's risk to "low"
+    (the original PR #351 CI failure). Locking the structural invariant — no
+    retained session, plain in-memory snapshot dicts — catches any
+    reintroduction of per-call DB access.
+    """
+    from app.services.market_client import StubSchwabClient
+
+    client = StubSchwabClient(stub_db)
+
+    # No retained session handle; data is held as plain dicts.
+    assert not hasattr(client, "_db")
+    assert isinstance(client._quotes, dict) and client._quotes
+    assert isinstance(client._marks, dict) and client._marks
+
+    # Serves from the snapshot even after the source session is closed.
+    stub_db.close()
+    assert client.get_quote("SEEDA")["lastPrice"] is not None
+    assert client.get_option_chain("SEEDA")["callExpDateMap"]
