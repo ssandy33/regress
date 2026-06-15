@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Iterable, Literal
 
+from app.services.greeks import calculate_greeks
 from app.services.rule_monitor import evaluate_leg_rules
 from app.utils.parsing import to_float
 
@@ -29,6 +30,25 @@ DecisionTag = Literal["roll-or-assign", "manage", "watch", "hold"]
 AssignmentRisk = Literal["high", "watch", "low"]
 SuggestedAction = Literal["roll", "close", "hold", "manage"]
 ProfitTargetState = Literal["captured_50", "in_progress", "underwater", "unknown"]
+
+# Depth-of-ITM signal for assignment risk (issue #318). A separate axis from the
+# acute-timing (DTE) floor — see compute_assignment_risk.
+AssignmentDepth = Literal["deep", "moderate", "shallow", "unknown"]
+DeltaSource = Literal["market", "calculated"]
+
+# Schwab uses a |value| >= 999 sentinel to mean "greek not available". Mirrors
+# the null-out pattern in app.services.options_scanner.
+_DELTA_SENTINEL = 999.0
+
+# Depth thresholds (frozen — issue #318 contract freeze). Delta is the primary
+# signal; moneyness-% (distance_pct) is the degrade when delta is null.
+_DEPTH_DELTA_DEEP = 0.80
+_DEPTH_DELTA_MODERATE = 0.60
+_DEPTH_MONEYNESS_DEEP = 0.10
+_DEPTH_MONEYNESS_MODERATE = 0.05
+
+# Risk-bucket severity ordering for the independent-max combine (Decision 2).
+_RISK_SEVERITY: dict[AssignmentRisk, int] = {"low": 0, "watch": 1, "high": 2}
 
 # Maps the four existing decision-tag buckets to the V0.5 suggested-action
 # vocabulary. Spec §14.5 locks this mapping; "close" is intentionally absent
@@ -134,27 +154,144 @@ def compute_decision_tag(
     return "hold"
 
 
+def resolve_leg_delta(
+    raw_delta: float | None,
+    spot: float | None,
+    strike: float,
+    dte: int,
+    iv: float | None,
+    option_type: Literal["put", "call"],
+) -> tuple[float | None, DeltaSource | None]:
+    """Resolve a leg's signed option delta and its provenance.
+
+    Single source of truth for delta on the shared leg path (issue #318 / #319),
+    mirroring the sentinel + Black-Scholes fallback in
+    :mod:`app.services.options_scanner`.
+
+    Resolution order:
+
+    - A Schwab ``|delta| >= 999`` sentinel is treated as missing.
+    - A present, non-sentinel delta is returned with ``source="market"``.
+    - A missing delta with a usable IV and a positive spot is computed via
+      :func:`app.services.greeks.calculate_greeks` (``source="calculated"``).
+    - Otherwise ``(None, None)`` — the caller degrades to the moneyness-%
+      depth fallback.
+
+    Args:
+        raw_delta: ``contract.get("delta")`` off the Schwab chain node.
+        spot: Underlying price; required for the Black-Scholes fallback.
+        strike: Option strike.
+        dte: Days to expiration.
+        iv: Implied volatility as a decimal (``contract.volatility / 100``).
+        option_type: ``"put"`` or ``"call"``.
+
+    Returns:
+        ``(delta, source)`` where ``source ∈ {"market", "calculated", None}``.
+        Put delta is negative — callers compare on ``abs(delta)``.
+    """
+    if raw_delta is not None and abs(raw_delta) >= _DELTA_SENTINEL:
+        raw_delta = None
+    if raw_delta is not None:
+        return raw_delta, "market"
+    if iv and spot and spot > 0:
+        calc = calculate_greeks(
+            spot=spot,
+            strike=strike,
+            dte=dte,
+            iv=iv,
+            contract_type="CALL" if option_type == "call" else "PUT",
+        )
+        if calc["delta"] is not None:
+            return calc["delta"], "calculated"
+    return None, None
+
+
+def classify_depth(
+    delta: float | None,
+    distance_pct: float | None,
+) -> AssignmentDepth:
+    """Classify depth-of-ITM from delta (primary) or moneyness-% (fallback).
+
+    Delta is the market's own probability-of-finishing-ITM estimate, so it is
+    the precise depth signal; moneyness-% is the coarser degrade when delta is
+    null. Thresholds are frozen by the issue #318 contract:
+
+    - ``abs(delta) >= 0.80`` → ``"deep"``
+    - ``abs(delta) >= 0.60`` → ``"moderate"``
+    - ``delta`` present and ``< 0.60`` → ``"shallow"``
+    - ``delta`` null, ``distance_pct >= 0.10`` → ``"deep"`` (fallback)
+    - ``delta`` null, ``distance_pct >= 0.05`` → ``"moderate"`` (fallback)
+    - ``delta`` null, ``distance_pct < 0.05`` → ``"shallow"`` (fallback)
+    - both null (no live signal at all) → ``"unknown"``
+
+    ``abs(delta)`` is used because short puts carry a negative delta; depth is
+    direction-agnostic ("how far ITM"). This is a pure classifier — moneyness
+    state (ITM/OTM) gating happens upstream in :func:`compute_assignment_risk`.
+    """
+    if delta is not None:
+        magnitude = abs(delta)
+        if magnitude >= _DEPTH_DELTA_DEEP:
+            return "deep"
+        if magnitude >= _DEPTH_DELTA_MODERATE:
+            return "moderate"
+        return "shallow"
+    if distance_pct is not None:
+        if distance_pct >= _DEPTH_MONEYNESS_DEEP:
+            return "deep"
+        if distance_pct >= _DEPTH_MONEYNESS_MODERATE:
+            return "moderate"
+        return "shallow"
+    return "unknown"
+
+
 def compute_assignment_risk(
     dte: int,
     moneyness_state: str | None,
+    depth: AssignmentDepth = "unknown",
 ) -> AssignmentRisk:
     """Classify the short option's assignment risk into three buckets.
 
-    Per spec §14.5:
-    - ``dte <= 7 AND ITM``  → ``"high"`` (acute risk; review today)
+    Two independent escalation axes are combined by "take the higher risk"
+    (issue #318, Decision 2):
+
+    **Acute-timing axis** (preserves the original spec §14.5 behavior):
+
+    - ``dte <= 7 AND ITM``  → ``"high"`` (review today)
     - ``dte <= 14 AND ITM`` → ``"watch"`` (watch the next 1–2 sessions)
     - otherwise             → ``"low"``
 
+    **Depth axis** (new — escalates a deep-ITM leg regardless of DTE):
+
+    - ``depth == "deep"``     → ``"high"``
+    - ``depth == "moderate"`` → ``"watch"``
+    - ``depth in {"shallow", "unknown"}`` → ``"low"``
+
+    The final bucket is ``max(timing, depth)`` on ``high > watch > low``.
+    ``depth`` defaults to ``"unknown"`` so every legacy caller stays
+    behavior-identical (the result collapses to the timing axis).
+
     Non-ITM legs and legs with unknown moneyness (no live price) collapse to
-    ``"low"`` so the dashboard never flags a risk it cannot justify.
+    ``"low"`` — both axes are gated on ITM so the dashboard never flags a risk
+    it cannot justify.
     """
     if moneyness_state != "ITM":
         return "low"
+
     if dte <= 7:
-        return "high"
-    if dte <= 14:
-        return "watch"
-    return "low"
+        timing_bucket: AssignmentRisk = "high"
+    elif dte <= 14:
+        timing_bucket = "watch"
+    else:
+        timing_bucket = "low"
+
+    if depth == "deep":
+        depth_bucket: AssignmentRisk = "high"
+    elif depth == "moderate":
+        depth_bucket = "watch"
+    else:
+        depth_bucket = "low"
+
+    return max(timing_bucket, depth_bucket, key=_RISK_SEVERITY.__getitem__)
 
 
 def compute_suggested_action(decision_tag: DecisionTag) -> SuggestedAction:
@@ -305,29 +442,43 @@ def derive_leg_economics(
     }
 
 
-def build_option_mark_index(
+def build_option_leg_index(
     chains_by_ticker: dict[str, dict],
-) -> dict[tuple, float]:
-    """Flatten raw Schwab option-chain responses into a flat mid-price index.
+    spots_by_ticker: dict[str, float | None] | None = None,
+) -> dict[tuple, dict]:
+    """Flatten raw Schwab option chains into a per-leg ``{mid, delta}`` index.
 
-    Schwab ``callExpDateMap`` / ``putExpDateMap`` are nested two levels deep:
+    This is the richer sibling of :func:`build_option_mark_index` — the
+    **shared, reusable** leg index consumed by the dashboard and BTC-detail
+    paths (issue #318) and by the BTC decision math (issue #319). Schwab
+    ``callExpDateMap`` / ``putExpDateMap`` are nested two levels deep:
     ``{exp_key: {strike_str: [contract, ...]}}`` where ``exp_key`` looks like
-    ``"2026-06-26:38"`` (expiration date plus DTE). This helper flattens them
-    into ``{(ticker, type, round(strike, 4), exp_date): mid}`` so a leg can be
-    matched with a single dict lookup.
+    ``"2026-06-26:38"`` (expiration date plus DTE). Each entry is flattened to
+    ``{(ticker, type, round(strike, 4), exp_date): {"mid", "delta", ...}}`` so a
+    leg matches with a single dict lookup.
 
-    The mid is ``contract["mark"]`` when present, otherwise ``(bid + ask) / 2``
-    (mirrors :mod:`app.services.options_scanner`). Entries with a falsy mid are
-    skipped — a leg with no usable mark degrades to ``unknown`` rather than a
-    misleading 0.
+    Value shape (frozen — issue #318 contract):
+
+    - ``mid``: ``contract["mark"]`` when present, else ``(bid + ask) / 2``
+      (mirrors :mod:`app.services.options_scanner`). Falsy mids are skipped.
+    - ``delta``: signed live delta with the Schwab ``>= 999`` sentinel nulled
+      and a Black-Scholes fallback when the chain omits it but IV + spot are
+      present (see :func:`resolve_leg_delta`). ``None`` when unresolvable.
+    - ``delta_source``: ``"market"`` | ``"calculated"`` | ``None``.
+
+    ``spots_by_ticker`` supplies the per-ticker underlying price needed for the
+    Black-Scholes delta fallback (the chain node does not carry spot). When a
+    spot is missing the fallback simply cannot run → delta stays ``None``.
 
     The function is tolerant of malformed nodes: a single bad contract,
     missing key, or non-dict entry is skipped and never aborts the index.
     """
-    index: dict[tuple, float] = {}
+    spots_by_ticker = spots_by_ticker or {}
+    index: dict[tuple, dict] = {}
     for ticker, chain in (chains_by_ticker or {}).items():
         if not isinstance(chain, dict):
             continue
+        spot = spots_by_ticker.get(ticker)
         for option_type, map_key in (("call", "callExpDateMap"), ("put", "putExpDateMap")):
             exp_date_map = chain.get(map_key)
             if not isinstance(exp_date_map, dict):
@@ -351,8 +502,42 @@ def build_option_mark_index(
                     mid = to_float(contract.get("mark")) or round((bid + ask) / 2, 4)
                     if not mid:
                         continue
-                    index[(ticker, option_type, round(strike, 4), exp_date)] = mid
+                    vol_raw = to_float(contract.get("volatility"), None)
+                    iv = vol_raw / 100.0 if vol_raw else None
+                    dte = compute_dte(exp_date)
+                    delta, delta_source = resolve_leg_delta(
+                        raw_delta=to_float(contract.get("delta"), None),
+                        spot=spot,
+                        strike=strike,
+                        dte=dte,
+                        iv=iv,
+                        option_type=option_type,  # type: ignore[arg-type]
+                    )
+                    index[(ticker, option_type, round(strike, 4), exp_date)] = {
+                        "mid": mid,
+                        "delta": delta,
+                        "delta_source": delta_source,
+                    }
     return index
+
+
+def build_option_mark_index(
+    chains_by_ticker: dict[str, dict],
+) -> dict[tuple, float]:
+    """Flatten raw Schwab option chains into a flat mid-price index.
+
+    Thin, back-compatible wrapper over :func:`build_option_leg_index` that
+    projects out the float ``mid`` so the legacy callers
+    (:mod:`app.services.covered_call` and the mark-index tests) stay byte
+    compatible. New callers that also need delta should use
+    :func:`build_option_leg_index` directly.
+
+    Returns ``{(ticker, type, round(strike, 4), exp_date): mid}``.
+    """
+    return {
+        key: entry["mid"]
+        for key, entry in build_option_leg_index(chains_by_ticker).items()
+    }
 
 
 def compute_earnings_in_window(
@@ -459,14 +644,33 @@ def derive_open_legs(
                 round(strike, 4),
                 str(trade["expiration"])[:10],
             )
-            current_mid = option_marks.get(mark_key)
+            # The index may be the legacy float-mid map
+            # (``build_option_mark_index``) or the richer ``{mid, delta}`` map
+            # (``build_option_leg_index``). Normalize both to (mid, delta).
+            entry = option_marks.get(mark_key)
+            if isinstance(entry, dict):
+                current_mid = entry.get("mid")
+                current_delta = entry.get("delta")
+                delta_source = entry.get("delta_source")
+            else:
+                current_mid = entry
+                current_delta = None
+                delta_source = None
             profit_target_status = build_profit_target_status(
                 premium=trade.get("premium"),
                 current_mid=current_mid,
                 dte=dte,
                 profit_review_pct=profit_review_pct,
             )
-            assignment_risk = compute_assignment_risk(dte, moneyness_state)
+            distance_pct = moneyness["distance_pct"] if moneyness else None
+            assignment_depth = (
+                classify_depth(current_delta, distance_pct)
+                if moneyness_state == "ITM"
+                else "unknown"
+            )
+            assignment_risk = compute_assignment_risk(
+                dte, moneyness_state, depth=assignment_depth
+            )
             # §R6 rule-monitor verdict layer (issue #240). Pure — derives the
             # verdict from values already on this leg; no I/O, no DB.
             verdict, verdict_label, reasoning, triggered_rules = evaluate_leg_rules(
@@ -496,6 +700,13 @@ def derive_open_legs(
                     # by the BTC detail endpoint (issue #244). The dashboard
                     # ignores this key, so it cannot regress #240.
                     "current_mid": current_mid,
+                    # Shared delta interface (issue #318 / #319). `delta` and
+                    # `delta_source` are the fields #319's BTC decision math
+                    # consumes off this identical leg path; `assignment_depth`
+                    # is #318-local metadata behind the risk bucket.
+                    "delta": current_delta,
+                    "delta_source": delta_source,
+                    "assignment_depth": assignment_depth,
                     "profit_target_status": profit_target_status,
                     "assignment_risk": assignment_risk,
                     "suggested_action": compute_suggested_action(decision_tag),

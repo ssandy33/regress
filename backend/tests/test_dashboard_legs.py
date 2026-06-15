@@ -6,8 +6,10 @@ import pytest
 
 from app.models.schemas import DashboardOpenLeg
 from app.services.dashboard_legs import (
+    build_option_leg_index,
     build_option_mark_index,
     build_profit_target_status,
+    classify_depth,
     compute_assignment_risk,
     compute_decision_tag,
     compute_dte,
@@ -16,6 +18,7 @@ from app.services.dashboard_legs import (
     compute_suggested_action,
     derive_leg_economics,
     derive_open_legs,
+    resolve_leg_delta,
 )
 
 
@@ -1469,3 +1472,397 @@ class TestDashboardOpenLegQuantity:
         assert qty3["quantity"] == 3
         assert qty3["pnl_dollars"] == pytest.approx(qty1["pnl_dollars"] * 3)
         assert qty3["cost_to_close"] == pytest.approx(qty1["cost_to_close"] * 3)
+
+
+# ---------------------------------------------------------------------------
+# Issue #318 — assignment-risk depth-awareness
+# ---------------------------------------------------------------------------
+
+
+class TestResolveLegDelta:
+    """Single source of truth for delta resolution (AC6 — #319-facing)."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("raw", [999.0, -999.0, 1000.0, -1500.0])
+    def test_nulls_999_sentinel(self, raw):
+        # Schwab sentinel |delta| >= 999 means "not available" → treated as
+        # missing; with no IV/spot to fall back on, returns (None, None).
+        delta, source = resolve_leg_delta(
+            raw_delta=raw, spot=None, strike=15.0, dte=20, iv=None, option_type="call"
+        )
+        assert delta is None
+        assert source is None
+
+    @pytest.mark.unit
+    def test_market_delta_passthrough(self):
+        delta, source = resolve_leg_delta(
+            raw_delta=-0.42, spot=14.0, strike=15.0, dte=20, iv=0.35, option_type="put"
+        )
+        assert delta == -0.42
+        assert source == "market"
+
+    @pytest.mark.unit
+    def test_blackscholes_fallback(self):
+        # No market delta but IV + positive spot present → calculate it.
+        delta, source = resolve_leg_delta(
+            raw_delta=None, spot=20.0, strike=15.0, dte=20, iv=0.40, option_type="call"
+        )
+        assert source == "calculated"
+        assert delta is not None
+        # Deep-ITM call → delta near 1.
+        assert 0.9 <= delta <= 1.0
+
+    @pytest.mark.unit
+    def test_no_iv_returns_none(self):
+        delta, source = resolve_leg_delta(
+            raw_delta=None, spot=20.0, strike=15.0, dte=20, iv=None, option_type="call"
+        )
+        assert delta is None
+        assert source is None
+
+    @pytest.mark.unit
+    def test_no_spot_returns_none(self):
+        # IV present but no spot → Black-Scholes cannot run.
+        delta, source = resolve_leg_delta(
+            raw_delta=None, spot=None, strike=15.0, dte=20, iv=0.40, option_type="call"
+        )
+        assert delta is None
+        assert source is None
+
+
+class TestClassifyDepth:
+    """Pure depth classifier: delta primary, moneyness-% fallback (#318)."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "delta,expected",
+        [
+            (0.93, "deep"),
+            (0.80, "deep"),  # boundary — >= 0.80
+            (-0.85, "deep"),  # short put, negative delta → abs()
+            (0.79, "moderate"),
+            (0.60, "moderate"),  # boundary — >= 0.60
+            (-0.65, "moderate"),
+            (0.59, "shallow"),
+            (0.30, "shallow"),
+            (0.0, "shallow"),
+        ],
+    )
+    def test_delta_thresholds(self, delta, expected):
+        assert classify_depth(delta, distance_pct=None) == expected
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "distance_pct,expected",
+        [
+            (0.12, "deep"),
+            (0.10, "deep"),  # boundary — >= 0.10
+            (0.07, "moderate"),
+            (0.05, "moderate"),  # boundary — >= 0.05
+            (0.04, "shallow"),
+            (0.0, "shallow"),
+        ],
+    )
+    def test_moneyness_fallback_when_delta_null(self, distance_pct, expected):
+        assert classify_depth(None, distance_pct=distance_pct) == expected
+
+    @pytest.mark.unit
+    def test_delta_wins_over_moneyness(self):
+        # When delta is present it is the signal — moneyness-% is ignored.
+        assert classify_depth(0.30, distance_pct=0.50) == "shallow"
+
+    @pytest.mark.unit
+    def test_both_null_is_unknown(self):
+        assert classify_depth(None, distance_pct=None) == "unknown"
+
+
+class TestAssignmentRiskDepth:
+    """compute_assignment_risk depth axis + independent-max (#318)."""
+
+    # AC1 — deep-ITM past 14 DTE escalates above Low (the F reproduction).
+    @pytest.mark.unit
+    def test_deep_itm_call_past_14dte_is_high(self):
+        # delta 0.93, 17 DTE, ITM → "high" (timing would say "low").
+        assert compute_assignment_risk(17, "ITM", depth="deep") == "high"
+
+    @pytest.mark.unit
+    def test_deep_itm_via_moneyness_fallback_escalates(self):
+        # In the no-delta path classify_depth gives "deep" from 12% ITM; the
+        # classifier sees depth="deep" at 20 DTE → "high".
+        assert classify_depth(None, distance_pct=0.12) == "deep"
+        assert compute_assignment_risk(20, "ITM", depth="deep") == "high"
+
+    # AC2 — moderate depth escalates to Watch (not High).
+    @pytest.mark.unit
+    def test_moderate_delta_itm_is_watch(self):
+        # delta 0.65 → moderate; 25 DTE ITM → "watch".
+        assert classify_depth(0.65, distance_pct=None) == "moderate"
+        assert compute_assignment_risk(25, "ITM", depth="moderate") == "watch"
+
+    @pytest.mark.unit
+    def test_moderate_moneyness_fallback_is_watch(self):
+        # delta None, 6% ITM → moderate; 25 DTE → "watch".
+        assert classify_depth(None, distance_pct=0.06) == "moderate"
+        assert compute_assignment_risk(25, "ITM", depth="moderate") == "watch"
+
+    # AC3 — shallow / unknown depth preserves today's behavior.
+    @pytest.mark.unit
+    def test_shallow_delta_itm_past_14dte_stays_low(self):
+        # delta 0.30 → shallow; 20 DTE ITM → "low" (matches pre-#318).
+        assert compute_assignment_risk(20, "ITM", depth="shallow") == "low"
+
+    @pytest.mark.unit
+    def test_unknown_depth_falls_back_to_dte_axis(self):
+        # depth "unknown" (the default), 17 DTE ITM → "low" (today's behavior).
+        assert compute_assignment_risk(17, "ITM", depth="unknown") == "low"
+        assert compute_assignment_risk(17, "ITM") == "low"  # default param
+
+    # AC4 — DTE timing axis still wins when more urgent than depth.
+    @pytest.mark.unit
+    def test_shallow_delta_near_expiry_stays_high(self):
+        # delta 0.30 → shallow, but 3 DTE ITM → timing floor "high" survives.
+        assert compute_assignment_risk(3, "ITM", depth="shallow") == "high"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "dte,depth,expected",
+        [
+            # (timing_bucket, depth_bucket) → max on high > watch > low.
+            (3, "shallow", "high"),   # high vs low → high
+            (3, "deep", "high"),      # high vs high → high
+            (10, "shallow", "watch"), # watch vs low → watch
+            (10, "deep", "high"),     # watch vs high → high
+            (10, "moderate", "watch"),# watch vs watch → watch
+            (20, "shallow", "low"),   # low vs low → low
+            (20, "moderate", "watch"),# low vs watch → watch
+            (20, "deep", "high"),     # low vs high → high
+        ],
+    )
+    def test_independent_max_takes_higher_bucket(self, dte, depth, expected):
+        assert compute_assignment_risk(dte, "ITM", depth=depth) == expected
+
+    # AC5 — not-ITM / no-price never flags risk.
+    @pytest.mark.unit
+    @pytest.mark.parametrize("state", ["OTM", "ATM"])
+    def test_otm_with_high_delta_stays_low(self, state):
+        # Moneyness gates first — a deep depth signal cannot escalate a non-ITM
+        # leg. (In practice derive_open_legs passes depth="unknown" off-ITM, but
+        # the classifier must itself never escalate a non-ITM leg.)
+        assert compute_assignment_risk(3, state, depth="deep") == "low"
+
+    @pytest.mark.unit
+    def test_no_live_price_depth_unknown_stays_low(self):
+        # moneyness None (no live price) → "low" regardless of depth.
+        assert compute_assignment_risk(3, None, depth="deep") == "low"
+
+
+class TestBuildOptionLegIndex:
+    """Richer {mid, delta} leg index — the shared #318/#319 path (AC6)."""
+
+    @pytest.mark.unit
+    def test_carries_mid_and_delta(self):
+        chain = {
+            "callExpDateMap": {
+                "2026-06-26:38": {
+                    "240.0": [
+                        {"strikePrice": 240.0, "mark": 3.10, "delta": 0.88}
+                    ],
+                }
+            }
+        }
+        index = build_option_leg_index({"AAPL": chain})
+        entry = index[("AAPL", "call", 240.0, "2026-06-26")]
+        assert entry["mid"] == pytest.approx(3.10)
+        assert entry["delta"] == pytest.approx(0.88)
+        assert entry["delta_source"] == "market"
+
+    @pytest.mark.unit
+    def test_nulls_999_delta_sentinel(self):
+        chain = {
+            "callExpDateMap": {
+                "2026-06-26:38": {
+                    "240.0": [
+                        {"strikePrice": 240.0, "mark": 3.10, "delta": -999.0}
+                    ],
+                }
+            }
+        }
+        index = build_option_leg_index({"AAPL": chain})
+        entry = index[("AAPL", "call", 240.0, "2026-06-26")]
+        assert entry["delta"] is None
+        assert entry["delta_source"] is None
+
+    @pytest.mark.unit
+    def test_blackscholes_fallback_threads_spot(self):
+        # No market delta but IV present + spot threaded → calculated delta.
+        exp = (date.today() + timedelta(days=30)).isoformat()
+        chain = {
+            "callExpDateMap": {
+                f"{exp}:30": {
+                    "15.0": [
+                        {"strikePrice": 15.0, "mark": 5.10, "volatility": 40.0}
+                    ],
+                }
+            }
+        }
+        index = build_option_leg_index(
+            {"F": chain}, spots_by_ticker={"F": 20.0}
+        )
+        entry = index[("F", "call", 15.0, exp)]
+        assert entry["delta_source"] == "calculated"
+        assert entry["delta"] is not None
+
+    @pytest.mark.unit
+    def test_no_spot_leaves_delta_none(self):
+        # IV present but no spot threaded → fallback cannot run → delta None.
+        exp = (date.today() + timedelta(days=30)).isoformat()
+        chain = {
+            "callExpDateMap": {
+                f"{exp}:30": {
+                    "15.0": [
+                        {"strikePrice": 15.0, "mark": 5.10, "volatility": 40.0}
+                    ],
+                }
+            }
+        }
+        index = build_option_leg_index({"F": chain})
+        entry = index[("F", "call", 15.0, exp)]
+        assert entry["delta"] is None
+        assert entry["delta_source"] is None
+
+
+class TestBuildOptionMarkIndexBackCompat:
+    """The legacy float-mid wrapper stays byte-compatible (AC6)."""
+
+    @pytest.mark.unit
+    def test_still_returns_float_mid(self):
+        chain = {
+            "callExpDateMap": {
+                "2026-06-26:38": {
+                    "240.0": [
+                        {"strikePrice": 240.0, "mark": 3.10, "delta": 0.88}
+                    ],
+                }
+            }
+        }
+        index = build_option_mark_index({"AAPL": chain})
+        value = index[("AAPL", "call", 240.0, "2026-06-26")]
+        assert isinstance(value, float)
+        assert value == pytest.approx(3.10)
+
+
+class TestDeriveOpenLegsDepth:
+    """derive_open_legs threads delta + depth onto the leg dict (#318/#319)."""
+
+    def _position(self, ticker: str, position_id: str, trades: list[dict]) -> dict:
+        return {"id": position_id, "ticker": ticker, "trades": trades}
+
+    @pytest.mark.unit
+    def test_emits_delta_and_depth(self):
+        positions = [
+            self._position(
+                "F",
+                "pos-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2099-12-31",
+                        "premium": 0.40,
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        # Deep-ITM short call (price 20 > strike 15), delta 0.93 from the chain.
+        marks = {
+            ("F", "call", 15.0, "2099-12-31"): {
+                "mid": 5.10,
+                "delta": 0.93,
+                "delta_source": "market",
+            }
+        }
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"F": 20.0},
+            today=date(2026, 5, 5),
+            option_marks=marks,
+        )
+        leg = legs[0]
+        assert leg["delta"] == pytest.approx(0.93)
+        assert leg["delta_source"] == "market"
+        assert leg["assignment_depth"] == "deep"
+        # current_mid stays a plain float — load-bearing for #319.
+        assert leg["current_mid"] == pytest.approx(5.10)
+        assert isinstance(leg["current_mid"], float)
+
+    @pytest.mark.unit
+    def test_deep_itm_call_far_dte_reports_high(self):
+        # The F reproduction in pure form: deep-ITM short call far past 14 DTE
+        # must report assignment_risk "high" instead of flooring to "low".
+        positions = [
+            self._position(
+                "F",
+                "pos-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2026-05-22",  # 17 DTE from 2026-05-05
+                        "premium": 0.40,
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        marks = {
+            ("F", "call", 15.0, "2026-05-22"): {
+                "mid": 5.10,
+                "delta": 0.93,
+                "delta_source": "market",
+            }
+        }
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"F": 20.0},
+            today=date(2026, 5, 5),
+            option_marks=marks,
+        )
+        assert legs[0]["dte"] == 17
+        assert legs[0]["assignment_risk"] == "high"
+
+    @pytest.mark.unit
+    def test_legacy_float_mark_index_still_works(self):
+        # A plain float-mid index (the build_option_mark_index shape) must still
+        # produce a valid leg with delta None and depth from moneyness-%.
+        positions = [
+            self._position(
+                "F",
+                "pos-1",
+                [
+                    {
+                        "id": "t1",
+                        "trade_type": "sell_call",
+                        "strike": 15.0,
+                        "expiration": "2026-05-22",
+                        "premium": 0.40,
+                        "closed_at": None,
+                    }
+                ],
+            )
+        ]
+        # price 17 vs strike 15 → ~13.3% ITM → moneyness-% fallback "deep".
+        marks = {("F", "call", 15.0, "2026-05-22"): 2.10}
+        legs = derive_open_legs(
+            positions,
+            quotes_by_ticker={"F": 17.0},
+            today=date(2026, 5, 5),
+            option_marks=marks,
+        )
+        leg = legs[0]
+        assert leg["current_mid"] == pytest.approx(2.10)
+        assert leg["delta"] is None
+        assert leg["assignment_depth"] == "deep"
+        assert leg["assignment_risk"] == "high"

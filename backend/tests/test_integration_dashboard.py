@@ -930,3 +930,123 @@ def test_schwab_pill_error_field_absent_when_schwab_not_configured(
     assert schwab["valid"] is False
     assert schwab["error"] is None
 
+
+
+# ---------------------------------------------------------------------------
+# Issue #318 — assignment-risk depth-awareness (deep-ITM past 14 DTE)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_dashboard_leg_deep_itm_call_reports_high(client, monkeypatch):
+    """AC1 — a deep-ITM short call past 14 DTE reports assignment_risk "high".
+
+    The F reproduction: pre-fix this floored to "low" because 17 DTE is outside
+    the 14-day Watch window. The chain carries a 0.93 delta → depth "deep" →
+    independent-max escalates the leg to "high".
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    # Price 20 > strike 15 → ITM short call.
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 20.0},
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {
+            "callExpDateMap": {
+                "2026-05-22:17": {
+                    "15.0": [{"strikePrice": 15.0, "mark": 5.10, "delta": 0.93}],
+                }
+            }
+        },
+    )
+    today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
+    monkeypatch.setattr(
+        "app.services.dashboard.date",
+        type("D", (), {"today": staticmethod(lambda: today)}),
+    )
+
+    pid = _seed_position(client, ticker="F", shares=100, broker_cost_basis=1500.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=15.0,
+        expiration="2026-05-22",  # 17 DTE — past the 14-day timing floor
+        premium=0.40,
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["open_legs"], "expected at least one open leg"
+    leg = data["open_legs"][0]
+    assert leg["dte"] == 17
+    assert leg["assignment_risk"] == "high"
+
+
+@pytest.mark.integration
+def test_dashboard_leg_delta_threads_from_chain(client, monkeypatch):
+    """AC6 — the chain's delta surfaces on the derived dashboard leg.
+
+    Proves the shared build_option_leg_index -> derive_open_legs wiring through
+    the full service stack: a delta seeded on the chain node reaches the leg
+    dict (the field #319 consumes), and current_mid stays a plain float.
+
+    Asserted on the internal leg dict (captured via a spy on the real
+    derive_open_legs), not the HTTP payload — per the #318 plan the wire shape
+    is intentionally unchanged, so DashboardResponse strips these leg-internal
+    fields. #319 will promote them onto the response model when it needs them.
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 20.0},
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {
+            "callExpDateMap": {
+                "2026-05-22:17": {
+                    "15.0": [{"strikePrice": 15.0, "mark": 5.10, "delta": 0.91}],
+                }
+            }
+        },
+    )
+    today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
+    monkeypatch.setattr(
+        "app.services.dashboard.date",
+        type("D", (), {"today": staticmethod(lambda: today)}),
+    )
+
+    # Spy on the real derive_open_legs to capture the un-stripped leg dicts.
+    captured: list[dict] = []
+    real_derive = dashboard_service.derive_open_legs
+
+    def _spy(*args, **kwargs):
+        legs = real_derive(*args, **kwargs)
+        captured.extend(legs)
+        return legs
+
+    monkeypatch.setattr("app.services.dashboard.derive_open_legs", _spy)
+
+    pid = _seed_position(client, ticker="F", shares=100, broker_cost_basis=1500.0)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=15.0,
+        expiration="2026-05-22",
+        premium=0.40,
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    assert captured, "expected derive_open_legs to yield at least one leg"
+    leg = captured[0]
+    assert leg["delta"] == pytest.approx(0.91)
+    assert leg["delta_source"] == "market"
+    assert leg["assignment_depth"] == "deep"
+    assert leg["current_mid"] == pytest.approx(5.10)
+    assert isinstance(leg["current_mid"], float)

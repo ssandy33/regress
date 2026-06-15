@@ -32,7 +32,7 @@ from typing import Any
 from sqlalchemy.orm import Session as DBSession
 
 from app.services import journal
-from app.services.dashboard_legs import build_option_mark_index, derive_open_legs
+from app.services.dashboard_legs import build_option_leg_index, derive_open_legs
 from app.services.rules_config import load_rules_config
 from app.services.schwab_client import SchwabClient
 
@@ -166,8 +166,12 @@ def build_btc_detail(
         float(current_price_raw) if current_price_raw is not None else None
     )
     chain = client.get_option_chain(ticker)
-    marks = build_option_mark_index(
-        {ticker: chain} if isinstance(chain, dict) else {}
+    # Richer per-leg index carrying delta (issue #318) — same shared path as the
+    # dashboard, so the BTC screen sees the identical delta. Spot is threaded
+    # for the Black-Scholes delta fallback on illiquid strikes.
+    marks = build_option_leg_index(
+        {ticker: chain} if isinstance(chain, dict) else {},
+        spots_by_ticker={ticker: current_price},
     )
 
     open_legs = derive_open_legs(
