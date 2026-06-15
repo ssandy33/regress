@@ -1,6 +1,8 @@
 """CLI commands for the regression tool backend.
 
-Usage: python -m app.cli schwab-auth [--app-key KEY] [--app-secret SECRET]
+Usage:
+    python -m app.cli schwab-auth [--app-key KEY] [--app-secret SECRET]
+    python -m app.cli seed-qa [--dry-run]
 """
 
 import argparse
@@ -129,6 +131,51 @@ def schwab_auth(args):
         print("\nTokens encrypted at rest with SCHWAB_ENCRYPTION_KEY.")
 
 
+def seed_qa_command(args):
+    """Seed the QA database with synthetic v1.7 archetypes (issue #349).
+
+    Hard-blocked on production by ``assert_seed_allowed`` (raises before any
+    write). ``--dry-run`` lists the archetypes and writes nothing. Exits
+    non-zero if any archetype fails to insert, or if the prod guard refuses.
+    """
+    from app.models.database import init_db, SessionLocal
+    from app.services.seed_qa import (
+        SeedGuardError,
+        build_archetypes,
+        seed_qa,
+    )
+
+    if args.dry_run:
+        archetypes = build_archetypes()
+        print("--- seed-qa dry run (no writes) ---\n")
+        for arch in archetypes:
+            print(f"  {arch.key:24s} {arch.ticker:6s} {arch.intended_state}")
+        print(f"\n{len(archetypes)} archetypes would be seeded.")
+        return
+
+    init_db()
+    db = SessionLocal()
+    try:
+        result = seed_qa(db)
+    except SeedGuardError as e:
+        # Sanitized message — the guard's own text is safe (no secrets).
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        db.close()
+
+    print("--- seed-qa complete ---")
+    print(f"  positions seeded: {result.positions_seeded}")
+    print(f"  quote stubs:      {result.quotes_seeded}")
+    print(f"  option marks:     {result.marks_seeded}")
+    if result.failed_archetypes:
+        print(
+            f"  FAILED archetypes: {', '.join(result.failed_archetypes)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="app.cli", description="Regression Tool CLI")
     subparsers = parser.add_subparsers(dest="command")
@@ -137,10 +184,20 @@ def main():
     schwab_parser.add_argument("--app-key", default=None, help="Schwab app key")
     schwab_parser.add_argument("--app-secret", default=None, help="Schwab app secret")
 
+    seed_parser = subparsers.add_parser(
+        "seed-qa", help="Seed the QA database with synthetic v1.7 archetypes"
+    )
+    seed_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the archetypes without writing anything",
+    )
 
     args = parser.parse_args()
     if args.command == "schwab-auth":
         schwab_auth(args)
+    elif args.command == "seed-qa":
+        seed_qa_command(args)
     else:
         parser.print_help()
         sys.exit(1)
