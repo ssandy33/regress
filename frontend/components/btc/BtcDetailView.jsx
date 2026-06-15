@@ -444,36 +444,67 @@ function AnalysisFigure({ testId, label, value, valueClass, note }) {
 
 const ANALYSIS_HEADING = 'BTC Analysis — let assign vs. buy to close';
 
-function BtcAnalysisPanel({ analysis }) {
+function BtcAnalysisPanel({ analysis, optionType }) {
   if (!analysis) return null;
 
-  // Three render states: full-degrade (available === false), greek-null
-  // (available, but no option mid → intrinsic-only), and populated.
-  const degraded = analysis.available === false;
-  const greekNull = !degraded && analysis.option_mid === null;
-  const populated = !degraded && !greekNull;
+  // Put legs are gated out of the covered-call decision math (v1.7.0 is
+  // CC-scoped). The backend returns the degraded analysis shape for a put,
+  // which is indistinguishable from a pricing-degrade on the wire — so we use
+  // the leg's option_type to render an honest "covered-call-only" affordance
+  // instead of "pricing unavailable", which would read as a data error.
+  const isPut = optionType === 'P';
+
+  // Render states: put-not-applicable (CC-only), full-degrade
+  // (available === false), greek-null (available, but no option mid →
+  // intrinsic-only), and populated.
+  const degraded = !isPut && analysis.available === false;
+  const greekNull = !isPut && !degraded && analysis.option_mid === null;
+  const populated = !isPut && !degraded && !greekNull;
+
+  let degradeAttr;
+  if (isPut) degradeAttr = 'put-not-applicable';
+  else if (greekNull) degradeAttr = 'greek-null';
 
   return (
     <div
       data-testid="btc-analysis"
-      data-degrade={greekNull ? 'greek-null' : undefined}
+      data-degrade={degradeAttr}
       className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
     >
       <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
         <h3 className="text-base font-semibold text-slate-900 dark:text-white">
           {ANALYSIS_HEADING}
         </h3>
-        {(degraded || greekNull) && (
+        {(degraded || greekNull || isPut) && (
           <span
             data-testid="btc-analysis-degraded-badge"
             className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400"
           >
-            {greekNull ? 'Option mid missing' : 'Pricing unavailable'}
+            {isPut
+              ? 'Covered-call only'
+              : greekNull
+              ? 'Option mid missing'
+              : 'Pricing unavailable'}
           </span>
         )}
       </div>
 
       <div className="p-4 space-y-5">
+        {isPut ? (
+          // Put legs: the assign-vs-BTC decision math is covered-call-only in
+          // v1.7.0. Show an honest not-applicable affordance rather than the
+          // call-math decomposition (which would be wrong for a short put) or
+          // the "pricing unavailable" copy (which would read as a data error).
+          <p
+            data-testid="btc-analysis-put-na"
+            className="text-sm text-slate-500 dark:text-slate-400 max-w-prose"
+          >
+            Decision math is covered-call-only right now. This is a put leg, so
+            the let-assign vs. buy-to-close comparison isn&apos;t shown. The rule
+            audit below still applies.
+          </p>
+        ) : (
+          <>
         {/* Section 1 — decomposition trio */}
         <div className={`grid grid-cols-3 gap-4 ${degraded ? 'opacity-60' : ''}`}>
           <AnalysisFigure
@@ -650,6 +681,8 @@ function BtcAnalysisPanel({ analysis }) {
               : 'Decomposition, breakeven, and scenarios need a live option mark and underlying price. They’ll appear once pricing reconnects.'}
           </p>
         )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -673,7 +706,7 @@ export default function BtcDetailView({ data }) {
       <LegHeader leg={leg} verdict={verdict} />
       <RecommendedActionBlock data={data} />
       <BtcEconomicsPanel economics={economics} analysis={analysis} />
-      <BtcAnalysisPanel analysis={analysis} />
+      <BtcAnalysisPanel analysis={analysis} optionType={leg.option_type} />
       <RuleAuditPanel rules={rules} verdict={verdict} />
 
       <footer

@@ -256,6 +256,17 @@ def test_build_position_response_still_computes_for_positive_shares(db_session, 
 
 
 # --- Issue #320: per-share basis on the built position response ---
+#
+# Classification note (CodeRabbit triage): the two tests below call
+# `_build_position_response` directly with a DB session (no TestClient). They
+# are correctly `@pytest.mark.integration`, not `@pytest.mark.unit`: per
+# CLAUDE.md's Wave 3 precedent, any test that touches a real DB session is
+# integration-tier (the "no DB session" disqualifier in PRD #261/R3). The happy
+# path also has a real TestClient endpoint test in test_integration_journal_api.py;
+# these are the producer-level integration tests for `_build_position_response`
+# itself. The shares==0 null path is endpoint-unreachable — PositionCreate
+# rejects 0 shares with a 422 — so a true endpoint test for it is impossible;
+# exercising the producer directly is the only way to cover that branch.
 
 
 @pytest.mark.integration

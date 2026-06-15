@@ -716,4 +716,40 @@ test.describe('BTC Analysis panel — decision math @e2e', () => {
     await expect(delta).toContainText('at breakeven');
     await expect(delta).not.toContainText('above breakeven');
   });
+
+  // CodeRabbit triage (v1.7.0): the assign-vs-BTC decision math is
+  // covered-call-only. A put leg must render an honest "covered-call only"
+  // affordance — not the call-math scenario table and not the
+  // "pricing unavailable" copy (which would read as a data error). The backend
+  // returns the degraded analysis shape for a put; the frontend keys off the
+  // leg's option_type to distinguish it.
+  test('put leg renders a covered-call-only affordance, never call-math @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(
+      page,
+      populatedPayload({
+        verdict: 'dte_review',
+        leg: { option_type: 'P', strike: 20.0 },
+        analysis: degradedAnalysisBlock(),
+      }),
+    );
+    await openBtcDetail(page);
+
+    const panel = page.getByTestId('btc-analysis');
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute('data-degrade', 'put-not-applicable');
+    await expect(
+      page.getByTestId('btc-analysis-degraded-badge'),
+    ).toContainText('Covered-call only');
+    // The not-applicable message, not the pricing-error copy.
+    await expect(page.getByTestId('btc-analysis-put-na')).toContainText(
+      'covered-call-only',
+    );
+    // No misleading call-style scenario table.
+    await expect(
+      page.getByTestId('btc-analysis-scenario-table'),
+    ).toHaveCount(0);
+    await expect(panel).not.toContainText('NaN');
+  });
 });

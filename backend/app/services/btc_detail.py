@@ -172,10 +172,18 @@ def _build_analysis(leg: dict, current_price: float | None) -> dict[str, Any]:
     if current_price is None or strike_raw is None:
         return _degraded_analysis()
 
+    # Gate puts out of the covered-call decision math (v1.7.0 is CC-scoped).
+    # The breakeven / let-assign / BTC-and-hold equations below are
+    # call-specific (btc_breakeven = K + O, let_assign = K·n·100, etc.); they
+    # produce misleading numbers for a short put. Until put equations exist,
+    # return the not-applicable shape so the panel never displays call-math
+    # for a put. Gate after the S/K degrade check, before any call computation.
+    if leg.get("type") == "put":
+        return _degraded_analysis()
+
     s = float(current_price)
     k = float(strike_raw)
-    is_put = leg.get("type") == "put"
-    intrinsic = max(0.0, (k - s) if is_put else (s - k))
+    intrinsic = max(0.0, s - k)
 
     # Greek-null: underlying live, option mid missing (illiquid strike).
     # Intrinsic still computes; everything that needs O degrades.

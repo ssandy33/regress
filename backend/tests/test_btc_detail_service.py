@@ -183,12 +183,17 @@ class TestBuildAnalysis:
         assert a["extrinsic"] == 0.50
 
     @pytest.mark.unit
-    def test_intrinsic_extrinsic_split_itm_put(self):
-        # Deep-ITM put: K=20, S=16 → intrinsic max(0, 20-16)=4.0.
+    def test_put_leg_returns_not_applicable_not_call_math(self):
+        # BRIDGE EDIT (CodeRabbit triage, v1.7.0): this test previously asserted
+        # put intrinsic/extrinsic (max(0, K-S)). The decision math is now
+        # covered-call-only — put legs are gated to the not-applicable shape so
+        # the call-specific breakeven/scenario equations never run for a put.
+        # See test_put_leg_is_gated_out_of_cc_decision_math for the full assert.
         leg = {"type": "put", "strike": 20.0, "current_mid": 4.30, "quantity": 1}
         a = _build_analysis(leg, current_price=16.0)
-        assert a["intrinsic"] == 4.0
-        assert a["extrinsic"] == 0.30
+        assert a["available"] is False
+        assert a["intrinsic"] is None
+        assert a["extrinsic"] is None
 
     @pytest.mark.unit
     def test_extrinsic_pct_of_mid_is_ratio(self):
@@ -314,3 +319,28 @@ class TestBuildAnalysis:
             (0.05, "+5%"),
             (0.10, "+10%"),
         ]
+
+    @pytest.mark.unit
+    def test_put_leg_is_gated_out_of_cc_decision_math(self):
+        # v1.7.0 decision math is covered-call-only. A short put must NOT get
+        # the call-specific breakeven / let-assign / BTC-and-hold equations —
+        # those produce misleading numbers for a put. The service returns the
+        # not-applicable (degraded) shape so the panel never shows call-math.
+        leg = {"type": "put", "strike": 20.0, "current_mid": 4.30, "quantity": 1}
+        a = _build_analysis(leg, current_price=16.0)
+        assert a["available"] is False
+        # No call-style figures — all decision-math fields are null/empty.
+        assert a["intrinsic"] is None
+        assert a["extrinsic"] is None
+        assert a["btc_breakeven"] is None
+        assert a["breakeven_delta"] is None
+        assert a["scenarios"] == []
+
+    @pytest.mark.unit
+    def test_put_leg_gate_matches_full_degrade_shape(self):
+        # The put gate reuses the exact full-degrade shape — no new fields, so
+        # no schema change / openapi regen is required.
+        from app.services.btc_detail import _degraded_analysis
+
+        put_leg = {"type": "put", "strike": 20.0, "current_mid": 4.30, "quantity": 1}
+        assert _build_analysis(put_leg, current_price=16.0) == _degraded_analysis()
