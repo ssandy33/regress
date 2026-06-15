@@ -17,11 +17,12 @@ from typing import Iterable
 
 from sqlalchemy.orm import Session as DBSession
 
-from app.config import get_fred_api_key
+from app.config import get_fred_api_key, settings
 from app.models.database import CacheEntry, Position, Session as SessionModel, Trade
 from app.services import journal as journal_service
 from app.services.action_engine import compute_next_actions
 from app.services.alpha_vantage_client import get_cached_next_earnings_date
+from app.services.market_client import get_market_client
 from app.services.dashboard_legs import (
     build_option_leg_index,
     derive_open_legs,
@@ -29,7 +30,17 @@ from app.services.dashboard_legs import (
 )
 from app.services.rules_config import load_rules_config
 from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
-from app.services.schwab_client import SchwabClient, SchwabClientError
+# ``SchwabClient`` is re-exported into this module's namespace as the stable
+# monkeypatch surface the dashboard integration tests target
+# (``app.services.dashboard.SchwabClient.get_quote`` / ``.get_option_chain``).
+# The live quote/chain fetches now go through :func:`get_market_client` (issue
+# #349), which instantiates this same class object, so patching the method here
+# still intercepts the live calls. Kept as an explicit re-export rather than an
+# unused import.
+from app.services.schwab_client import (  # noqa: F401  (test patch surface)
+    SchwabClient,
+    SchwabClientError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +124,7 @@ def _bucket_cache_freshness(db: DBSession) -> dict:
 def _fetch_quotes_parallel(
     tickers: Iterable[str],
     schwab_configured: bool,
+    db: DBSession,
 ) -> tuple[dict[str, float | None], bool]:
     """Fetch live quotes for `tickers` concurrently. Returns
     (price_by_ticker, schwab_failed_flag).
@@ -137,7 +149,9 @@ def _fetch_quotes_parallel(
         return prices, False
 
     schwab_failed = False
-    client = SchwabClient()
+    # Live Schwab client (prod default) or deterministic stub client on the QA
+    # pricing_mode=="stub" path (issue #349). Behavior-neutral on prod.
+    client = get_market_client(db)
 
     def _fetch(ticker: str) -> tuple[str, float | None, bool]:
         try:
@@ -171,6 +185,7 @@ def _fetch_quotes_parallel(
 def _fetch_option_chains_parallel(
     tickers: Iterable[str],
     schwab_configured: bool,
+    db: DBSession,
 ) -> tuple[dict[str, dict], bool]:
     """Fetch raw Schwab option chains for `tickers` concurrently.
 
@@ -199,7 +214,9 @@ def _fetch_option_chains_parallel(
         return chains_by_ticker, False
 
     schwab_failed = False
-    client = SchwabClient()
+    # Live Schwab client (prod default) or deterministic stub client on the QA
+    # pricing_mode=="stub" path (issue #349). Behavior-neutral on prod.
+    client = get_market_client(db)
 
     def _fetch(ticker: str) -> tuple[str, dict | None, bool]:
         try:
@@ -660,6 +677,11 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
 
     # Status block
     schwab_status, schwab_configured = _build_schwab_status()
+    # On the QA stub-pricing path (issue #349) there is no live Schwab feed, so
+    # ``schwab_configured`` is False and the fetch fan-outs would short-circuit.
+    # The stub client serves the deterministic feed instead, so treat the feed
+    # as available whenever pricing_mode=="stub". Prod stays "live" → no change.
+    feed_available = schwab_configured or settings.pricing_mode == "stub"
     fred_status = _build_fred_status()
     cache_status = _bucket_cache_freshness(db)
 
@@ -676,7 +698,7 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
     # Quotes (parallelized; deduped by ticker)
     tickers = [p["ticker"] for p in open_positions]
     quotes_by_ticker, schwab_failed = _fetch_quotes_parallel(
-        tickers, schwab_configured=schwab_configured
+        tickers, schwab_configured=feed_available, db=db
     )
 
     # Option chains for the % CAPT signal — fetched only for positions that
@@ -690,7 +712,7 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         and not trade.get("closed_at")
     }
     option_chains, chains_failed = _fetch_option_chains_parallel(
-        open_leg_tickers, schwab_configured=schwab_configured
+        open_leg_tickers, schwab_configured=feed_available, db=db
     )
     schwab_failed = schwab_failed or chains_failed
     # Richer per-leg index carrying delta (issue #318). Spot is threaded so the
