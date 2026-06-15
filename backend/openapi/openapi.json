@@ -1684,6 +1684,17 @@
             "title": "Adjusted Cost Basis",
             "type": "number"
           },
+          "adjusted_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjusted Cost Basis Per Share"
+          },
           "broker_cost_basis": {
             "anyOf": [
               {
@@ -1694,6 +1705,17 @@
               }
             ],
             "title": "Broker Cost Basis"
+          },
+          "broker_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Cost Basis Per Share"
           },
           "current_price": {
             "anyOf": [
@@ -3392,9 +3414,31 @@
             "title": "Adjusted Cost Basis",
             "type": "number"
           },
+          "adjusted_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adjusted Cost Basis Per Share"
+          },
           "broker_cost_basis": {
             "title": "Broker Cost Basis",
             "type": "number"
+          },
+          "broker_cost_basis_per_share": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broker Cost Basis Per Share"
           },
           "closed_at": {
             "anyOf": [

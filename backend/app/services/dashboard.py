@@ -320,6 +320,16 @@ def _build_position_rows(
                 # Broker basis is surfaced so the Positions card can render
                 # the dual-line "broker / adjusted" cost-basis cell (#151).
                 "broker_cost_basis": position.get("broker_cost_basis"),
+                # Per-share basis (#320) — the card renders these so the
+                # cost-basis cell aligns with the per-share Current column.
+                # Already computed (and shares==0 → null guarded) by the
+                # journal producer; thread them straight through.
+                "broker_cost_basis_per_share": position.get(
+                    "broker_cost_basis_per_share"
+                ),
+                "adjusted_cost_basis_per_share": position.get(
+                    "adjusted_cost_basis_per_share"
+                ),
             }
         )
     # Sort by notional desc (None last), then ticker asc.

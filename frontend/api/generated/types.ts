@@ -2099,8 +2099,12 @@ export interface components {
         DashboardPositionRow: {
             /** Adjusted Cost Basis */
             adjusted_cost_basis: number;
+            /** Adjusted Cost Basis Per Share */
+            adjusted_cost_basis_per_share?: number | null;
             /** Broker Cost Basis */
             broker_cost_basis?: number | null;
+            /** Broker Cost Basis Per Share */
+            broker_cost_basis_per_share?: number | null;
             /** Current Price */
             current_price?: number | null;
             /** Id */
@@ -2796,8 +2800,12 @@ export interface components {
         PositionResponse: {
             /** Adjusted Cost Basis */
             adjusted_cost_basis: number;
+            /** Adjusted Cost Basis Per Share */
+            adjusted_cost_basis_per_share?: number | null;
             /** Broker Cost Basis */
             broker_cost_basis: number;
+            /** Broker Cost Basis Per Share */
+            broker_cost_basis_per_share?: number | null;
             /** Closed At */
             closed_at?: string | null;
             /** Id */
