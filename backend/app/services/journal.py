@@ -45,6 +45,19 @@ def compute_min_cc_strike(adjusted_basis: float, shares: int) -> float:
     return round((adjusted_basis / shares) * 1.10, 2)
 
 
+def compute_per_share_basis(total: float, shares: int) -> float | None:
+    """Per-share cost basis = ``round(total / shares, 4)`` (issue #320).
+
+    Returns ``None`` when ``shares <= 0`` so the Positions table renders an
+    em-dash instead of dividing by zero. Mirrors the covered-call /
+    action-engine rounding convention (``covered_call.py:276``) so per-share
+    basis has a single source of truth.
+    """
+    if shares <= 0:
+        return None
+    return round(total / shares, 4)
+
+
 def _build_trade_response(trade: Trade) -> dict:
     """Build a TradeResponse dict from a Trade ORM object."""
     return {
@@ -97,6 +110,18 @@ def _build_position_response(position: Position) -> dict:
             adjusted_cost_basis, position.shares
         )
 
+    # Issue #320: per-share basis so the Positions table reads against the
+    # per-share Current column / candidate strikes without head-math. Divide
+    # total / shares and round to 4 decimals — identical to the covered-call /
+    # action-engine convention (covered_call.py:276). Null when shares == 0 so
+    # the display layer renders an em-dash instead of $0.00 / Infinity.
+    broker_cost_basis_per_share = compute_per_share_basis(
+        position.broker_cost_basis, position.shares
+    )
+    adjusted_cost_basis_per_share = compute_per_share_basis(
+        adjusted_cost_basis, position.shares
+    )
+
     return {
         "id": position.id,
         "ticker": position.ticker,
@@ -109,6 +134,8 @@ def _build_position_response(position: Position) -> dict:
         "notes": position.notes,
         "total_premiums": total_premiums,
         "adjusted_cost_basis": adjusted_cost_basis,
+        "broker_cost_basis_per_share": broker_cost_basis_per_share,
+        "adjusted_cost_basis_per_share": adjusted_cost_basis_per_share,
         "min_compliant_cc_strike": min_compliant_cc_strike,
         "trades": [_build_trade_response(t) for t in trades],
     }

@@ -43,6 +43,8 @@ const TRIAGE_POSITIONS = [
     strategy: 'wheel',
     adjusted_cost_basis: 16983.0,
     broker_cost_basis: 17240.0,
+    adjusted_cost_basis_per_share: 169.83,
+    broker_cost_basis_per_share: 172.4,
     current_price: 175.42,
     notional: 17542.0,
     unrealized_pl: 559.0,
@@ -58,6 +60,8 @@ const TRIAGE_POSITIONS = [
     strategy: 'cc',
     adjusted_cost_basis: 11620.0,
     broker_cost_basis: 11755.0,
+    adjusted_cost_basis_per_share: 232.4,
+    broker_cost_basis_per_share: 235.1,
     current_price: 238.8,
     notional: 11940.0,
     unrealized_pl: 320.0,
@@ -73,6 +77,8 @@ const TRIAGE_POSITIONS = [
     strategy: 'holding',
     adjusted_cost_basis: 11707.5,
     broker_cost_basis: 11865.0,
+    adjusted_cost_basis_per_share: 156.1,
+    broker_cost_basis_per_share: 158.2,
     current_price: 162.35,
     notional: 12176.25,
     unrealized_pl: 468.75,
@@ -89,6 +95,8 @@ const TRIAGE_POSITIONS = [
     strategy: 'csp',
     adjusted_cost_basis: 0.0,
     broker_cost_basis: null,
+    adjusted_cost_basis_per_share: null,
+    broker_cost_basis_per_share: null,
     current_price: null,
     notional: null,
     unrealized_pl: null,
@@ -136,16 +144,23 @@ test.describe('Positions triage table @e2e', () => {
     await expect(page.getByTestId('dashboard-position-next-action')).toHaveCount(4);
   });
 
-  test('cost-basis cell renders both broker and adjusted values', async ({ page }) => {
+  // Issue #320 (bridge edit): basis cell now renders PER-SHARE values with a
+  // "/sh" affordance instead of the totals ($17,240 / $16,983). Broker
+  // 17240/100 = $172.40; adjusted 16983/100 = $169.83.
+  test('cost-basis cell renders per-share broker and adjusted values', async ({ page }) => {
     await mockDashboard(page, TRIAGE_PAYLOAD);
     await page.goto('/dashboard');
     await page.waitForLoadState('networkidle');
 
     const firstRow = page.getByTestId('dashboard-position-row').first();
-    // Broker basis on line 1; adjusted basis with "adj." suffix on line 2.
-    await expect(firstRow).toContainText('$17,240');
-    await expect(firstRow).toContainText('$16,983');
-    await expect(firstRow).toContainText('adj.');
+    const brokerCell = firstRow.getByTestId('dashboard-position-broker-basis');
+    const adjustedCell = firstRow.getByTestId('dashboard-position-adjusted-basis');
+    // Broker basis on line 1; adjusted basis with "/sh adj." suffix on line 2.
+    await expect(brokerCell).toContainText('$172.40');
+    await expect(brokerCell).toContainText('/sh');
+    await expect(adjustedCell).toContainText('$169.83');
+    await expect(adjustedCell).toContainText('/sh');
+    await expect(adjustedCell).toContainText('adj.');
   });
 
   test('%P/L cell renders positive in green and negative in red', async ({ page }) => {
@@ -290,10 +305,16 @@ test.describe('Positions triage table @e2e', () => {
     const firstRow = page.getByTestId('dashboard-position-row').first();
     const adjustedCell = firstRow
       .getByTestId('dashboard-position-adjusted-basis');
-    // On mobile the visible text is the adjusted basis alone (no "adj." suffix).
-    await expect(adjustedCell).toContainText('$16,983');
+    // Issue #320: mobile shows the per-share adjusted basis with "/sh". The
+    // "adj." suffix lives only on the lg:inline span (visually hidden on
+    // mobile but still in the DOM), so we assert the visible per-share value
+    // rather than DOM-absence of "adj.".
+    await expect(adjustedCell).toContainText('$169.83');
+    await expect(adjustedCell).toContainText('/sh');
     // Broker basis is in the DOM (semantic order) but hidden on mobile.
-    await expect(firstRow.locator('text=$17,240').first()).toBeHidden();
+    await expect(
+      firstRow.getByTestId('dashboard-position-broker-basis')
+    ).toBeHidden();
   });
 
   test('CSP row (zero shares) renders "cash-secured" placeholder', async ({ page }) => {

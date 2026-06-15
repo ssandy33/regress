@@ -106,8 +106,13 @@ function CostBasisCell({ position }) {
       <span className="text-slate-700 dark:text-slate-200">cash-secured</span>
     );
   }
-  const broker = position.broker_cost_basis;
-  const adjusted = position.adjusted_cost_basis;
+  // Issue #320: per-share basis (with a muted /sh affordance) so this cell
+  // aligns 1:1 with the per-share Current column. The currency number keeps
+  // tabular-nums; /sh and adj. are muted non-tabular suffixes. Backend sends
+  // null when shares == 0, but the cspOnly branch above already short-circuits
+  // those rows, so null here only happens on incomplete data → em-dash.
+  const broker = position.broker_cost_basis_per_share;
+  const adjusted = position.adjusted_cost_basis_per_share;
   return (
     <div className="flex flex-col items-end">
       {/*
@@ -116,19 +121,37 @@ function CostBasisCell({ position }) {
         in the DOM so screen readers read broker then adjusted on desktop
         (AC: "semantic markup so screen readers read both").
       */}
-      <span className="hidden lg:inline tabular-nums text-slate-900 dark:text-white">
-        {broker == null ? '—' : formatCurrency(broker)}
+      <span
+        className="hidden lg:inline text-slate-900 dark:text-white"
+        data-testid="dashboard-position-broker-basis"
+      >
+        {broker == null ? (
+          '—'
+        ) : (
+          <>
+            <span className="tabular-nums">{formatCurrency(broker)}</span>
+            <span className="text-xs text-slate-400 dark:text-slate-500 ml-1">/sh</span>
+          </>
+        )}
       </span>
       <span
-        className="tabular-nums text-xs lg:text-xs text-slate-500 dark:text-slate-400"
+        className="text-xs lg:text-xs text-slate-500 dark:text-slate-400"
         data-testid="dashboard-position-adjusted-basis"
       >
-        <span className="lg:hidden tabular-nums text-sm text-slate-700 dark:text-slate-200">
-          {adjusted == null ? '—' : formatCurrency(adjusted)}
-        </span>
-        <span className="hidden lg:inline">
-          {adjusted == null ? '—' : `${formatCurrency(adjusted)} adj.`}
-        </span>
+        {adjusted == null ? (
+          '—'
+        ) : (
+          <>
+            <span className="lg:hidden text-sm text-slate-700 dark:text-slate-200">
+              <span className="tabular-nums">{formatCurrency(adjusted)}</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500 ml-1">/sh</span>
+            </span>
+            <span className="hidden lg:inline">
+              <span className="tabular-nums">{formatCurrency(adjusted)}</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500 ml-1">/sh adj.</span>
+            </span>
+          </>
+        )}
       </span>
     </div>
   );

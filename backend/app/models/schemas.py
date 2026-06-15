@@ -513,6 +513,11 @@ class PositionResponse(BaseModel):
     notes: Optional[str] = None
     total_premiums: float
     adjusted_cost_basis: float
+    # Per-share basis (issue #320): round(total / shares, 4), null when
+    # shares == 0. Mirrors the covered-call/action-engine convention
+    # (covered_call.py:276) so per-share rounding has a single source of truth.
+    broker_cost_basis_per_share: Optional[float] = None
+    adjusted_cost_basis_per_share: Optional[float] = None
     min_compliant_cc_strike: float
     trades: list[TradeResponse] = []
 
@@ -779,6 +784,11 @@ class DashboardPositionRow(BaseModel):
     # cost-basis cell ("line 1: broker; line 2: adjusted, muted").
     # Optional because cash-secured-put rows have no broker basis yet.
     broker_cost_basis: Optional[float] = None
+    # New in v1.7.0 (#320) — per-share basis so the cost-basis cell aligns
+    # 1:1 with the per-share Current column. round(total / shares, 4); null
+    # when shares == 0 (cash-secured rows render "cash-secured", not a divide).
+    broker_cost_basis_per_share: Optional[float] = None
+    adjusted_cost_basis_per_share: Optional[float] = None
 
 
 class DashboardMoneyness(BaseModel):

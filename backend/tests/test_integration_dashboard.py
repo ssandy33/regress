@@ -562,6 +562,20 @@ def test_dashboard_payload_schema_v05_keys(client, monkeypatch):
 
 
 @pytest.mark.integration
+def test_dashboard_position_row_includes_per_share_basis(client, monkeypatch):
+    """Issue #320: dashboard rows carry per-share basis for the cost cell."""
+    _patch_status(monkeypatch, schwab_configured=False, fred_key="")
+    _seed_position(client, ticker="AAPL", shares=100, broker_cost_basis=2856.0)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    row = next(r for r in resp.json()["positions"] if r["ticker"] == "AAPL")
+    assert row["broker_cost_basis_per_share"] == 28.56
+    # No trades → adjusted total == broker total → same per-share value.
+    assert row["adjusted_cost_basis_per_share"] == 28.56
+
+
+@pytest.mark.integration
 def test_dashboard_scanner_card_when_no_open_legs(client, monkeypatch):
     """`journal.no_open_legs` emits even when there are zero positions."""
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")

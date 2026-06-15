@@ -12,6 +12,8 @@ const MOCK_POSITION = {
   notes: null,
   total_premiums: 350.0,
   adjusted_cost_basis: 14650.0,
+  broker_cost_basis_per_share: 150.0,
+  adjusted_cost_basis_per_share: 146.5,
   min_compliant_cc_strike: 161.15,
   trades: [
     {
@@ -121,7 +123,9 @@ test.describe('Journal page @e2e', () => {
 
     const row = page.getByTestId('position-row').first();
     await expect(row).toContainText('$350.00');
-    await expect(row).toContainText('$14650.00');
+    // Issue #320 (bridge edit): Adjusted Basis cell now renders the per-share
+    // value ($14,650 / 100 = $146.50) with a "/sh" affordance, not the total.
+    await expect(row).toContainText('$146.50');
     await expect(row).toContainText('$161.15');
   });
 
