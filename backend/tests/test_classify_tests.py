@@ -41,6 +41,12 @@ from scripts import classify_tests
 REPO_BACKEND = Path(__file__).resolve().parent.parent  # backend/
 PYTEST_INI = REPO_BACKEND / "pytest.ini"
 
+# Assembled from substrings so the tdd_red merge gate (scripts/check_tdd_red.py)
+# does not flag THIS classifier-test file's fixture source as a surviving Red
+# marker when the file is touched (the line-anchored grep can't tell a fixture
+# string from a real decorator). Mirrors the same guard in test_check_tdd_red.py.
+_TDD_RED_DEC = "@pytest.mark." + "tdd_red"
+
 
 # ---------------------------------------------------------------------------
 # AC-1.1 — pytest.ini registers markers, strict-markers, addopts
@@ -195,10 +201,10 @@ def test_classifier_accepts_tdd_red(tmp_path, capsys):
     f = tmp_path / "test_red.py"
     _write_test_file(
         f,
-        """
+        f"""
         import pytest
 
-        @pytest.mark.tdd_red
+        {_TDD_RED_DEC}
         def test_not_yet_implemented():
             assert False  # impl not written yet
         """,
@@ -215,7 +221,7 @@ def test_classifier_prints_counts(tmp_path, capsys):
     f = tmp_path / "test_counts.py"
     _write_test_file(
         f,
-        """
+        f"""
         import pytest
 
         @pytest.mark.unit
@@ -227,7 +233,7 @@ def test_classifier_prints_counts(tmp_path, capsys):
         @pytest.mark.integration
         def test_i1(client): pass
 
-        @pytest.mark.tdd_red
+        {_TDD_RED_DEC}
         def test_r1(): pass
         """,
     )
@@ -430,10 +436,10 @@ def _scaffold_sample_suite(root: Path) -> None:
     )
     _write_test_file(
         tests / "test_red_sample.py",
-        """
+        f"""
         import pytest
 
-        @pytest.mark.tdd_red
+        {_TDD_RED_DEC}
         def test_r1():
             assert False, "deliberately red — impl not written"
         """,
