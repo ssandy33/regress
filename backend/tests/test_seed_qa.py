@@ -29,6 +29,7 @@ _FIXED_NOW = datetime(2026, 6, 15, tzinfo=timezone.utc)
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC11", "349-AC12")
 def test_assert_seed_allowed_blocks_production():
     """AC: prod guard tested — APP_ENV=production raises SeedGuardError."""
     with patch("app.services.seed_qa.settings") as mock_settings:
@@ -39,6 +40,7 @@ def test_assert_seed_allowed_blocks_production():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("env", ["qa", "development", "test"])
+@pytest.mark.ac("349-AC11")
 def test_assert_seed_allowed_permits_non_production(env):
     """Non-prod environments proceed without raising."""
     with patch("app.services.seed_qa.settings") as mock_settings:
@@ -50,6 +52,7 @@ def test_assert_seed_allowed_permits_non_production(env):
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC9")
 def test_build_archetypes_yields_seven_with_unique_keys():
     """The frozen archetype list is exactly seven with distinct keys."""
     archetypes = build_archetypes(_FIXED_NOW)
@@ -59,6 +62,7 @@ def test_build_archetypes_yields_seven_with_unique_keys():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC9")
 def test_archetype_expirations_are_dte_relative_not_pinned():
     """Expirations are computed from ``now`` so they don't drift out of window."""
     later = _FIXED_NOW + timedelta(days=90)
@@ -71,6 +75,7 @@ def test_archetype_expirations_are_dte_relative_not_pinned():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC1")
 def test_archetype_deep_itm_call_derived_state():
     """Archetype 1: deep-ITM short call, >14 DTE, δ≈0.90 (High depth axis)."""
     arch = {a.key: a for a in build_archetypes(_FIXED_NOW)}["deep_itm_call"]
@@ -85,6 +90,7 @@ def test_archetype_deep_itm_call_derived_state():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC2")
 def test_archetype_ntm_call_derived_state():
     """Archetype 2: near-the-money short call, ≤14 DTE, ITM (Watch timing axis)."""
     arch = {a.key: a for a in build_archetypes(_FIXED_NOW)}["ntm_call"]
@@ -96,6 +102,7 @@ def test_archetype_ntm_call_derived_state():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC3")
 def test_archetype_otm_call_derived_state():
     """Archetype 3: OTM short call, long DTE, low delta (Low)."""
     arch = {a.key: a for a in build_archetypes(_FIXED_NOW)}["otm_call"]
@@ -105,6 +112,7 @@ def test_archetype_otm_call_derived_state():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC4")
 def test_archetype_btc_populated_has_mark():
     """Archetype 4: covered call with a live stub mark (BTC panel populated)."""
     arch = {a.key: a for a in build_archetypes(_FIXED_NOW)}["btc_populated_cc"]
@@ -115,6 +123,7 @@ def test_archetype_btc_populated_has_mark():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC5")
 def test_archetype_csp_zero_shares_derived_state():
     """Archetype 5: cash-secured put, 0 shares, 0 basis, no marks."""
     arch = {a.key: a for a in build_archetypes(_FIXED_NOW)}["csp_zero_shares"]
@@ -126,6 +135,7 @@ def test_archetype_csp_zero_shares_derived_state():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC6")
 def test_archetype_cc_no_mark_omits_marks():
     """Archetype 6: covered call with a quote but no option mark (degraded)."""
     arch = {a.key: a for a in build_archetypes(_FIXED_NOW)}["cc_no_mark"]
@@ -135,6 +145,7 @@ def test_archetype_cc_no_mark_omits_marks():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC7")
 def test_archetype_equity_adjusted_basis_has_premium_trades():
     """Archetype 7: equity with premium-bearing trades so adjusted ≠ broker."""
     arch = {a.key: a for a in build_archetypes(_FIXED_NOW)}["equity_adjusted_basis"]
@@ -145,6 +156,7 @@ def test_archetype_equity_adjusted_basis_has_premium_trades():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC8")
 def test_seed_tag_prefix_is_frozen():
     """The sentinel prefix is the frozen contract literal."""
     assert SEED_TAG_PREFIX == "__seed__:"
@@ -213,6 +225,7 @@ class _FakeDB:
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC4")
 def test_stub_client_returns_schwab_shaped_quote_and_chain():
     """StubSchwabClient output parses through build_option_leg_index unchanged."""
     db = _FakeDB(
@@ -242,6 +255,7 @@ def test_stub_client_raises_on_missing_quote():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC6")
 def test_stub_client_returns_empty_chain_when_no_marks():
     """A ticker with no stub marks returns a valid empty chain (degrade path).
 
@@ -267,6 +281,7 @@ def test_get_market_client_factory_selects_by_mode():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("349-AC11")
 def test_get_market_client_refuses_stub_on_production():
     """Defense-in-depth: pricing_mode=stub on production falls back to live.
 
