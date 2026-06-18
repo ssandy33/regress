@@ -15,6 +15,7 @@ from app.services.dashboard_legs import build_option_leg_index, compute_dte
 from app.services.market_client import StubSchwabClient, get_market_client
 from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.seed_qa import (
+    EXPECTED_ARCHETYPE_COUNT,
     SEED_TAG_PREFIX,
     SeedGuardError,
     assert_seed_allowed,
@@ -145,8 +146,19 @@ def test_archetype_equity_adjusted_basis_has_premium_trades():
 
 @pytest.mark.unit
 def test_seed_tag_prefix_is_frozen():
-    """The teardown sentinel prefix is the frozen contract literal."""
+    """The sentinel prefix is the frozen contract literal."""
     assert SEED_TAG_PREFIX == "__seed__:"
+
+
+@pytest.mark.unit
+def test_expected_archetype_count_matches_built_list():
+    """#360-AC4: the deploy-gate constant equals the number of built archetypes.
+
+    The QA deploy fails if the post-seed count != this constant, so it must stay
+    in lockstep with the archetype list (drift would falsely fail every deploy).
+    """
+    assert EXPECTED_ARCHETYPE_COUNT == 7
+    assert EXPECTED_ARCHETYPE_COUNT == len(build_archetypes(_FIXED_NOW))
 
 
 # --- Stub pricing (Component 4) ---

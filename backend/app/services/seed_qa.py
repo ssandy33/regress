@@ -12,11 +12,19 @@ acceptance criterion renders its intended state on QA.
 write*. Prod compose sets ``APP_ENV=production``; the seeder can never write
 synthetic data to the prod database.
 
-**Idempotency (tagged delete-then-reseed):** every seeded position carries a
-``"__seed__:<key>"`` sentinel prefix in its ``notes`` column. Teardown deletes
-only sentinel-tagged positions (cascading to their trades) plus all stub rows,
-so reseeding yields seven positions — not fourteen — and never touches
-manually-added QA state.
+**Authoritative full reset (ADR #359 D2):** ``seed-qa`` on QA performs a
+**full reset** — it wipes *all* rows from ``positions`` / ``trades`` /
+``quote_stubs`` / ``option_mark_stubs`` (plus ``trade_entry_compliance``, a FK
+child of ``trades``) and then inserts the seven archetypes. It deliberately
+leaves ``app_settings`` / ``sessions`` / ``watchlist`` untouched so QA stays
+signed-in and configured. Every run therefore yields exactly the archetypes:
+no manual prod-delete is ever needed again, and reseeding yields seven
+positions — not fourteen. This supersedes #349's additive "delete-only-tagged"
+teardown, which assumed QA would never carry prod data.
+
+A rolling ``create_backup`` is taken before the destructive wipe as cheap undo
+insurance. Positions still carry a ``"__seed__:<key>"`` sentinel prefix in
+``notes`` so the archetypes remain identifiable after seeding.
 
 **Recomputer bypass (deliberate):** the archetypes pin derived state
 (``shares`` / ``broker_cost_basis`` / ``strategy`` / ``status``) directly on the
@@ -43,14 +51,20 @@ from app.models.database import (
     Position,
     QuoteStub,
     Trade,
+    TradeEntryCompliance,
 )
+from app.services.backup import create_backup
 
 logger = logging.getLogger(__name__)
 
-# Sentinel prefix written to a seeded position's ``notes`` column so teardown
-# can find and delete only seeded rows. Frozen contract — the teardown LIKE
-# filter and the tests both reference this literal.
+# Sentinel prefix written to a seeded position's ``notes`` column so the
+# archetypes remain identifiable after seeding. Frozen contract — the tests
+# reference this literal.
 SEED_TAG_PREFIX: str = "__seed__:"
+
+# The expected number of archetypes a healthy seed run inserts. The deploy
+# auto-seed gate (ADR #359 D3) fails the deploy if the post-seed count differs.
+EXPECTED_ARCHETYPE_COUNT: int = 7
 
 
 class SeedGuardError(Exception):
@@ -315,21 +329,27 @@ def assert_seed_allowed() -> None:
         )
 
 
-def _delete_seeded_rows(db: DBSession) -> None:
-    """Delete only sentinel-tagged positions (cascade to trades) + all stub rows.
+def _full_reset(db: DBSession) -> None:
+    """Wipe ALL position/trade/stub rows so the seed is authoritative (ADR #359 D2).
 
-    Untagged positions — manually added QA state — are preserved. Stub tables
-    are QA-only fixtures owned entirely by the seeder, so they are cleared
-    wholesale. Position deletion goes through the ORM so the
-    ``cascade="all, delete-orphan"`` on ``Position.trades`` removes child trades.
+    Bulk-deletes every row from ``trade_entry_compliance`` (a FK child of
+    ``trades``), ``trades``, ``positions``, ``quote_stubs``, and
+    ``option_mark_stubs`` — *not* only sentinel-tagged rows. This leaves
+    ``app_settings`` / ``sessions`` / ``watchlist`` untouched so QA stays
+    signed-in and configured (resolved blast radius, ADR #359 Q2).
+
+    The deletes are ordered child-before-parent and use bulk ``query().delete()``
+    rather than ORM-cascade deletes because (a) the project does not enable
+    ``PRAGMA foreign_keys=ON`` so SQL-level cascade never fires, and (b) a bulk
+    delete is the same pattern :func:`journal.clear_all_journal_data` uses for a
+    large parent set.
+
+    **SAFETY:** callers MUST invoke :func:`assert_seed_allowed` first — this
+    function performs no guard of its own and is catastrophic on production.
     """
-    seeded = (
-        db.query(Position)
-        .filter(Position.notes.like(f"{SEED_TAG_PREFIX}%"))
-        .all()
-    )
-    for position in seeded:
-        db.delete(position)
+    db.query(TradeEntryCompliance).delete(synchronize_session=False)
+    db.query(Trade).delete(synchronize_session=False)
+    db.query(Position).delete(synchronize_session=False)
     db.query(QuoteStub).delete(synchronize_session=False)
     db.query(OptionMarkStub).delete(synchronize_session=False)
     db.commit()
@@ -399,15 +419,16 @@ def _insert_archetype(db: DBSession, archetype: Archetype, *, now: datetime) -> 
 def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
     """Seed QA with the seven synthetic archetypes + stub-pricing rows.
 
-    Guards against production first, then performs a tagged delete-then-reseed:
-    sentinel-tagged positions and all stub rows are removed, then the seven
-    archetypes are re-inserted. A per-archetype insert failure is collected (its
-    key added to ``SeedResult.failed_archetypes``) and the run continues, so one
-    bad archetype does not abort the rest; the CLI exits non-zero when any
-    failed.
+    Guards against production first (raising :class:`SeedGuardError` before any
+    read or write), then performs an **authoritative full reset** (ADR #359 D2):
+    a rolling ``create_backup`` is taken, ALL position/trade/stub rows are wiped
+    (``app_settings`` / ``sessions`` / ``watchlist`` preserved), and the seven
+    archetypes are inserted. A per-archetype insert failure is collected (its key
+    added to ``SeedResult.failed_archetypes``) and the run continues, so one bad
+    archetype does not abort the rest; the CLI exits non-zero when any failed.
 
-    ``dry_run=True`` performs no writes — it builds the archetype list (to
-    surface construction errors) and returns counts of zero.
+    ``dry_run=True`` performs no writes and no backup — it builds the archetype
+    list (to surface construction errors) and returns counts of zero.
     """
     assert_seed_allowed()
     start = time.monotonic()
@@ -425,7 +446,33 @@ def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
         )
         return SeedResult(dry_run=True)
 
-    _delete_seeded_rows(db)
+    # Cheap undo insurance before the destructive wipe (ADR #359 Q3). A backup
+    # failure must not abort the seed — log it and proceed; the reset is the
+    # load-bearing operation, the backup is best-effort.
+    try:
+        backup_name = create_backup()
+    except Exception as exc:
+        logger.warning(
+            "seed_qa.backup_failed",
+            extra={
+                "event": "seed_qa.backup_failed",
+                "outcome": "degraded",
+                "error_class": type(exc).__name__,
+            },
+        )
+        backup_name = ""
+
+    _full_reset(db)
+    logger.info(
+        "seed_qa.reset",
+        extra={
+            "event": "seed_qa.reset",
+            "outcome": "success",
+            "duration_ms": round((time.monotonic() - start) * 1000, 2),
+            "app_env": settings.app_env,
+            "backup": backup_name or None,
+        },
+    )
 
     result = SeedResult()
     for archetype in archetypes:
@@ -470,6 +517,7 @@ def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
 
 
 __all__ = [
+    "EXPECTED_ARCHETYPE_COUNT",
     "SEED_TAG_PREFIX",
     "Archetype",
     "SeedGuardError",
