@@ -499,7 +499,7 @@ async function mockJournalPositions(page, positions) {
 }
 
 test.describe('BTC detail — journal close-leg pre-fill (issue #244) @e2e', () => {
-  test('"Buy to close" CTA points at the close-leg journal deep-link', async ({
+  test('"Log buy-to-close" CTA points at the close-leg journal deep-link', async ({
     page,
   }) => {
     await mockBtcDetail(page, populatedPayload());

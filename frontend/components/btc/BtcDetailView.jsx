@@ -56,7 +56,7 @@ const VERDICT_PILL_TEXT = {
   assignment: 'Your expiration warning triggered — this leg is in the money',
 };
 
-// Closing verdicts surface the `Buy to close` CTA; dte_review and hold do not.
+// Closing verdicts surface the `Log buy-to-close` CTA; dte_review and hold do not.
 const CLOSING_VERDICTS = new Set(['profit_take_review', 'expiration', 'assignment']);
 
 function tone(verdict) {
@@ -194,7 +194,7 @@ function RecommendedActionBlock({ data }) {
             data-testid="btc-detail-cta-close"
             className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
           >
-            Buy to close
+            Log buy-to-close
           </Link>
         )}
         <Link

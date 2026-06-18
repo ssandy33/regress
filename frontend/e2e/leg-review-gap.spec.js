@@ -201,18 +201,18 @@ test.describe('Leg "See full analysis" bridge link (#362) @e2e', () => {
     await expect(page.getByTestId('btc-detail-leg-header')).toContainText('F');
   });
 
-  // E3 — present on a quiet (no-rule) leg, even when "Buy to close" is absent.
+  // E3 — present on a quiet (no-rule) leg, even when "Log buy-to-close" is absent.
   test('"See full analysis" link is present on a quiet (no-rule) leg @e2e', async ({ page }) => {
     await mockDashboard(page, [makeLeg({ id: 'leg-quiet', verdict: 'hold' })]);
     await expandFirstLeg(page);
 
     await expect(page.getByTestId('dashboard-leg-inspect-cta-full-leg-quiet')).toBeVisible();
-    // The "Buy to close" CTA is gated on a closing verdict — absent here.
+    // The "Log buy-to-close" CTA is gated on a closing verdict — absent here.
     await expect(page.getByTestId('dashboard-leg-inspect-cta-close-leg-quiet')).toHaveCount(0);
   });
 
-  // E4 — leads the CTA row alongside "Buy to close" on a closing verdict.
-  test('"See full analysis" link leads the CTA row alongside "Buy to close" on a closing-verdict leg @e2e', async ({
+  // E4 — leads the CTA row alongside "Log buy-to-close" on a closing verdict.
+  test('"See full analysis" link leads the CTA row alongside "Log buy-to-close" on a closing-verdict leg @e2e', async ({
     page,
   }) => {
     await mockDashboard(page, [makeLeg({ id: 'leg-close', verdict: 'profit_take_review' })]);

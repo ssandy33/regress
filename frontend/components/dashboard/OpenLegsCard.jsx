@@ -207,7 +207,7 @@ function InspectPanel({ leg }) {
     creditReceived = leg.premium * 100 * (leg.quantity ?? 1);
   }
   const verdict = leg.verdict || 'hold';
-  // A "closing" verdict gets a "Buy to close" CTA; a quiet/review leg does not.
+  // A "closing" verdict gets a "Log buy-to-close" CTA; a quiet/review leg does not.
   const showCloseCta =
     verdict === 'profit_take_review' ||
     verdict === 'expiration' ||
@@ -352,7 +352,7 @@ function InspectPanel({ leg }) {
             data-testid={`dashboard-leg-inspect-cta-close-${leg.id}`}
             className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
           >
-            Buy to close
+            Log buy-to-close
           </Link>
         )}
         <Link
