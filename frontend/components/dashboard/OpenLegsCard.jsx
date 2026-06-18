@@ -213,6 +213,13 @@ function InspectPanel({ leg }) {
     verdict === 'expiration' ||
     verdict === 'assignment';
   const positionHref = `/journal?position=${encodeURIComponent(leg.position_id)}`;
+  // Bridge to the full BTC-detail screen (#362, Option 3). Built entirely from
+  // fields already on the leg object — no new data. Shown on every expanded
+  // leg, including quiet/no-rule legs (the BTC screen has a first-class
+  // no-rule state), so it leads the CTA row regardless of verdict.
+  const fullAnalysisHref =
+    `/positions/${encodeURIComponent(leg.position_id)}` +
+    `/legs/${encodeURIComponent(leg.id)}/btc`;
   return (
     <div
       id={`dashboard-leg-inspect-${leg.id}`}
@@ -331,6 +338,14 @@ function InspectPanel({ leg }) {
         {leg.reasoning || 'No management rule has triggered for this leg yet.'}
       </p>
       <div className="flex items-center gap-3 mt-3">
+        <Link
+          href={fullAnalysisHref}
+          data-testid={`dashboard-leg-inspect-cta-full-${leg.id}`}
+          className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+        >
+          See full analysis
+          <span aria-hidden="true"> →</span>
+        </Link>
         {showCloseCta && (
           <Link
             href={`${positionHref}&action=close-leg`}
