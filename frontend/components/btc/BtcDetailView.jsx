@@ -442,7 +442,34 @@ function AnalysisFigure({ testId, label, value, valueClass, note }) {
   );
 }
 
-const ANALYSIS_HEADING = 'BTC Analysis — let assign vs. buy to close';
+// Strategy-aware terminology for the assign-vs-BTC analysis (#363). The
+// scenario math is identical for a short put and a short call, but the
+// *outcome* of letting the option finish in the money differs: a short put
+// gets shares *assigned*; a short call (covered call) has shares *called
+// away*. Keyed by the leg's option_type ("P" → put/CSP, "C" → call/CC) so the
+// labels are correct for both strategies. The populated table renders for
+// calls only today (v1.7.0 CC-scoped), but keying the vocabulary off the leg
+// keeps the labels honest if put math lands later.
+const ASSIGN_TERMS = {
+  P: {
+    heading: 'BTC Analysis — let assign vs. buy to close',
+    column: 'Let assign',
+    deltaCol: 'Δ (BTC − assign)',
+    winner: 'Assign wins',
+    narrativeOutcome: 'letting the shares get assigned',
+    belowBreakeven: 'letting it assign keeps more',
+    deltaFootnote: 'letting assign',
+  },
+  C: {
+    heading: 'BTC Analysis — let called away vs. buy to close',
+    column: 'Let called away',
+    deltaCol: 'Δ (BTC − called away)',
+    winner: 'Call away wins',
+    narrativeOutcome: 'letting the shares get called away',
+    belowBreakeven: 'letting it get called away keeps more',
+    deltaFootnote: 'letting it get called away',
+  },
+};
 
 function BtcAnalysisPanel({ analysis, optionType }) {
   if (!analysis) return null;
@@ -453,6 +480,8 @@ function BtcAnalysisPanel({ analysis, optionType }) {
   // the leg's option_type to render an honest "covered-call-only" affordance
   // instead of "pricing unavailable", which would read as a data error.
   const isPut = optionType === 'P';
+  // Strategy-aware assign/called-away vocabulary (#363).
+  const terms = isPut ? ASSIGN_TERMS.P : ASSIGN_TERMS.C;
 
   // Render states: put-not-applicable (CC-only), full-degrade
   // (available === false), greek-null (available, but no option mid →
@@ -473,7 +502,7 @@ function BtcAnalysisPanel({ analysis, optionType }) {
     >
       <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
         <h3 className="text-base font-semibold text-slate-900 dark:text-white">
-          {ANALYSIS_HEADING}
+          {terms.heading}
         </h3>
         {(degraded || greekNull || isPut) && (
           <span
@@ -588,13 +617,14 @@ function BtcAnalysisPanel({ analysis, optionType }) {
                 <span className="font-medium tabular-nums">
                   {formatDollar(analysis.btc_breakeven)}
                 </span>
-                ) by expiration for buying to close to beat letting the shares
-                get called away. That&apos;s{' '}
+                ) by expiration for buying to close to beat{' '}
+                {terms.narrativeOutcome}. That&apos;s{' '}
                 <span className="font-medium tabular-nums">
                   {formatDollar(analysis.extrinsic)}
                 </span>{' '}
                 of remaining time value the stock has to clear. Below breakeven,
-                letting it assign keeps more.
+                {' '}
+                {terms.belowBreakeven}.
               </p>
             </div>
 
@@ -609,13 +639,13 @@ function BtcAnalysisPanel({ analysis, optionType }) {
                       Underlying @ exp
                     </th>
                     <th scope="col" className="text-left font-medium pb-2">
-                      Let assign
+                      {terms.column}
                     </th>
                     <th scope="col" className="text-left font-medium pb-2">
                       BTC + hold
                     </th>
                     <th scope="col" className="text-left font-medium pb-2">
-                      Δ (BTC − assign)
+                      {terms.deltaCol}
                     </th>
                     <th scope="col" className="text-left font-medium pb-2">
                       Winner
@@ -633,7 +663,7 @@ function BtcAnalysisPanel({ analysis, optionType }) {
                       ? 'Tie'
                       : btcWins
                       ? 'BTC wins'
-                      : 'Assign wins';
+                      : terms.winner;
                     return (
                       <tr
                         key={s.label}
@@ -670,7 +700,7 @@ function BtcAnalysisPanel({ analysis, optionType }) {
               </table>
               <p className="text-xs text-slate-400 dark:text-slate-500 mt-3">
                 Net dollars per scenario, pre-commission. Δ &gt; 0 means buying
-                to close beats letting assign at that price.
+                to close beats {terms.deltaFootnote} at that price.
               </p>
             </div>
           </>
