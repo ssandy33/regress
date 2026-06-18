@@ -206,12 +206,6 @@ function InspectPanel({ leg }) {
     // default is `1` so this only matters for stale fixtures.
     creditReceived = leg.premium * 100 * (leg.quantity ?? 1);
   }
-  const verdict = leg.verdict || 'hold';
-  // A "closing" verdict gets a "Log buy-to-close" CTA; a quiet/review leg does not.
-  const showCloseCta =
-    verdict === 'profit_take_review' ||
-    verdict === 'expiration' ||
-    verdict === 'assignment';
   const positionHref = `/journal?position=${encodeURIComponent(leg.position_id)}`;
   // Bridge to the full BTC-detail screen (#362, Option 3). Built entirely from
   // fields already on the leg object — no new data. Shown on every expanded
@@ -346,15 +340,6 @@ function InspectPanel({ leg }) {
           See full analysis
           <span aria-hidden="true"> →</span>
         </Link>
-        {showCloseCta && (
-          <Link
-            href={`${positionHref}&action=close-leg`}
-            data-testid={`dashboard-leg-inspect-cta-close-${leg.id}`}
-            className="inline-flex items-center px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
-          >
-            Log buy-to-close
-          </Link>
-        )}
         <Link
           href={positionHref}
           data-testid={`dashboard-leg-inspect-cta-journal-${leg.id}`}

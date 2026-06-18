@@ -439,7 +439,7 @@ test.describe('BTC detail screen — reachable from dashboard card CTA @e2e', ()
   });
 });
 
-// --- Tests: journal pre-fill via the "Buy to close" CTA ---------------------
+// --- Tests: journal close-leg deep-link pre-fill (button removed in #364) ----
 
 const JOURNAL_POSITION = {
   id: POSITION_ID,
@@ -499,18 +499,17 @@ async function mockJournalPositions(page, positions) {
 }
 
 test.describe('BTC detail — journal close-leg pre-fill (issue #244) @e2e', () => {
-  test('"Log buy-to-close" CTA points at the close-leg journal deep-link', async ({
+  test('no buy-to-close action button on the BTC detail banner (#364)', async ({
     page,
   }) => {
     await mockBtcDetail(page, populatedPayload());
     await openBtcDetail(page);
 
-    const cta = page.getByTestId('btc-detail-cta-close');
-    await expect(cta).toBeVisible();
-    await expect(cta).toHaveAttribute(
-      'href',
-      `/journal?position=${POSITION_ID}&leg=${LEG_ID}&action=close-leg`,
-    );
+    // regress is decision-support + journaling, not trade execution — the
+    // close-leg action button was removed (#364). "Open in Journal" remains
+    // (navigation), and the close-leg deep-link still works if navigated to.
+    await expect(page.getByTestId('btc-detail-cta-close')).toHaveCount(0);
+    await expect(page.getByTestId('btc-detail-cta-journal')).toBeVisible();
   });
 
   test('arriving at the close-leg deep-link pre-fills the inverse-close form', async ({

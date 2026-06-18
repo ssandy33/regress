@@ -56,8 +56,6 @@ const VERDICT_PILL_TEXT = {
   assignment: 'Your expiration warning triggered — this leg is in the money',
 };
 
-// Closing verdicts surface the `Log buy-to-close` CTA; dte_review and hold do not.
-const CLOSING_VERDICTS = new Set(['profit_take_review', 'expiration', 'assignment']);
 
 function tone(verdict) {
   return VERDICT_TONE[verdict] || VERDICT_TONE.hold;
@@ -129,7 +127,6 @@ function RecommendedActionBlock({ data }) {
   const { verdict, leg, economics, triggered_rules: rules = [] } = data;
   const t = tone(verdict);
   const isHold = verdict === 'hold';
-  const showCloseCta = CLOSING_VERDICTS.has(verdict);
 
   // First sentence: the governing rule's server-authored reasoning. Never
   // re-author it — it is already advice-framed. Then append the BTC outcome.
@@ -185,18 +182,6 @@ function RecommendedActionBlock({ data }) {
         {reasoning}
       </p>
       <div className="mt-3 flex items-center gap-4">
-        {showCloseCta && (
-          <Link
-            href={
-              `/journal?position=${encodeURIComponent(leg.position_id)}` +
-              `&leg=${encodeURIComponent(leg.id)}&action=close-leg`
-            }
-            data-testid="btc-detail-cta-close"
-            className="inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-          >
-            Log buy-to-close
-          </Link>
-        )}
         <Link
           href={`/journal?position=${encodeURIComponent(leg.position_id)}`}
           data-testid="btc-detail-cta-journal"

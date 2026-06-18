@@ -211,26 +211,27 @@ test.describe('Leg "See full analysis" bridge link (#362) @e2e', () => {
     await expect(page.getByTestId('dashboard-leg-inspect-cta-close-leg-quiet')).toHaveCount(0);
   });
 
-  // E4 — leads the CTA row alongside "Log buy-to-close" on a closing verdict.
-  test('"See full analysis" link leads the CTA row alongside "Log buy-to-close" on a closing-verdict leg @e2e', async ({
+  // E4 — on a closing verdict there is NO close-action button (#364: regress
+  // journals, it doesn't execute); the bridge link still leads the CTA row.
+  test('"See full analysis" leads the CTA row; no close-action button on a closing-verdict leg @e2e', async ({
     page,
   }) => {
     await mockDashboard(page, [makeLeg({ id: 'leg-close', verdict: 'profit_take_review' })]);
     await expandFirstLeg(page);
 
     const full = page.getByTestId('dashboard-leg-inspect-cta-full-leg-close');
-    const close = page.getByTestId('dashboard-leg-inspect-cta-close-leg-close');
     const journal = page.getByTestId('dashboard-leg-inspect-cta-journal-leg-close');
     await expect(full).toBeVisible();
-    await expect(close).toBeVisible();
     await expect(journal).toBeVisible();
+    // #364 — no trade-action button, even on a closing verdict.
+    await expect(page.getByTestId('dashboard-leg-inspect-cta-close-leg-close')).toHaveCount(0);
 
-    // "See full analysis" leads the row: its DOM position precedes both peers.
-    const fullThenClose = await full.evaluate(
+    // "See full analysis" leads the row: its DOM position precedes "Open in Journal".
+    const fullThenJournal = await full.evaluate(
       (el, other) =>
         !!(el.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING),
-      await close.elementHandle()
+      await journal.elementHandle()
     );
-    expect(fullThenClose).toBe(true);
+    expect(fullThenJournal).toBe(true);
   });
 });
