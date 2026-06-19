@@ -353,9 +353,16 @@ def _itm_short_dte_actions(
                     f"Short {leg.get('type', 'put')} is ITM with {int(dte)} day"
                     f"{'s' if dte != 1 else ''} to expiration."
                 ),
+                # #375: route to the per-leg BTC decision screen (byte-identical
+                # to the buy-to-close cards) instead of the Journal data table —
+                # the leg id is already in scope, so the urgent ITM card lands on
+                # a decision view, not a dead-end.
                 "cta": {
-                    "label": "Manage in Journal",
-                    "href": f"/journal?position={quote(str(leg['position_id']), safe='')}",
+                    "label": "Review buy-to-close",
+                    "href": (
+                        f"/positions/{quote(str(leg['position_id']), safe='')}"
+                        f"/legs/{quote(str(leg['id']), safe='')}/btc"
+                    ),
                     "kind": "link",
                 },
                 # Sort metadata consumed by `_tie_breaker_for`.
@@ -387,11 +394,15 @@ def _short_dte_aggregate_actions(
             continue
         ticker = leg["ticker"]
         entry = by_ticker.get(ticker)
+        # #375: retain the min-DTE leg's own position_id + id so the aggregate
+        # card can route to that most-urgent leg's BTC decision screen. Strict
+        # `<` keeps first-seen ties (the first leg at a given min DTE wins).
         if entry is None or dte < entry["min_dte"]:
             by_ticker[ticker] = {
                 "ticker": ticker,
                 "min_dte": int(dte),
                 "position_id": leg["position_id"],
+                "leg_id": leg["id"],
                 "leg_count": (entry["leg_count"] + 1) if entry else 1,
             }
         else:
@@ -414,9 +425,15 @@ def _short_dte_aggregate_actions(
                     f"{count} open {leg_word} on {ticker} expire within "
                     f"{short_dte_max} days."
                 ),
+                # #375: route the aggregate card to the most-urgent (min-DTE)
+                # leg's BTC decision screen instead of the Journal data table,
+                # so a multi-leg ticker still lands on a decision view.
                 "cta": {
-                    "label": f"Manage {ticker}",
-                    "href": f"/journal?position={quote(str(entry['position_id']), safe='')}",
+                    "label": "Review buy-to-close",
+                    "href": (
+                        f"/positions/{quote(str(entry['position_id']), safe='')}"
+                        f"/legs/{quote(str(entry['leg_id']), safe='')}/btc"
+                    ),
                     "kind": "link",
                 },
                 "_dte": entry["min_dte"],
