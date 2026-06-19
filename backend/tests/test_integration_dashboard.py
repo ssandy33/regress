@@ -1064,3 +1064,64 @@ def test_dashboard_leg_delta_threads_from_chain(client, monkeypatch):
     assert leg["assignment_depth"] == "deep"
     assert leg["current_mid"] == pytest.approx(5.10)
     assert isinstance(leg["current_mid"], float)
+
+
+# ---------------------------------------------------------------------------
+# Issue #375 — expiration cards route to the per-leg BTC decision screen
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_dashboard_expiration_cards_link_to_btc(client, monkeypatch):
+    """C-8 — full stack: an ITM short-DTE leg and an OTM short-DTE aggregate
+    both surface CTAs to the per-leg BTC route, with no `/journal?position=`
+    dead-end (issue #375 AC1/AC2/AC3)."""
+    import re
+
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    # AAPL put @ 175 with price 174 → ITM (per-leg `expiration.itm_short_dte`).
+    # TSLA put @ 200 with price 230 → OTM (aggregate `expiration.short_dte`).
+    quote_responses = {"AAPL": {"lastPrice": 174.0}, "TSLA": {"lastPrice": 230.0}}
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: quote_responses[ticker],
+    )
+
+    today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
+    monkeypatch.setattr(
+        "app.services.dashboard.date",
+        type("D", (), {"today": staticmethod(lambda: today)}),
+    )
+
+    aapl_id = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        aapl_id,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",  # 3 DTE → ITM short-DTE per-leg card
+    )
+    tsla_id = _seed_position(client, ticker="TSLA", broker_cost_basis=20000.0)
+    _seed_trade(
+        client,
+        tsla_id,
+        trade_type="sell_put",
+        strike=200.0,
+        expiration="2026-05-09",  # 4 DTE → OTM short-DTE aggregate card
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    cards_by_id = {a["action_id"]: a for a in data["next_actions"]}
+    assert "expiration.itm_short_dte" in cards_by_id
+    assert "expiration.short_dte" in cards_by_id
+
+    btc_route = re.compile(r"^/positions/[^/]+/legs/[^/]+/btc$")
+    for action_id in ("expiration.itm_short_dte", "expiration.short_dte"):
+        href = cards_by_id[action_id]["cta"]["href"]
+        assert btc_route.match(href), f"{action_id} href not BTC route: {href!r}"
+        assert "/journal?position=" not in href
