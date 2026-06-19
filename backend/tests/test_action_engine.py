@@ -1201,3 +1201,139 @@ class TestLargeLoserSubjectSpacingIssue164:
         assert "  " not in amount, (
             f"subject.amount must not contain a double space: {amount!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #375 — expiration-urgency cards route to the per-leg BTC decision
+# screen instead of dead-ending on the Journal positions table.
+# ---------------------------------------------------------------------------
+
+
+class TestItmShortDteRoutesToBtc:
+    """`expiration.itm_short_dte` CTA targets the per-leg BTC route (#375)."""
+
+    @pytest.mark.unit
+    def test_itm_short_dte_cta_links_to_btc_route(self):
+        # C-1 — a single ITM short-DTE leg routes to its own BTC screen,
+        # byte-identical to the buy-to-close cards' route.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_leg("l-1", dte=3, moneyness_state="ITM", position_id="p-1")],
+        )
+        card = next(
+            a for a in actions if a["action_id"] == "expiration.itm_short_dte"
+        )
+        assert card["cta"]["href"] == "/positions/p-1/legs/l-1/btc"
+
+    @pytest.mark.unit
+    def test_itm_short_dte_cta_not_journal(self):
+        # C-2 — the dead-end Journal destination is gone.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[],
+            open_legs=[_leg("l-1", dte=3, moneyness_state="ITM", position_id="p-1")],
+        )
+        card = next(
+            a for a in actions if a["action_id"] == "expiration.itm_short_dte"
+        )
+        assert "/journal?position=" not in card["cta"]["href"]
+
+
+class TestShortDteAggregateRoutesToBtc:
+    """`expiration.short_dte` aggregate CTA targets the min-DTE leg's BTC
+    route while keeping its aggregated summary subject + id (#375)."""
+
+    @pytest.mark.unit
+    def test_short_dte_aggregate_cta_links_to_min_dte_leg_btc(self):
+        # C-3 — two OTM legs on one ticker; the aggregate card routes to the
+        # most-urgent (min-DTE) leg, l-2 (dte=3), not l-1 (dte=5).
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=2),
+            positions=[],
+            open_legs=[
+                _leg("l-1", dte=5, moneyness_state="OTM", position_id="p-1"),
+                _leg("l-2", dte=3, moneyness_state="OTM", position_id="p-1"),
+            ],
+        )
+        card = next(
+            a for a in actions if a["action_id"] == "expiration.short_dte"
+        )
+        assert card["cta"]["href"] == "/positions/p-1/legs/l-2/btc"
+
+    @pytest.mark.unit
+    def test_short_dte_aggregate_cta_not_journal(self):
+        # C-4 — the dead-end Journal destination is gone.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=2),
+            positions=[],
+            open_legs=[
+                _leg("l-1", dte=5, moneyness_state="OTM", position_id="p-1"),
+                _leg("l-2", dte=3, moneyness_state="OTM", position_id="p-1"),
+            ],
+        )
+        card = next(
+            a for a in actions if a["action_id"] == "expiration.short_dte"
+        )
+        assert "/journal?position=" not in card["cta"]["href"]
+
+    @pytest.mark.unit
+    def test_short_dte_aggregate_retains_summary_subject_text(self):
+        # C-5 — the aggregated summary subject ("N legs ≤ X DTE") and the card
+        # id are unchanged by the routing fix (no regression of the summary).
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=2),
+            positions=[],
+            open_legs=[
+                _leg("l-1", dte=5, moneyness_state="OTM", position_id="p-1"),
+                _leg("l-2", dte=3, moneyness_state="OTM", position_id="p-1"),
+            ],
+        )
+        card = next(
+            a for a in actions if a["action_id"] == "expiration.short_dte"
+        )
+        assert card["subject"]["amount"] == "2 legs ≤ 7 DTE"
+        assert card["id"] == "expiration.short_dte.aapl"
+
+    @pytest.mark.unit
+    def test_short_dte_min_dte_tiebreak_first_seen(self):
+        # C-6 — two OTM legs at the same min DTE; the first-seen leg (l-1)
+        # wins the tie (strict `<`, deterministic), so the aggregate routes
+        # to l-1, not l-2.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=2),
+            positions=[],
+            open_legs=[
+                _leg("l-1", dte=3, moneyness_state="OTM", position_id="p-1"),
+                _leg("l-2", dte=3, moneyness_state="OTM", position_id="p-1"),
+            ],
+        )
+        card = next(
+            a for a in actions if a["action_id"] == "expiration.short_dte"
+        )
+        assert card["cta"]["href"] == "/positions/p-1/legs/l-1/btc"
+
+    @pytest.mark.unit
+    def test_short_dte_aggregate_multi_position_same_ticker(self):
+        # C-7 — legs on different positions but the same ticker; the aggregate
+        # href must use the min-DTE leg's OWN position_id + id (guards the
+        # position_id/leg_id pairing, not a cross-leg mix).
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=2),
+            positions=[],
+            open_legs=[
+                _leg("l-1", dte=6, moneyness_state="OTM", position_id="p-1"),
+                _leg("l-2", dte=2, moneyness_state="OTM", position_id="p-2"),
+            ],
+        )
+        card = next(
+            a for a in actions if a["action_id"] == "expiration.short_dte"
+        )
+        assert card["cta"]["href"] == "/positions/p-2/legs/l-2/btc"

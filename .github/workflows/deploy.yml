@@ -111,12 +111,18 @@ jobs:
   # `docker buildx imagetools create` copies the existing manifest under a new
   # tag. It is NEVER a rebuild and NEVER a publish-time source re-resolution.
   #
-  # `needs.ci.outputs.{backend,frontend}-digest` is the recorded digest CI
-  # produced for the exact release commit (the same @sha256: bytes QA validated,
-  # since the frontend image is build-time env-agnostic — ADR #338 invariant).
-  # We feed that recorded digest to imagetools create; we do NOT resolve a bare
-  # tag from source. The promoted digest is then handed to deploy-prod so the
-  # box pulls the identical artifact.
+  # #373 (ADR #338) FIX: the promoted digest MUST be the byte-for-byte digest
+  # QA validated. The QA run and the release run are DIFFERENT workflow runs
+  # (QA fires on push/prerelease, prod on release:published — see the
+  # record-qa-digest comment above), so `needs.ci.outputs.*` here is the
+  # RELEASE-EVENT `ci` REBUILD, not the QA-validated artifact. Consuming it
+  # would ship a freshly-rebuilt image to prod — the exact thing ADR #338
+  # forbids. Instead we resolve the release tag's source commit, find the
+  # successful QA Deploy run for that commit, download its `qa-deployed-digests`
+  # artifact, and promote THOSE recorded @sha256: bytes. The release-event `ci`
+  # rebuild still runs (wired as `needs: [ci]`) but its digest outputs are no
+  # longer consumed by the prod path. If no QA artifact exists for the commit
+  # we FAIL CLOSED — never silently fall back to the rebuild.
   promote-prod:
     needs: [ci]
     if: >
@@ -128,18 +134,21 @@ jobs:
       # packages: write is required so `docker buildx imagetools create` can
       # re-tag (write a new manifest reference for) the recorded digest in GHCR.
       packages: write
+      # actions: read lets `gh run download` / the runs API reach the
+      # qa-deployed-digests artifact recorded by the (different) QA Deploy run.
+      actions: read
     outputs:
-      backend-digest: ${{ needs.ci.outputs.backend-digest }}
-      frontend-digest: ${{ needs.ci.outputs.frontend-digest }}
+      # #373: sourced from the QA-validated artifact, NOT needs.ci.outputs.*
+      # (which on a release event is a fresh rebuild).
+      backend-digest: ${{ steps.qa-digests.outputs.backend }}
+      frontend-digest: ${{ steps.qa-digests.outputs.frontend }}
     env:
       # The release tag the promoted image is re-tagged to. On a manual
       # production dispatch there is no release tag, so fall back to the supplied
       # ref. The promotion's coordinate of record is always the DIGEST below;
       # the tag is a human-readable convenience alias.
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.ref }}
-      # The RECORDED QA-validated digests — read as data, never re-resolved.
-      BACKEND_DIGEST: ${{ needs.ci.outputs.backend-digest }}
-      FRONTEND_DIGEST: ${{ needs.ci.outputs.frontend-digest }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -151,32 +160,165 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # #373 (ADR #338): consume the QA-validated digest artifact, NOT the
+      # release-event ci rebuild. Resolve the release tag's source commit,
+      # locate the successful QA Deploy run for that commit, download its
+      # qa-deployed-digests artifact, and parse the two recorded @sha256:
+      # digests into step outputs. Fail closed if no such artifact exists.
+      - name: Resolve & download QA-validated digests
+        id: qa-digests
+        env:
+          REPO: ${{ github.repository }}
+          WORKFLOW_FILE: deploy.yml
+        run: |
+          set -euo pipefail
+
+          if [ -z "${RELEASE_TAG}" ]; then
+            echo "::error::No release tag — refusing to promote. Supply an explicit tag via the 'ref' input for a manual production dispatch."
+            exit 1
+          fi
+
+          # 1. Resolve the release tag → its target commit SHA. A tag ref can
+          #    point at an annotated tag object; dereference to the commit.
+          REF_OBJ_TYPE=$(gh api "repos/${REPO}/git/refs/tags/${RELEASE_TAG}" --jq '.object.type' 2>/dev/null || echo "")
+          if [ -z "${REF_OBJ_TYPE}" ]; then
+            echo "::error::Could not resolve release tag '${RELEASE_TAG}' to a git ref in ${REPO}. Break-glass: confirm the tag exists, then re-publish the release."
+            exit 1
+          fi
+          if [ "${REF_OBJ_TYPE}" = "tag" ]; then
+            TAG_SHA=$(gh api "repos/${REPO}/git/refs/tags/${RELEASE_TAG}" --jq '.object.sha')
+            COMMIT_SHA=$(gh api "repos/${REPO}/git/tags/${TAG_SHA}" --jq '.object.sha')
+          else
+            COMMIT_SHA=$(gh api "repos/${REPO}/git/refs/tags/${RELEASE_TAG}" --jq '.object.sha')
+          fi
+          echo "Release tag '${RELEASE_TAG}' resolves to commit ${COMMIT_SHA}."
+
+          # 2. Find the QA Deploy run on that head_sha that actually recorded
+          #    the qa-deployed-digests artifact. A single commit can have MORE
+          #    THAN ONE successful deploy.yml run (the QA push run that records
+          #    the artifact, plus any release / manual-prod run that does not),
+          #    so the newest successful run is NOT necessarily the QA one.
+          #    Iterate newest→oldest and pick the first run that has the
+          #    artifact — never assume position 0 (#373 / ADR #338).
+          CANDIDATE_RUN_IDS=$(gh api \
+            "repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?head_sha=${COMMIT_SHA}&status=success&per_page=100" \
+            --jq '.workflow_runs | sort_by(.run_started_at) | reverse | .[].id')
+          RUN_ID=""
+          for id in ${CANDIDATE_RUN_IDS}; do
+            HAS_ARTIFACT=$(gh api "repos/${REPO}/actions/runs/${id}/artifacts?per_page=100" \
+              --jq '[.artifacts[].name] | index("qa-deployed-digests") != null')
+            if [ "${HAS_ARTIFACT}" = "true" ]; then
+              RUN_ID="${id}"
+              break
+            fi
+          done
+          if [ -z "${RUN_ID}" ]; then
+            echo "::error::No successful '${WORKFLOW_FILE}' run with a 'qa-deployed-digests' artifact found for commit ${COMMIT_SHA} (release '${RELEASE_TAG}'). The QA validation run for this commit must succeed and record its digests before prod promotion. Break-glass: re-run the QA Deploy for ${COMMIT_SHA} (merge the commit to main or re-publish the RC prerelease), then re-publish this release."
+            exit 1
+          fi
+          echo "QA-validated Deploy run for ${COMMIT_SHA}: run ${RUN_ID}."
+
+          # 3. Download the recorded artifact from that run. Fail closed — never
+          #    fall back to a rebuild (the exact thing #373 / ADR #338 forbids).
+          if ! gh run download "${RUN_ID}" -n qa-deployed-digests -D qa-digests --repo "${REPO}"; then
+            echo "::error::No 'qa-deployed-digests' artifact on Deploy run ${RUN_ID} for commit ${COMMIT_SHA} (release '${RELEASE_TAG}'). Refusing to promote — a rebuild is forbidden by ADR #338. Break-glass: re-run the QA Deploy for ${COMMIT_SHA} to regenerate the artifact (it may have aged out of retention), then re-publish the release."
+            exit 1
+          fi
+
+          # 4. Parse the recorded digests (line format written by
+          #    record-qa-digest: backend-digest=sha256:... / frontend-digest=...).
+          DIGEST_FILE="qa-digests/qa-deployed-digests.txt"
+          if [ ! -f "${DIGEST_FILE}" ]; then
+            echo "::error::Downloaded artifact is missing qa-deployed-digests.txt. Refusing to promote."
+            exit 1
+          fi
+          QA_BACKEND_DIGEST=$(grep '^backend-digest=' "${DIGEST_FILE}" | cut -d= -f2-)
+          QA_FRONTEND_DIGEST=$(grep '^frontend-digest=' "${DIGEST_FILE}" | cut -d= -f2-)
+          if [ -z "${QA_BACKEND_DIGEST}" ] || [ -z "${QA_FRONTEND_DIGEST}" ]; then
+            echo "::error::Recorded QA digests are empty in ${DIGEST_FILE}. Refusing to promote."
+            exit 1
+          fi
+          echo "QA-validated backend digest:  ${QA_BACKEND_DIGEST}"
+          echo "QA-validated frontend digest: ${QA_FRONTEND_DIGEST}"
+
+          {
+            echo "backend=${QA_BACKEND_DIGEST}"
+            echo "frontend=${QA_FRONTEND_DIGEST}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Guard against empty release tag or digest
+        env:
+          # The QA-sourced digests parsed above — read as data, never re-resolved.
+          BACKEND_DIGEST: ${{ steps.qa-digests.outputs.backend }}
+          FRONTEND_DIGEST: ${{ steps.qa-digests.outputs.frontend }}
         run: |
           if [ -z "${RELEASE_TAG}" ]; then
             echo "::error::No release tag — refusing to promote. Supply an explicit tag via the 'ref' input for a manual production dispatch."
             exit 1
           fi
           if [ -z "${BACKEND_DIGEST}" ] || [ -z "${FRONTEND_DIGEST}" ]; then
-            echo "::error::Recorded digest missing — refusing to promote. The ci build-and-push-images job must emit backend-digest/frontend-digest."
+            echo "::error::QA-validated digest missing — refusing to promote. The QA Deploy run for this commit must have recorded the qa-deployed-digests artifact."
             exit 1
           fi
 
-      # Registry-side re-tag of the RECORDED digest. `imagetools create` copies
-      # the source manifest (referenced by @sha256:) to the release tag without
-      # pulling or rebuilding any layer. NO `docker build` / `docker compose
-      # build` appears anywhere on this prod path (ADR #338 §3, risk R2).
+      # Registry-side re-tag of the QA-VALIDATED digest. `imagetools create`
+      # copies the source manifest (referenced by @sha256:) to the release tag
+      # without pulling or rebuilding any layer. NO `docker build` / `docker
+      # compose build` appears anywhere on this prod path (ADR #338 §3, risk R2).
       - name: Promote backend digest to release tag (re-tag, no rebuild)
+        env:
+          BACKEND_DIGEST: ${{ steps.qa-digests.outputs.backend }}
         run: |
           docker buildx imagetools create \
             -t ghcr.io/ssandy33/regress-backend:${RELEASE_TAG} \
             ghcr.io/ssandy33/regress-backend@${BACKEND_DIGEST}
 
       - name: Promote frontend digest to release tag (re-tag, no rebuild)
+        env:
+          FRONTEND_DIGEST: ${{ steps.qa-digests.outputs.frontend }}
         run: |
           docker buildx imagetools create \
             -t ghcr.io/ssandy33/regress-frontend:${RELEASE_TAG} \
             ghcr.io/ssandy33/regress-frontend@${FRONTEND_DIGEST}
+
+      # #373 AC3: prove the digest now under the release tag in GHCR is the
+      # exact QA-validated digest — not a rebuild that slipped in. Inspect the
+      # promoted tag's manifest digest and assert byte-for-byte equality, then
+      # surface the verified pairing to the run summary.
+      - name: Verify promoted digest equals QA-validated digest (AC3)
+        env:
+          QA_BACKEND_DIGEST: ${{ steps.qa-digests.outputs.backend }}
+          QA_FRONTEND_DIGEST: ${{ steps.qa-digests.outputs.frontend }}
+        run: |
+          set -euo pipefail
+
+          PROMOTED_BACKEND=$(docker buildx imagetools inspect \
+            "ghcr.io/ssandy33/regress-backend:${RELEASE_TAG}" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"')
+          PROMOTED_FRONTEND=$(docker buildx imagetools inspect \
+            "ghcr.io/ssandy33/regress-frontend:${RELEASE_TAG}" \
+            --format '{{json .Manifest.Digest}}' | tr -d '"')
+
+          MISMATCH=0
+          if [ "${PROMOTED_BACKEND}" != "${QA_BACKEND_DIGEST}" ]; then
+            echo "::error::Prod promotion MISMATCH (backend): release tag '${RELEASE_TAG}' resolves to ${PROMOTED_BACKEND} but QA validated ${QA_BACKEND_DIGEST}. Refusing to deploy a non-QA-validated image (ADR #338)."
+            MISMATCH=1
+          fi
+          if [ "${PROMOTED_FRONTEND}" != "${QA_FRONTEND_DIGEST}" ]; then
+            echo "::error::Prod promotion MISMATCH (frontend): release tag '${RELEASE_TAG}' resolves to ${PROMOTED_FRONTEND} but QA validated ${QA_FRONTEND_DIGEST}. Refusing to deploy a non-QA-validated image (ADR #338)."
+            MISMATCH=1
+          fi
+          if [ "${MISMATCH}" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "Prod promotion verified: backend ${QA_BACKEND_DIGEST} == ${PROMOTED_BACKEND} (QA-validated digest)."
+          echo "Prod promotion verified: frontend ${QA_FRONTEND_DIGEST} == ${PROMOTED_FRONTEND} (QA-validated digest)."
+          {
+            echo "### Prod promotion verified (ADR #338 / #373)"
+            echo "- Prod promotion verified: backend \`${QA_BACKEND_DIGEST}\` == \`${PROMOTED_BACKEND}\` (QA-validated digest)."
+            echo "- Prod promotion verified: frontend \`${QA_FRONTEND_DIGEST}\` == \`${PROMOTED_FRONTEND}\` (QA-validated digest)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # a full (non-RC) GitHub Release, or a manual production dispatch → PROD stack
   deploy-prod:
@@ -195,9 +337,9 @@ jobs:
       deploy_dir: ~/regress
       compose_file: docker-compose.prod.yml
       git_ref: ${{ github.event.release.tag_name || inputs.ref }}
-      # Pull the PROMOTED digest (#342/SUB-3) — the same @sha256: bytes QA
-      # validated and that promote-prod re-tagged to the release tag in GHCR.
-      # Sourced from the recorded CI digest, NOT a fresh build — the box never
-      # rebuilds the image.
+      # Pull the PROMOTED digest (#342/SUB-3, #373/ADR #338) — the same @sha256:
+      # bytes QA validated and that promote-prod re-tagged to the release tag in
+      # GHCR. promote-prod sources these from the qa-deployed-digests artifact of
+      # the QA run for this commit, NOT a fresh build — the box never rebuilds.
       backend_image_digest: ${{ needs.promote-prod.outputs.backend-digest }}
       frontend_image_digest: ${{ needs.promote-prod.outputs.frontend-digest }}

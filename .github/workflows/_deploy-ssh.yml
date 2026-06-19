@@ -80,6 +80,12 @@ jobs:
             # (<<'ENDSSH') so the existing $(...) / $VAR expressions still run on
             # the BOX, not the runner — the build->pull swap must not change that.
             # Actions masks the secret token in logs.
+            # Combined stdout/stderr (2>&1) is tee'd to a runner file so the
+            # box-side ::SEED_RESULT:: / ::DISK_RESULT:: markers can be grepped
+            # out on the runner and surfaced to $GITHUB_STEP_SUMMARY (#366, #371)
+            # — the retry action otherwise swallows the heredoc's stdout. The
+            # pipe sits on the ssh command line; the heredoc body still feeds
+            # ssh's stdin. PIPESTATUS[0] (below) preserves the real ssh exit code.
             ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 \
               -i ~/.ssh/deploy_key \
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
@@ -87,7 +93,7 @@ jobs:
               '${{ inputs.backend_image_digest }}' \
               '${{ inputs.frontend_image_digest }}' \
               '${{ github.actor }}' \
-              '${{ secrets.GHCR_PULL_TOKEN }}' <<'ENDSSH'
+              '${{ secrets.GHCR_PULL_TOKEN }}' 2>&1 <<'ENDSSH' | tee /tmp/deploy_ssh.out
             set -e
             # Image-pinned deploy (#341/SUB-2, ADR #338): the compose files now
             # reference ghcr.io/ssandy33/regress-{backend,frontend}@${...DIGEST}.
@@ -123,6 +129,20 @@ jobs:
               docker compose -f ${{ inputs.compose_file }} rm -sf caddy
               PROJECT_NAME=$(basename "$(pwd)")
               docker volume rm "${PROJECT_NAME}_caddy_data" || true
+            fi
+            # Disk headroom pre-flight (#371): warn-by-default, NON-FATAL signal
+            # that the box is low on space BEFORE `docker compose pull` adds more.
+            # It must not block the very deploy that reclaims space (#369 builder
+            # prune runs at the end), so it only annotates + records — never exits.
+            # Surfaced to the runner step summary via the ::DISK_RESULT:: marker
+            # (greppable out of the tee'd SSH stdout on the runner — shared with
+            # the #366 ::SEED_RESULT:: mechanism).
+            DISK_WARN_PCT=85
+            USED_PCT=$(df --output=pcent / | tail -1 | tr -dc '0-9')
+            echo "Disk headroom: / at ${USED_PCT}% (threshold ${DISK_WARN_PCT}%)."
+            echo "::DISK_RESULT:: / at ${USED_PCT}% (threshold ${DISK_WARN_PCT}%)"
+            if [ -n "$USED_PCT" ] && [ "$USED_PCT" -ge "$DISK_WARN_PCT" ] 2>/dev/null; then
+              echo "::warning::Disk headroom: / at ${USED_PCT}% (>= ${DISK_WARN_PCT}%) on $(hostname) — reclaim space (see #369 builder prune)."
             fi
             # Pull the CI-built images by @sha256: digest from GHCR (#341/SUB-2,
             # ADR #338) instead of rebuilding on the box — prod runs the exact
@@ -179,6 +199,43 @@ jobs:
               exit 1
             fi
             echo "Smoke gate PASSED: ${FRONTEND_SVC}${SMOKE_PATH} is serving."
+            # Backend health probe (#370): additive to the frontend gate above.
+            # Probes GET /api/health INSIDE the backend container on the FastAPI
+            # in-container port (127.0.0.1:8000) — same in-container pattern as
+            # the frontend probe on :8080. Runs UNCONDITIONALLY (outside the
+            # `if environment = qa` seed block), so a crash-looping / non-200
+            # backend fails BOTH qa and prod deploys. Per #343 soft-fail
+            # semantics we assert ONLY on the HTTP status (GET /api/health
+            # returns 200 even when Schwab/FRED data sources are degraded) — we
+            # do not inspect per-source `outcome`.
+            BACKEND_HEALTH_PATH="/api/health"
+            BACKEND_SVC=$(docker compose -f ${{ inputs.compose_file }} config --services | grep -E '(^|-)backend$' | head -1)
+            if [ -z "$BACKEND_SVC" ]; then
+              echo "::error::Smoke gate (backend): could not resolve a backend service from ${{ inputs.compose_file }} — refusing to mark deploy healthy."
+              exit 1
+            fi
+            echo "Smoke gate (backend): probing ${BACKEND_SVC} http://127.0.0.1:8000${BACKEND_HEALTH_PATH} (status < 400 == healthy)"
+            BACKEND_OK=no
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              CODE=$(docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" \
+                python -c "import sys,urllib.request;\
+                req=urllib.request.Request('http://127.0.0.1:8000'+sys.argv[1]);\
+                sys.stdout.write(str(urllib.request.urlopen(req,timeout=5).getcode()))" \
+                "$BACKEND_HEALTH_PATH" 2>/dev/null || echo "000")
+              echo "Smoke gate (backend) attempt ${attempt}/10: HTTP ${CODE}"
+              if [ "$CODE" -ge 200 ] 2>/dev/null && [ "$CODE" -lt 400 ] 2>/dev/null; then
+                BACKEND_OK=yes
+                break
+              fi
+              sleep 6
+            done
+            if [ "$BACKEND_OK" != yes ]; then
+              echo "::error::Smoke gate FAILED (backend): ${BACKEND_SVC}${BACKEND_HEALTH_PATH} did not return a healthy status after 10 attempts — failing the deploy."
+              docker compose -f ${{ inputs.compose_file }} ps
+              docker compose -f ${{ inputs.compose_file }} logs --tail=50 "$BACKEND_SVC" || true
+              exit 1
+            fi
+            echo "Smoke gate (backend) PASSED: ${BACKEND_SVC}${BACKEND_HEALTH_PATH} is healthy."
             # QA-only auto-seed (#349, hardened by ADR #359 / #360): keep QA
             # populated with the 7 v1.7 decision-support archetypes after every
             # deploy so #318/#319/#320 are always acceptance-testable on QA.
@@ -227,6 +284,11 @@ jobs:
               SEEDED_N=$(docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" \
                 python -c "from app.models.database import SessionLocal, Position; from app.services.seed_qa import SEED_TAG_PREFIX; db=SessionLocal(); print(db.query(Position).filter(Position.notes.like(SEED_TAG_PREFIX + '%')).count()); db.close()" 2>/dev/null | tr -d '[:space:]' || true)
               echo "QA auto-seed: seeded=${SEEDED_N} (expected ${EXPECTED_SEED_COUNT})"
+              # Greppable marker (#366): the nick-fields/retry action swallows the
+              # heredoc's stdout, so this seeded=N never reaches the deploy log.
+              # The runner tees SSH stdout to /tmp/deploy_ssh.out and surfaces this
+              # marker to $GITHUB_STEP_SUMMARY (rendered outside the retry buffer).
+              echo "::SEED_RESULT:: seeded=${SEEDED_N} expected=${EXPECTED_SEED_COUNT}"
               if [ "$SEEDED_N" != "$EXPECTED_SEED_COUNT" ]; then
                 echo "::error::QA auto-seed: post-seed count seeded=${SEEDED_N} != expected ${EXPECTED_SEED_COUNT} — failing the deploy (a silent no-op must not look like success)."
                 exit 1
@@ -245,7 +307,29 @@ jobs:
               fi
             fi
             docker image prune -f
+            # Reclaim stale Docker build cache (#369). `docker image prune -f`
+            # above only removes dangling IMAGES; build cache accumulates
+            # separately and is the dominant disk-growth source on the box.
+            # `docker builder prune` removes only dangling/unreferenced cache by
+            # default; the `--filter until=168h` (7-day) age bound additionally
+            # preserves the last week of warm cache and never touches cache
+            # referenced by the currently-running prod+QA containers. Break-glass
+            # full reclaim is documented in deploy/RUNBOOK.md (docker builder
+            # prune -af).
+            docker builder prune -f --filter until=168h
+            echo "Build-cache prune complete (removed cache older than 168h)."
             ENDSSH
-            SSH_EXIT=$?
+            # PIPESTATUS[0] = ssh's exit (NOT tee's), preserved across the
+            # `... | tee /tmp/deploy_ssh.out` pipe on the ssh command line above.
+            # Plain $? would capture tee's exit and mask a failed deploy.
+            SSH_EXIT=${PIPESTATUS[0]}
             rm -f ~/.ssh/deploy_key
+            # Surface the captured markers to the run summary (#366, #371). Guarded
+            # so a prod run (no QA seed line) writes nothing and never fails: the
+            # `|| true` swallows grep's exit 1 on no-match, and $GITHUB_STEP_SUMMARY
+            # is a no-op append when empty.
+            if [ -f /tmp/deploy_ssh.out ]; then
+              grep '::SEED_RESULT::' /tmp/deploy_ssh.out | sed 's/.*::SEED_RESULT:: //' >> "$GITHUB_STEP_SUMMARY" || true
+              grep '::DISK_RESULT::' /tmp/deploy_ssh.out | sed 's/.*::DISK_RESULT:: //' >> "$GITHUB_STEP_SUMMARY" || true
+            fi
             exit $SSH_EXIT
