@@ -179,12 +179,18 @@ jobs:
               exit 1
             fi
             echo "Smoke gate PASSED: ${FRONTEND_SVC}${SMOKE_PATH} is serving."
-            # QA-only auto-seed (#349): keep QA populated with the 7 v1.7
-            # decision-support archetypes after every deploy so #318/#319/#320
-            # are always acceptance-testable on QA. The seed CLI is idempotent
-            # (tagged delete-then-reseed — non-destructive to manual QA rows)
-            # and its DTE-relative fixtures refresh each run, so time-sensitive
+            # QA-only auto-seed (#349, hardened by ADR #359 / #360): keep QA
+            # populated with the 7 v1.7 decision-support archetypes after every
+            # deploy so #318/#319/#320 are always acceptance-testable on QA.
+            # The seed CLI performs an AUTHORITATIVE FULL RESET on QA (ADR #359
+            # D2 — wipes all positions/trades/stub rows, leaves app_settings/
+            # sessions/watchlist intact, then inserts the 7 archetypes), and its
+            # DTE-relative fixtures refresh each run, so time-sensitive
             # archetypes (e.g. the "Watch ≤14 DTE" leg) stay valid over time.
+            #
+            # Ordering (ADR #359 D3): this step runs AFTER `up -d` (which runs
+            # init_db on backend startup) and after the smoke gate — nothing
+            # repopulates the DB after the seed.
             #
             # Double-guarded against prod: this step only runs when the caller
             # passed environment=qa, AND `seed-qa` itself hard-blocks
@@ -196,9 +202,47 @@ jobs:
                 echo "::error::QA auto-seed: could not resolve a backend service from ${{ inputs.compose_file }} — refusing to mark deploy healthy."
                 exit 1
               fi
+              # Derive the expected archetype count from the backend (single
+              # source of truth) instead of hardcoding it, so the gate can't
+              # drift from seed_qa.EXPECTED_ARCHETYPE_COUNT. Fallback to 7.
+              EXPECTED_SEED_COUNT=$(docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" python -c "from app.services.seed_qa import EXPECTED_ARCHETYPE_COUNT; print(EXPECTED_ARCHETYPE_COUNT)" 2>/dev/null | tr -d '[:space:]' || true)
+              [ -n "$EXPECTED_SEED_COUNT" ] || EXPECTED_SEED_COUNT=7
               echo "QA auto-seed: running 'python -m app.cli seed-qa' in ${BACKEND_SVC}"
-              docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" python -m app.cli seed-qa
-              echo "QA auto-seed: complete."
+              # Capture the CLI output so the seeded count is visible in the
+              # deploy log (ADR #359 D3 — a silent no-op must not look healthy).
+              # `set -e` is active: guard the assignment with `if !` so a non-zero
+              # seed exit is handled here (with a clear message) rather than
+              # aborting the script before we can echo the captured output.
+              if SEED_OUTPUT=$(docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" python -m app.cli seed-qa 2>&1); then
+                echo "$SEED_OUTPUT"
+              else
+                echo "$SEED_OUTPUT"
+                echo "::error::QA auto-seed: 'seed-qa' exited non-zero — failing the deploy."
+                exit 1
+              fi
+              # Parse the authoritative post-seed count from the DB rather than
+              # trusting the CLI text — count sentinel-tagged seeded positions.
+              # `|| true` keeps a query failure from aborting under `set -e`; an
+              # empty SEEDED_N then fails the count check below with a clear error.
+              SEEDED_N=$(docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" \
+                python -c "from app.models.database import SessionLocal, Position; from app.services.seed_qa import SEED_TAG_PREFIX; db=SessionLocal(); print(db.query(Position).filter(Position.notes.like(SEED_TAG_PREFIX + '%')).count()); db.close()" 2>/dev/null | tr -d '[:space:]' || true)
+              echo "QA auto-seed: seeded=${SEEDED_N} (expected ${EXPECTED_SEED_COUNT})"
+              if [ "$SEEDED_N" != "$EXPECTED_SEED_COUNT" ]; then
+                echo "::error::QA auto-seed: post-seed count seeded=${SEEDED_N} != expected ${EXPECTED_SEED_COUNT} — failing the deploy (a silent no-op must not look like success)."
+                exit 1
+              fi
+              echo "QA auto-seed: complete (seeded=${SEEDED_N})."
+              # Cache bust (ADR #359 D4): bounce qa-frontend so the dashboard
+              # reflects the freshly-seeded DB without a manual restart — the
+              # Next.js server-side data cache survives a browser hard-refresh.
+              FRONTEND_SVC_QA=$(docker compose -f ${{ inputs.compose_file }} config --services | grep -E '(^|-)frontend$' | head -1)
+              if [ -n "$FRONTEND_SVC_QA" ]; then
+                echo "QA cache bust: restarting ${FRONTEND_SVC_QA} to clear the Next.js data cache"
+                docker compose -f ${{ inputs.compose_file }} restart "$FRONTEND_SVC_QA"
+                echo "QA cache bust: complete."
+              else
+                echo "::warning::QA cache bust: could not resolve a frontend service — dashboard may show stale data until manually restarted."
+              fi
             fi
             docker image prune -f
             ENDSSH
