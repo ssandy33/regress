@@ -193,14 +193,27 @@ jobs:
           fi
           echo "Release tag '${RELEASE_TAG}' resolves to commit ${COMMIT_SHA}."
 
-          # 2. Find the most-recent SUCCESSFUL Deploy run on that head_sha. The
-          #    QA Deploy run for this commit is the one that recorded the
-          #    qa-deployed-digests artifact.
-          RUN_ID=$(gh api \
+          # 2. Find the QA Deploy run on that head_sha that actually recorded
+          #    the qa-deployed-digests artifact. A single commit can have MORE
+          #    THAN ONE successful deploy.yml run (the QA push run that records
+          #    the artifact, plus any release / manual-prod run that does not),
+          #    so the newest successful run is NOT necessarily the QA one.
+          #    Iterate newest→oldest and pick the first run that has the
+          #    artifact — never assume position 0 (#373 / ADR #338).
+          CANDIDATE_RUN_IDS=$(gh api \
             "repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/runs?head_sha=${COMMIT_SHA}&status=success&per_page=100" \
-            --jq '.workflow_runs | sort_by(.run_started_at) | reverse | .[0].id // empty')
+            --jq '.workflow_runs | sort_by(.run_started_at) | reverse | .[].id')
+          RUN_ID=""
+          for id in ${CANDIDATE_RUN_IDS}; do
+            HAS_ARTIFACT=$(gh api "repos/${REPO}/actions/runs/${id}/artifacts?per_page=100" \
+              --jq '[.artifacts[].name] | index("qa-deployed-digests") != null')
+            if [ "${HAS_ARTIFACT}" = "true" ]; then
+              RUN_ID="${id}"
+              break
+            fi
+          done
           if [ -z "${RUN_ID}" ]; then
-            echo "::error::No successful '${WORKFLOW_FILE}' run found for commit ${COMMIT_SHA} (release '${RELEASE_TAG}'). The QA validation run for this commit must succeed before prod promotion. Break-glass: re-run the QA Deploy for ${COMMIT_SHA} (merge the commit to main or re-publish the RC prerelease), then re-publish this release."
+            echo "::error::No successful '${WORKFLOW_FILE}' run with a 'qa-deployed-digests' artifact found for commit ${COMMIT_SHA} (release '${RELEASE_TAG}'). The QA validation run for this commit must succeed and record its digests before prod promotion. Break-glass: re-run the QA Deploy for ${COMMIT_SHA} (merge the commit to main or re-publish the RC prerelease), then re-publish this release."
             exit 1
           fi
           echo "QA-validated Deploy run for ${COMMIT_SHA}: run ${RUN_ID}."

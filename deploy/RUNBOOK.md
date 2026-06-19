@@ -28,7 +28,7 @@ If you see the warning repeatedly, run the break-glass full reclaim below.
 At the end of every deploy, after `docker image prune -f` (which removes only
 dangling images), the deploy runs:
 
-```
+```bash
 docker builder prune -f --filter until=168h
 ```
 
@@ -48,7 +48,7 @@ containers `Up`.
 When the 85% warning persists or the box is critically low on space, run a
 full, unbounded build-cache reclaim on the box:
 
-```
+```bash
 docker builder prune -af
 ```
 
