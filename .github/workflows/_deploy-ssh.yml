@@ -197,12 +197,16 @@ jobs:
             # APP_ENV=production before any write. Prod's compose sets
             # APP_ENV=production and never reaches this branch.
             if [ "${{ inputs.environment }}" = "qa" ]; then
-              EXPECTED_SEED_COUNT=7
               BACKEND_SVC=$(docker compose -f ${{ inputs.compose_file }} config --services | grep -E '(^|-)backend$' | head -1)
               if [ -z "$BACKEND_SVC" ]; then
                 echo "::error::QA auto-seed: could not resolve a backend service from ${{ inputs.compose_file }} — refusing to mark deploy healthy."
                 exit 1
               fi
+              # Derive the expected archetype count from the backend (single
+              # source of truth) instead of hardcoding it, so the gate can't
+              # drift from seed_qa.EXPECTED_ARCHETYPE_COUNT. Fallback to 7.
+              EXPECTED_SEED_COUNT=$(docker compose -f ${{ inputs.compose_file }} exec -T "$BACKEND_SVC" python -c "from app.services.seed_qa import EXPECTED_ARCHETYPE_COUNT; print(EXPECTED_ARCHETYPE_COUNT)" 2>/dev/null | tr -d '[:space:]' || true)
+              [ -n "$EXPECTED_SEED_COUNT" ] || EXPECTED_SEED_COUNT=7
               echo "QA auto-seed: running 'python -m app.cli seed-qa' in ${BACKEND_SVC}"
               # Capture the CLI output so the seeded count is visible in the
               # deploy log (ADR #359 D3 — a silent no-op must not look healthy).

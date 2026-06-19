@@ -108,6 +108,7 @@ def _fetch_issue_body(issue_number: int) -> str:
         capture_output=True,
         text=True,
         check=True,
+        timeout=30,
     )
     return result.stdout
 
@@ -191,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         registry = build_registry(ADOPTED_ISSUES)
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         # Never echo the raw gh stderr (may carry auth/token detail) — log a
         # generic failure and exit non-zero.
         logger.exception(

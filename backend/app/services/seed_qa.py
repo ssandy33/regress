@@ -457,6 +457,7 @@ def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
             extra={
                 "event": "seed_qa.backup_failed",
                 "outcome": "degraded",
+                "duration_ms": round((time.monotonic() - start) * 1000, 2),
                 "error_class": type(exc).__name__,
             },
         )

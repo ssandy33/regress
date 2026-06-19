@@ -210,7 +210,7 @@ def collect(tests_dir: Path, known: dict[str, str] | None = None) -> Matrix:
         raise SystemExit(f"gen_test_matrix: tests directory not found: {tests_dir}")
 
     matrix = Matrix(known=dict(known) if known is not None else known_ac_ids())
-    for path in sorted(tests_dir.glob("test_*.py")):
+    for path in sorted(tests_dir.rglob("test_*.py")):
         for ref in scan_file(path):
             matrix.tests.append(ref)
             for ac_id in ref.ac_ids:
