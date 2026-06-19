@@ -69,22 +69,45 @@ class TestDigestPromotion:
 
     @pytest.mark.unit
     def test_promote_reads_recorded_qa_digest(self, deploy_workflow: dict) -> None:
-        """Promote re-tags the RECORDED digest (@sha256:), not a fresh resolution.
+        """Promote re-tags the QA-VALIDATED recorded digest, never a release rebuild.
 
-        The `imagetools create` source argument references the recorded digest
-        by `@${...DIGEST}`, and that digest is sourced from the CI build output
-        (`needs.ci.outputs.*-digest`) rather than resolved from a bare tag /
-        source at promote time.
+        #373 / ADR #338: on a ``release:published`` event the ``ci`` job is a
+        *fresh rebuild*, so ``needs.ci.outputs.*-digest`` is NOT the byte-for-byte
+        QA-validated artifact. ``promote-prod`` must instead download the recorded
+        ``qa-deployed-digests`` artifact and re-tag *those* ``@sha256:`` bytes.
+        This test locks that contract and is the regression guard against a
+        relapse to the ``needs.ci.outputs.*`` binding (the original bug).
         """
         promote = deploy_workflow["jobs"]["promote-prod"]
         run_text = _job_step_run_text(promote)
         # Source of the re-tag is a digest reference, not a bare tag.
         assert "ghcr.io/ssandy33/regress-backend@${BACKEND_DIGEST}" in run_text
         assert "ghcr.io/ssandy33/regress-frontend@${FRONTEND_DIGEST}" in run_text
-        # The digest env vars are bound to the RECORDED CI build outputs.
-        env = promote.get("env", {})
-        assert env.get("BACKEND_DIGEST") == "${{ needs.ci.outputs.backend-digest }}"
-        assert env.get("FRONTEND_DIGEST") == "${{ needs.ci.outputs.frontend-digest }}"
+        # The recorded QA digest artifact is consumed (downloaded) — proving the
+        # promoted digest is the QA-validated one, not the release-event rebuild.
+        assert "qa-deployed-digests" in run_text
+        # Every digest binding in the job resolves from the QA-artifact step
+        # outputs, and NONE rebinds to the release-event ci rebuild.
+        digest_bindings = []
+        for step in promote.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            step_env = step.get("env", {}) or {}
+            for key in ("BACKEND_DIGEST", "FRONTEND_DIGEST"):
+                if key in step_env:
+                    digest_bindings.append(step_env[key])
+        assert digest_bindings, "promote-prod must bind the digest env in its steps"
+        for binding in digest_bindings:
+            assert "needs.ci.outputs" not in binding, (
+                "promote-prod must NOT source the prod digest from the "
+                "release-event ci rebuild (#373 / ADR #338) — consume the "
+                "qa-deployed-digests artifact instead."
+            )
+            assert "steps.qa-digests.outputs" in binding
+        # The job outputs handed to deploy-prod also come from the QA artifact.
+        outputs = promote.get("outputs", {})
+        assert outputs.get("backend-digest") == "${{ steps.qa-digests.outputs.backend }}"
+        assert outputs.get("frontend-digest") == "${{ steps.qa-digests.outputs.frontend }}"
 
     @pytest.mark.unit
     def test_prod_path_has_no_build_step(self, deploy_workflow: dict) -> None:
