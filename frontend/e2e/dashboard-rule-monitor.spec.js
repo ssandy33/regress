@@ -352,7 +352,7 @@ test.describe('OpenLegsCard rule monitor — InspectPanel @e2e', () => {
     await expect(reasoning).toContainText('rule triggered');
   });
 
-  test('Buy-to-close CTA shown for a closing verdict', async ({ page }) => {
+  test('no buy-to-close action button, even on a closing verdict (#364)', async ({ page }) => {
     const leg = makeLeg({ verdict: 'profit_take_review', capturedPct: 0.6 });
     await mockDashboard(page, { ...BASE_PAYLOAD, open_legs: [leg] });
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -360,12 +360,11 @@ test.describe('OpenLegsCard rule monitor — InspectPanel @e2e', () => {
     await page.waitForLoadState('networkidle');
 
     await page.getByTestId('dashboard-leg-row').first().click();
-    const closeCta = page.getByTestId('dashboard-leg-inspect-cta-close-leg-ford-15c');
-    await expect(closeCta).toBeVisible();
-    await expect(closeCta).toHaveAttribute(
-      'href',
-      '/journal?position=pos-ford&action=close-leg'
-    );
+    // #364 — regress journals decisions, it doesn't execute trades, so no
+    // close-action button is surfaced even when a closing verdict fired.
+    await expect(
+      page.getByTestId('dashboard-leg-inspect-cta-close-leg-ford-15c')
+    ).toHaveCount(0);
     await expect(
       page.getByTestId('dashboard-leg-inspect-cta-journal-leg-ford-15c')
     ).toBeVisible();
