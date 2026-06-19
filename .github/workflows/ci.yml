@@ -80,6 +80,44 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python -m scripts.check_tdd_red --diff-base ${{ github.event.pull_request.base.sha }}
 
+      # Test-traceability (ADR #356) — AC registry drift check. The committed
+      # ac_registry.json is materialized OFFLINE from the adopted issues' bodies
+      # by sync_ac_registry.py; this step re-derives it (network: gh) and fails
+      # if the committed file is stale, mirroring the OpenAPI-snapshot drift
+      # check above. The downstream coverage gate stays offline (reads the file).
+      - name: AC registry drift check
+        id: ac_registry_drift_check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m scripts.sync_ac_registry --check || {
+            echo ""
+            echo "::error::AC registry (ac_registry.json) is stale. Run 'python -m scripts.sync_ac_registry' and commit backend/scripts/ac_registry.json."
+            exit 1
+          }
+
+      # Test-traceability (ADR #356) — TEST-MATRIX.md drift check. Regenerate the
+      # matrix and fail if the committed copy differs, mirroring the OpenAPI /
+      # TS-types drift checks. Offline (reads ac_registry.json + AST-scans tests).
+      - name: Test matrix drift check
+        id: test_matrix_drift_check
+        run: |
+          python -m scripts.gen_test_matrix --out ../TEST-MATRIX.md
+          if ! git diff --quiet -- ../TEST-MATRIX.md; then
+            echo ""
+            echo "::error::TEST-MATRIX.md is stale. Run 'cd backend && python -m scripts.gen_test_matrix' and commit TEST-MATRIX.md."
+            git --no-pager diff -- ../TEST-MATRIX.md
+            exit 1
+          fi
+
+      # Test-traceability (ADR #356) — coverage gate + job summary. Hard-fails
+      # if a known AC-ID (from the issue-derived registry) has zero covering
+      # tests; warns on thin tiers / unknown IDs. --summary writes the matrix
+      # (the "test plan with results") to the GitHub Actions job summary.
+      - name: Test matrix coverage gate
+        id: test_matrix_coverage_gate
+        run: python -m scripts.gen_test_matrix --check --summary
+
   backend-integration:
     name: Backend tests (integration)
     runs-on: ubuntu-latest

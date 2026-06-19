@@ -2,7 +2,20 @@
 set -euo pipefail
 
 # ============================================================
-# QA environment — on-demand DB refresh (issue #330)
+# ⚠️ DEPRECATED for QA (ADR #359 / issue #360) — DO NOT USE TO POPULATE QA
+# ============================================================
+# QA is now seeded SYNTHETICALLY and is the SOLE QA data source: run
+# `python -m app.cli seed-qa` (auto-runs on every QA deploy). Restoring a prod
+# snapshot to QA is retired — real positions on QA defeat #349's purpose and are
+# a data-hygiene problem. See ADR #359 (decision D1):
+#   https://github.com/ssandy33/regress/discussions/359
+#
+# This script is intentionally NOT deleted: the prod-snapshot selection helper
+# (backend/scripts/qa_snapshot.py) and prod backup tooling may still reference
+# this flow. Use it only if you have a specific, ADR-overriding reason to load a
+# prod snapshot onto QA — and never as part of routine QA data refresh.
+# ============================================================
+# QA environment — on-demand DB refresh (issue #330) [DEPRECATED for QA, ADR #359]
 # ============================================================
 # Seeds the QA SQLite volume from the newest prod backup snapshot written by
 # deploy/backup.sh (../regress/backups/regression_tool_<timestamp>.db).
