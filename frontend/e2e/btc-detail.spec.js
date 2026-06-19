@@ -439,7 +439,7 @@ test.describe('BTC detail screen — reachable from dashboard card CTA @e2e', ()
   });
 });
 
-// --- Tests: journal pre-fill via the "Buy to close" CTA ---------------------
+// --- Tests: journal close-leg deep-link pre-fill (button removed in #364) ----
 
 const JOURNAL_POSITION = {
   id: POSITION_ID,
@@ -499,18 +499,17 @@ async function mockJournalPositions(page, positions) {
 }
 
 test.describe('BTC detail — journal close-leg pre-fill (issue #244) @e2e', () => {
-  test('"Buy to close" CTA points at the close-leg journal deep-link', async ({
+  test('no buy-to-close action button on the BTC detail banner (#364)', async ({
     page,
   }) => {
     await mockBtcDetail(page, populatedPayload());
     await openBtcDetail(page);
 
-    const cta = page.getByTestId('btc-detail-cta-close');
-    await expect(cta).toBeVisible();
-    await expect(cta).toHaveAttribute(
-      'href',
-      `/journal?position=${POSITION_ID}&leg=${LEG_ID}&action=close-leg`,
-    );
+    // regress is decision-support + journaling, not trade execution — the
+    // close-leg action button was removed (#364). "Open in Journal" remains
+    // (navigation), and the close-leg deep-link still works if navigated to.
+    await expect(page.getByTestId('btc-detail-cta-close')).toHaveCount(0);
+    await expect(page.getByTestId('btc-detail-cta-journal')).toBeVisible();
   });
 
   test('arriving at the close-leg deep-link pre-fills the inverse-close form', async ({
@@ -612,8 +611,10 @@ test.describe('BTC Analysis panel — decision math @e2e', () => {
       ).toBeVisible();
     }
     // The up scenarios favor BTC; the down/flat favor assign.
+    // #363 bridge edit: the populated payload is a covered call (option_type
+    // 'C'), so the winner now reads "Call away wins", not "Assign wins".
     await expect(page.getByTestId('btc-analysis-scenario-row-0')).toContainText(
-      'Assign wins',
+      'Call away wins',
     );
     await expect(page.getByTestId('btc-analysis-scenario-row-2')).toContainText(
       'BTC wins',
@@ -639,8 +640,9 @@ test.describe('BTC Analysis panel — decision math @e2e', () => {
     await expect(page.getByTestId('btc-analysis-guidance')).toContainText(
       'must rise above your BTC breakeven',
     );
+    // #363 bridge edit: covered-call guidance reads "called away", not "assign".
     await expect(page.getByTestId('btc-analysis-guidance')).toContainText(
-      'letting it assign keeps more',
+      'letting it get called away keeps more',
     );
   });
 
@@ -751,5 +753,62 @@ test.describe('BTC Analysis panel — decision math @e2e', () => {
       page.getByTestId('btc-analysis-scenario-table'),
     ).toHaveCount(0);
     await expect(panel).not.toContainText('NaN');
+  });
+});
+
+/**
+ * E2E for issue #363 — strategy-aware "called away" vs "assigned" terminology
+ * on the BTC Analysis section.
+ *
+ * The scenario math is identical for a short put and a short call; only the
+ * *outcome* terminology differs. A short call (covered call) finishing ITM has
+ * its shares "called away"; a short put has shares "assigned". The labels key
+ * off `leg.option_type` ("C" → call/CC, "P" → put/CSP). The populated scenario
+ * table renders for calls only today (v1.7.0 CC-scoped), so the call assertions
+ * exercise the full table; the put assertion exercises the analysis heading,
+ * which keeps "assign" vocabulary for the CSP strategy.
+ */
+test.describe('BTC Analysis terminology — called away vs assigned (#363) @e2e', () => {
+  test('covered-call (short call) leg uses "called away" terminology @e2e', async ({
+    page,
+  }) => {
+    // The default populated payload is a covered call (option_type 'C').
+    await mockBtcDetail(page, populatedPayload());
+    await openBtcDetail(page);
+
+    const panel = page.getByTestId('btc-analysis');
+    await expect(panel).toBeVisible();
+    // Heading, column header, and winner all read "called away", never "assign".
+    await expect(panel).toContainText('let called away vs. buy to close');
+    await expect(panel).toContainText('Let called away');
+    await expect(page.getByTestId('btc-analysis-scenario-row-0')).toContainText(
+      'Call away wins',
+    );
+    await expect(page.getByTestId('btc-analysis-guidance')).toContainText(
+      'letting the shares get called away',
+    );
+    // A covered call must NOT use the put-only "assign" vocabulary.
+    await expect(panel).not.toContainText('Assign wins');
+    await expect(panel).not.toContainText('let assign vs. buy to close');
+  });
+
+  test('cash-secured-put (short put) leg keeps "assigned" terminology @e2e', async ({
+    page,
+  }) => {
+    await mockBtcDetail(
+      page,
+      populatedPayload({
+        verdict: 'dte_review',
+        leg: { option_type: 'P', strike: 20.0 },
+        analysis: degradedAnalysisBlock(),
+      }),
+    );
+    await openBtcDetail(page);
+
+    const panel = page.getByTestId('btc-analysis');
+    await expect(panel).toBeVisible();
+    // The put heading keeps the "assign" vocabulary, not "called away".
+    await expect(panel).toContainText('let assign vs. buy to close');
+    await expect(panel).not.toContainText('let called away vs. buy to close');
   });
 });

@@ -6,9 +6,14 @@ Loki, no Grafana. The **existing prod Caddy** terminates TLS for `qa.<domain>`
 and reverse-proxies to the QA containers across a shared external Docker network
 (`caddy_net`) using the `qa-backend` / `qa-frontend` aliases.
 
-QA data is an on-demand restore of a prod backup snapshot. Observability is
-Axiom-only, routed to a dedicated dataset (`AXIOM_DATASET=regression-tool-qa`);
-`docker logs qa-backend` (json-file driver) is the fallback.
+QA data is **synthetic, seeded by `seed-qa`** — the sole QA data source as of
+ADR #359 / #360. The auto-seed runs on every QA deploy and performs an
+authoritative full reset (wipes positions/trades/stub rows, leaves
+auth/config/watchlist intact, then inserts the 7 v1.7 archetypes). Restoring a
+prod snapshot to QA is **retired** (see the deprecation note below). Observability
+is Axiom-only, routed to a dedicated dataset
+(`AXIOM_DATASET=regression-tool-qa`); `docker logs qa-backend` (json-file
+driver) is the fallback.
 
 This is the same-VPS precursor to #324 — every artifact here is forward-portable
 to a dedicated host.
@@ -97,11 +102,13 @@ possible.
    cd /root/regress-qa && bash deploy/qa-deploy.sh
    ```
 
-7. **Seed the QA DB** from the latest prod snapshot (run `deploy/backup.sh` on
-   prod first if there's no recent snapshot):
+7. **Seed the QA DB** synthetically (ADR #359 — QA is seeded, never restored
+   from prod). The QA deploy auto-seeds, so this is only needed for a manual
+   first-run before the first deploy:
 
    ```bash
-   cd /root/regress-qa && bash deploy/qa-refresh-db.sh
+   cd /root/regress-qa && docker compose -p regress-qa -f docker-compose.qa.yml \
+     exec -T qa-backend python -m app.cli seed-qa
    ```
 
 8. **Verify:**
@@ -116,15 +123,20 @@ possible.
 
 ## Routine operations
 
-**Refresh the QA DB from the latest prod snapshot** (idempotent, in-place
-overwrite — never accumulates copies):
+**Re-seed the QA DB** (synthetic, authoritative full reset — wipes all
+positions/trades/stub rows then inserts the 7 archetypes; idempotent, leaves
+auth/config/watchlist intact). This auto-runs on every QA deploy; run it
+manually only for an on-demand refresh:
 
 ```bash
-cd /root/regress-qa && bash deploy/qa-refresh-db.sh
-# Overrides:
-#   BACKUP_DIR=/path/to/backups bash deploy/qa-refresh-db.sh
-#   SNAPSHOT=/path/to/snap.db   bash deploy/qa-refresh-db.sh
+cd /root/regress-qa && docker compose -p regress-qa -f docker-compose.qa.yml \
+  exec -T qa-backend python -m app.cli seed-qa
 ```
+
+> **⚠️ `deploy/qa-refresh-db.sh` is DEPRECATED for QA (ADR #359 D1).** Restoring
+> a prod snapshot to QA is retired — QA is synthetic-only. The script is kept
+> (not deleted) because prod backup tooling may still reference
+> `backend/scripts/qa_snapshot.py`, but it must not be used to populate QA.
 
 **Update QA to the latest code:**
 
