@@ -4,6 +4,12 @@ set -euo pipefail
 # ============================================================
 # Regression Analysis Tool — Update Script
 # ============================================================
+#
+# Disk reclamation (#369): this script prunes dangling images at the end
+# (docker image prune -f). The CI deploy path additionally runs a bounded
+# build-cache prune (docker builder prune -f --filter until=168h). For a manual
+# full reclaim when the box is low on space, see deploy/RUNBOOK.md
+# ("Disk reclamation") — break-glass is `docker builder prune -af`.
 
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$APP_DIR"
@@ -49,6 +55,8 @@ docker compose -f docker-compose.prod.yml ps
 echo ""
 
 # Clean up old images
+# Build cache is pruned by the CI deploy (docker builder prune --filter
+# until=168h); for a manual full reclaim see deploy/RUNBOOK.md.
 echo ">>> Pruning old Docker images..."
 docker image prune -f
 echo ""
