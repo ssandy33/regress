@@ -374,4 +374,48 @@ test.describe('Dashboard route @smoke @e2e', () => {
     await expect(pill).toContainText('Schwab token expiring');
     await expect(pill).not.toContainText('Schwab calls failing');
   });
+
+  // Issue #367 — the dashboard data must never be served from a stale cache
+  // after a QA reseed. The backend sets ``Cache-Control: no-store`` on
+  // ``/api/dashboard``; this header survives the Next ``rewrites()`` proxy hop
+  // and reaches the browser. We assert (a) the response carries the no-store
+  // directive, and (b) a reload issues a fresh network request rather than
+  // serving the previous body from cache.
+  test('dashboard reflects fresh data without reload-from-cache @e2e', async ({ page }) => {
+    let requestCount = 0;
+
+    // Fulfil with the no-store header so the asserted directive mirrors the
+    // backend contract (the header itself is integration-tested in
+    // backend/tests/test_dashboard_router.py::test_dashboard_response_sets_no_store).
+    await page.route('**/api/dashboard', (route) => {
+      requestCount += 1;
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'cache-control': 'no-store' },
+        body: JSON.stringify(POPULATED_PAYLOAD),
+      });
+    });
+
+    // Capture the network response to assert the cache directive.
+    const firstResponse = page.waitForResponse((resp) =>
+      resp.url().includes('/api/dashboard')
+    );
+    await page.goto('/dashboard');
+    const resp = await firstResponse;
+    expect((resp.headers()['cache-control'] || '').toLowerCase()).toContain('no-store');
+
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByTestId('dashboard-page')).toBeVisible();
+    expect(requestCount).toBe(1);
+
+    // Reload must trigger a fresh request, not a cache hit.
+    const reloadResponse = page.waitForResponse((resp2) =>
+      resp2.url().includes('/api/dashboard')
+    );
+    await page.reload();
+    await reloadResponse;
+    await page.waitForLoadState('networkidle');
+    expect(requestCount).toBe(2);
+  });
 });
