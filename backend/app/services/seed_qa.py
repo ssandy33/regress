@@ -47,6 +47,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from app.config import settings
 from app.models.database import (
+    AppSetting,
     OptionMarkStub,
     Position,
     QuoteStub,
@@ -54,6 +55,7 @@ from app.models.database import (
     TradeEntryCompliance,
 )
 from app.services.backup import create_backup
+from app.services.encryption import ENCRYPTED_SETTING_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -334,15 +336,27 @@ def _full_reset(db: DBSession) -> None:
 
     Bulk-deletes every row from ``trade_entry_compliance`` (a FK child of
     ``trades``), ``trades``, ``positions``, ``quote_stubs``, and
-    ``option_mark_stubs`` — *not* only sentinel-tagged rows. This leaves
-    ``app_settings`` / ``sessions`` / ``watchlist`` untouched so QA stays
-    signed-in and configured (resolved blast radius, ADR #359 Q2).
+    ``option_mark_stubs`` — *not* only sentinel-tagged rows. This leaves the
+    rest of ``app_settings`` / ``sessions`` / ``watchlist`` untouched so QA
+    stays signed-in and configured (resolved blast radius, ADR #359 Q2).
 
     The deletes are ordered child-before-parent and use bulk ``query().delete()``
     rather than ORM-cascade deletes because (a) the project does not enable
     ``PRAGMA foreign_keys=ON`` so SQL-level cascade never fires, and (b) a bulk
     delete is the same pattern :func:`journal.clear_all_journal_data` uses for a
     large parent set.
+
+    **Schwab-token scrub (#379):** also clears the sensitive ``schwab_*`` token
+    keys (:data:`encryption.ENCRYPTED_SETTING_KEYS`) from ``app_settings``. QA
+    runs in no-Schwab mode (``SCHWAB_ENCRYPTION_KEY`` unset), and the backend's
+    startup security check (``app/main.py`` ``_run_security_checks``) fails closed
+    — crash-looping the container — if those tokens exist without a key. Stale
+    tokens can land in the persistent QA volume from a historical prod-snapshot
+    restore (predating the ``qa-refresh-db.sh`` #332 scrub) or a manual
+    ``schwab-auth``; without this scrub they survive every reseed and re-trip the
+    check. This mirrors the ``qa-refresh-db.sh`` #332 guard for the synthetic-seed
+    path. Only the 4 token keys are removed — ``schwab_*_expires`` /
+    ``schwab_account_value`` and all other settings are preserved.
 
     **SAFETY:** callers MUST invoke :func:`assert_seed_allowed` first — this
     function performs no guard of its own and is catastrophic on production.
@@ -352,6 +366,9 @@ def _full_reset(db: DBSession) -> None:
     db.query(Position).delete(synchronize_session=False)
     db.query(QuoteStub).delete(synchronize_session=False)
     db.query(OptionMarkStub).delete(synchronize_session=False)
+    db.query(AppSetting).filter(
+        AppSetting.key.in_(ENCRYPTED_SETTING_KEYS)
+    ).delete(synchronize_session=False)
     db.commit()
 
 
