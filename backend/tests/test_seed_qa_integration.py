@@ -28,6 +28,7 @@ from app.models.database import (
     WatchlistTicker,
 )
 from app.services import journal
+from app.services.encryption import ENCRYPTED_SETTING_KEYS
 from app.services.seed_qa import (
     EXPECTED_ARCHETYPE_COUNT,
     SEED_TAG_PREFIX,
@@ -188,6 +189,46 @@ def test_seed_full_reset_preserves_auth_config_watchlist(db_session):
     assert db_session.query(Session).count() == 1
     assert db_session.query(WatchlistTicker).filter_by(ticker="AAPL").count() == 1
     # And the archetypes seeded alongside the preserved state.
+    assert _seed_count(db_session) == EXPECTED_ARCHETYPE_COUNT
+
+
+@pytest.mark.integration
+def test_seed_full_reset_scrubs_schwab_tokens(db_session):
+    """#379: the reset clears the 4 sensitive ``schwab_*`` token keys from
+    app_settings (mirroring the ``qa-refresh-db.sh`` #332 scrub) so a QA reseed
+    can never leave the backend crash-looping on EncryptionKeyMissing. Stale
+    tokens otherwise survive every reseed because the reset preserves
+    app_settings. Non-sensitive ``schwab_*`` keys and unrelated settings stay.
+    """
+    # Stale sensitive tokens — the crash-loop trigger when no key is set.
+    for key in ENCRYPTED_SETTING_KEYS:
+        db_session.add(AppSetting(key=key, value="stale-encrypted-secret"))
+    # Non-sensitive schwab row + an unrelated setting that MUST survive.
+    db_session.add(AppSetting(key="schwab_access_token_expires", value="2026-01-01"))
+    db_session.add(AppSetting(key="rules_config", value="{}"))
+    db_session.commit()
+
+    with patch("app.services.seed_qa.settings") as mock_settings:
+        mock_settings.app_env = "qa"
+        seed_qa(db_session)
+
+    # All 4 sensitive token keys are scrubbed.
+    remaining = {
+        row.key
+        for row in db_session.query(AppSetting)
+        .filter(AppSetting.key.in_(ENCRYPTED_SETTING_KEYS))
+        .all()
+    }
+    assert remaining == set()
+    # Non-sensitive schwab key + unrelated setting preserved.
+    assert (
+        db_session.query(AppSetting)
+        .filter_by(key="schwab_access_token_expires")
+        .count()
+        == 1
+    )
+    assert db_session.query(AppSetting).filter_by(key="rules_config").count() == 1
+    # Archetypes still seeded alongside the scrub.
     assert _seed_count(db_session) == EXPECTED_ARCHETYPE_COUNT
 
 
