@@ -3,9 +3,12 @@
 QA (``qa.regression.shawnjsandy.com``) has no positions and no Schwab feed, so
 the v1.7 covered-call decision surfaces (#318 assignment-risk depth, #319 BTC
 panel, #320 per-share basis) cannot be validated there before promoting to prod.
-This module seeds seven synthetic position archetypes — plus the deterministic
+This module seeds eight synthetic position archetypes — plus the deterministic
 stub-pricing rows that light up the live-feed-dependent surfaces — so every v1.7
-acceptance criterion renders its intended state on QA.
+acceptance criterion renders its intended state on QA. The eighth archetype
+(``imported_equity_cc``, added in #382) demonstrates the v1.8.0 equity-import
+feature: bought-lot shares, dividend income, and a covered call written against
+the imported shares.
 
 **Prod safety (hard block, no override):** :func:`assert_seed_allowed` raises
 :class:`SeedGuardError` when ``settings.app_env == "production"`` *before any DB
@@ -15,11 +18,11 @@ synthetic data to the prod database.
 **Authoritative full reset (ADR #359 D2):** ``seed-qa`` on QA performs a
 **full reset** — it wipes *all* rows from ``positions`` / ``trades`` /
 ``quote_stubs`` / ``option_mark_stubs`` (plus ``trade_entry_compliance``, a FK
-child of ``trades``) and then inserts the seven archetypes. It deliberately
+child of ``trades``) and then inserts the eight archetypes. It deliberately
 leaves ``app_settings`` / ``sessions`` / ``watchlist`` untouched so QA stays
 signed-in and configured. Every run therefore yields exactly the archetypes:
-no manual prod-delete is ever needed again, and reseeding yields seven
-positions — not fourteen. This supersedes #349's additive "delete-only-tagged"
+no manual prod-delete is ever needed again, and reseeding yields eight
+positions — not sixteen. This supersedes #349's additive "delete-only-tagged"
 teardown, which assumed QA would never carry prod data.
 
 A rolling ``create_backup`` is taken before the destructive wipe as cheap undo
@@ -66,7 +69,7 @@ SEED_TAG_PREFIX: str = "__seed__:"
 
 # The expected number of archetypes a healthy seed run inserts. The deploy
 # auto-seed gate (ADR #359 D3) fails the deploy if the post-seed count differs.
-EXPECTED_ARCHETYPE_COUNT: int = 7
+EXPECTED_ARCHETYPE_COUNT: int = 8
 
 
 class SeedGuardError(Exception):
@@ -90,12 +93,21 @@ class StubMark:
 
 @dataclass(frozen=True)
 class SeedTrade:
-    """A synthetic trade ledger entry for an archetype position."""
+    """A synthetic trade ledger entry for an archetype position.
+
+    ``strike`` / ``expiration`` are ``None`` for equity rows (``buy_stock`` /
+    ``sell_stock`` / ``dividend``) — those carry no option leg (issue #382). The
+    equity money flows through ``unit_amount`` (per-share price for stock rows,
+    total dividend $ for dividend rows), mirroring the CSV-import contract in
+    :mod:`app.services.schwab_csv`. Option archetypes still pass ``strike`` /
+    ``expiration`` and leave ``unit_amount`` ``None``.
+    """
 
     trade_type: str
-    strike: float
-    expiration: str  # YYYY-MM-DD
     premium: float  # per-share, positive for credits
+    strike: float | None = None
+    expiration: str | None = None  # YYYY-MM-DD; None for equity/dividend rows
+    unit_amount: float | None = None  # per-share price (stock) or total $ (dividend)
     quantity: int = 1
     fees: float = 0.0
     closed_at: str | None = None
@@ -157,14 +169,14 @@ def _iso_date_in(days: int, *, now: datetime) -> str:
 
 
 def build_archetypes(now: datetime | None = None) -> list[Archetype]:
-    """Construct the seven synthetic archetypes with DTE-relative expirations.
+    """Construct the eight synthetic archetypes with DTE-relative expirations.
 
     ``now`` is injectable for deterministic tests; production callers omit it
     and get ``datetime.now(timezone.utc)``. Returns a fresh list each call (the
     expirations depend on ``now``), but the *shape* — keys, tickers, strategy,
     intended state — is frozen.
 
-    Archetype matrix (issue #349 plan §3):
+    Archetype matrix (issue #349 plan §3; #382 added archetype 8):
 
     1. Deep-ITM short call, >14 DTE, δ≈0.90 → #318 **High** (depth axis).
     2. NTM short call, ≤14 DTE, ITM, δ≈0.55 → #318 **Watch** (timing axis).
@@ -176,6 +188,9 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
     6. Covered call, no live option mark → #319 degraded ``"—"`` sentinel,
        ``pricing_source="unavailable"`` (quote seeded, mark omitted).
     7. Multi-share equity, premium-bearing trades → #320 adjusted/sh ≠ broker/sh.
+    8. Imported equity + dividend + CC against the bought lot → #382 equity
+       import feature: two ``buy_stock`` lots, a ``dividend`` income row, and a
+       short call covering the imported shares (#390 proof).
     """
     now = now or datetime.now(timezone.utc)
     far = _iso_date_in(30, now=now)  # > 14 DTE
@@ -307,6 +322,52 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
             quote_price=78.0,
             marks=[],
         ),
+        # 8 — Imported equity (#382): bought-lot shares + dividend income + a CC
+        # written against the imported shares (#390 proof). Two stock buys at
+        # distinct prices give a weighted-avg $12/sh broker basis, a qualified
+        # dividend records cash income, and a 2-contract short call fully covers
+        # the 200 shares so the BTC/CC panel populates against the bought lot.
+        Archetype(
+            key="imported_equity_cc",
+            ticker="SEEDH",
+            shares=200,
+            broker_cost_basis=2400.0,  # weighted avg $12/sh across the two lots
+            strategy="cc",
+            intended_state="#382 imported shares + dividend income + CC against bought lot",
+            trades=[
+                SeedTrade(
+                    "buy_stock",
+                    premium=0.0,
+                    unit_amount=11.0,
+                    quantity=100,
+                ),
+                SeedTrade(
+                    "buy_stock",
+                    premium=0.0,
+                    unit_amount=13.0,
+                    quantity=100,
+                ),
+                SeedTrade(
+                    "dividend",
+                    premium=0.0,
+                    unit_amount=30.0,
+                    quantity=0,
+                    close_reason="Qualified Dividend",
+                ),
+                # Short call covering the imported 200 shares (2 contracts).
+                SeedTrade(
+                    "sell_call",
+                    strike=15.0,
+                    expiration=far,
+                    premium=1.5,
+                    quantity=2,
+                ),
+            ],
+            quote_price=13.5,  # below the 15 strike → OTM, unrealized P&L renders
+            marks=[
+                StubMark(15.0, far, "call", mid=0.40, delta=0.30),
+            ],
+        ),
     ]
 
 
@@ -402,6 +463,7 @@ def _insert_archetype(db: DBSession, archetype: Archetype, *, now: datetime) -> 
                 trade_type=spec.trade_type,
                 strike=spec.strike,
                 expiration=spec.expiration,
+                unit_amount=spec.unit_amount,
                 premium=spec.premium,
                 fees=spec.fees,
                 quantity=spec.quantity,
@@ -434,12 +496,12 @@ def _insert_archetype(db: DBSession, archetype: Archetype, *, now: datetime) -> 
 
 
 def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
-    """Seed QA with the seven synthetic archetypes + stub-pricing rows.
+    """Seed QA with the eight synthetic archetypes + stub-pricing rows.
 
     Guards against production first (raising :class:`SeedGuardError` before any
     read or write), then performs an **authoritative full reset** (ADR #359 D2):
     a rolling ``create_backup`` is taken, ALL position/trade/stub rows are wiped
-    (``app_settings`` / ``sessions`` / ``watchlist`` preserved), and the seven
+    (``app_settings`` / ``sessions`` / ``watchlist`` preserved), and the eight
     archetypes are inserted. A per-archetype insert failure is collected (its key
     added to ``SeedResult.failed_archetypes``) and the run continues, so one bad
     archetype does not abort the rest; the CLI exits non-zero when any failed.

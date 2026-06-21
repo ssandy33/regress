@@ -468,15 +468,107 @@ def test_zero_shares_rejected():
 
 
 @pytest.mark.unit
-def test_invalid_close_reason_rejected():
-    """Invalid close_reason should be rejected by Pydantic."""
+def test_option_trade_requires_strike_and_expiration():
+    """Option trade_types must carry strike + expiration (issue #382 relaxed
+    them to Optional for equity, but the recomputer still dereferences
+    float(trade.strike) on option branches — CodeRabbit, PR #392)."""
     with pytest.raises(ValidationError):
         TradeCreate(
-            position_id="some-id",
+            position_id="p",
             trade_type="sell_put",
-            strike=48.0,
-            expiration="2025-02-21",
-            premium=1.50,
-            opened_at="2025-01-15T10:00:00Z",
-            close_reason="invalid_reason",
+            strike=None,
+            expiration="2026-03-27",
+            premium=1.5,
+            opened_at="2026-03-01T00:00:00Z",
         )
+    with pytest.raises(ValidationError):
+        TradeCreate(
+            position_id="p",
+            trade_type="sell_call",
+            strike=50.0,
+            expiration=None,
+            premium=1.5,
+            opened_at="2026-03-01T00:00:00Z",
+        )
+
+
+@pytest.mark.unit
+def test_equity_trade_allows_null_strike_and_expiration():
+    """Equity/dividend trade_types validate with null strike/expiration."""
+    trade = TradeCreate(
+        position_id="p",
+        trade_type="buy_stock",
+        premium=0.0,
+        unit_amount=11.0,
+        quantity=100,
+        opened_at="2026-03-01T00:00:00Z",
+    )
+    assert trade.strike is None and trade.expiration is None
+
+
+@pytest.mark.unit
+def test_freetext_close_reason_accepted():
+    """close_reason is free-text (issue #382), not the CLOSE_REASONS enum, so it
+    can carry a Schwab dividend sub-type label (e.g. "Qualified Dividend") for
+    future tax-bucket recovery. An arbitrary string validates."""
+    trade = TradeCreate(
+        position_id="some-id",
+        trade_type="dividend",
+        premium=0.0,
+        unit_amount=42.0,
+        quantity=0,
+        opened_at="2025-01-15T10:00:00Z",
+        close_reason="Qualified Dividend",
+    )
+    assert trade.close_reason == "Qualified Dividend"
+
+
+@pytest.mark.integration
+def test_create_buy_stock_trade_persists_unit_amount(db_session):
+    """Gap #1 (issue #386): create_trade must persist unit_amount.
+
+    Before the fix, ``Trade(...)`` was built without ``unit_amount``, so every
+    equity row persisted NULL and the recomputer replayed zero basis. This locks
+    the round-trip: a created buy_stock trade reads its per-share unit_amount
+    back off the ORM row.
+    """
+    from app.models.database import Trade
+
+    pos = _create_sample_position(db_session)
+    created = _create_sample_trade(
+        db_session,
+        pos["id"],
+        trade_type="buy_stock",
+        strike=None,
+        expiration=None,
+        premium=0.0,
+        unit_amount=123.45,
+        quantity=100,
+    )
+    assert created is not None
+    row = db_session.query(Trade).filter(Trade.id == created["id"]).first()
+    assert row is not None
+    assert row.unit_amount == pytest.approx(123.45)
+
+
+@pytest.mark.integration
+def test_create_dividend_trade_persists_unit_amount(db_session):
+    """A dividend row round-trips its total-$ unit_amount (issue #387)."""
+    from app.models.database import Trade
+
+    pos = _create_sample_position(db_session)
+    created = _create_sample_trade(
+        db_session,
+        pos["id"],
+        trade_type="dividend",
+        strike=None,
+        expiration=None,
+        premium=0.0,
+        unit_amount=42.0,
+        quantity=0,
+        close_reason="Qualified Dividend",
+    )
+    assert created is not None
+    row = db_session.query(Trade).filter(Trade.id == created["id"]).first()
+    assert row.unit_amount == pytest.approx(42.0)
+    assert row.close_reason == "Qualified Dividend"

@@ -115,6 +115,10 @@ class TestImportExecute:
         assert data["imported"] == 2
         assert data["skipped_duplicates"] == 0
         assert data["positions_created"] == 2  # AAPL + MSFT
+        # Issue #388: ImportResultResponse always carries skipped_unmatched;
+        # an options-only import leaves it empty (the contract serializes
+        # unchanged for existing callers).
+        assert data["skipped_unmatched"] == []
 
         # Verify trades exist in DB
         positions_resp = client.get("/api/journal/positions")

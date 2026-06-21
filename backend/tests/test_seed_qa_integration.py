@@ -82,14 +82,18 @@ def _seed_count(db) -> int:
 
 @pytest.mark.integration
 @pytest.mark.ac("349-AC9")
-def test_seed_inserts_all_seven_archetypes(db_session):
-    """AC: all archetypes present — seven seeded positions after a seed run."""
+def test_seed_inserts_all_archetypes(db_session):
+    """AC: all archetypes present — every archetype seeded after a seed run.
+
+    Was seven through v1.7; #382 added an eighth (``imported_equity_cc``). The
+    count is anchored to ``EXPECTED_ARCHETYPE_COUNT`` so it tracks the list.
+    """
     with patch("app.services.seed_qa.settings") as mock_settings:
         mock_settings.app_env = "qa"
         result = seed_qa(db_session)
-    assert result.positions_seeded == 7
+    assert result.positions_seeded == EXPECTED_ARCHETYPE_COUNT
     assert result.ok
-    assert _seed_count(db_session) == 7
+    assert _seed_count(db_session) == EXPECTED_ARCHETYPE_COUNT
     # Stub rows seeded for the feed-dependent archetypes.
     assert db_session.query(QuoteStub).count() >= 1
     assert db_session.query(OptionMarkStub).count() >= 1
@@ -98,13 +102,13 @@ def test_seed_inserts_all_seven_archetypes(db_session):
 @pytest.mark.integration
 @pytest.mark.ac("349-AC8")
 def test_seed_is_idempotent(db_session):
-    """AC: repeatable reseed — running twice yields 7 positions, not 14."""
+    """AC: repeatable reseed — running twice yields the archetype count, not 2×."""
     with patch("app.services.seed_qa.settings") as mock_settings:
         mock_settings.app_env = "qa"
         seed_qa(db_session)
         quotes_after_first = db_session.query(QuoteStub).count()
         seed_qa(db_session)
-    assert _seed_count(db_session) == 7
+    assert _seed_count(db_session) == EXPECTED_ARCHETYPE_COUNT
     # Stub rows are also reset, not doubled.
     assert db_session.query(QuoteStub).count() == quotes_after_first
 
@@ -271,8 +275,8 @@ def test_seed_nonzero_exit_on_archetype_failure(db_session):
 
     assert not result.ok
     assert "otm_call" in result.failed_archetypes
-    # The other six still seeded.
-    assert result.positions_seeded == 6
+    # Every other archetype still seeded (all but the one forced failure).
+    assert result.positions_seeded == EXPECTED_ARCHETYPE_COUNT - 1
 
 
 @pytest.mark.integration
@@ -308,6 +312,50 @@ def test_equity_archetype_adjusted_basis_differs_from_broker(db_session):
         response["adjusted_cost_basis_per_share"]
         != response["broker_cost_basis_per_share"]
     )
+
+
+@pytest.mark.integration
+@pytest.mark.ac("382-AC2")
+def test_imported_equity_archetype_persists_with_unit_amounts(db_session):
+    """Archetype 8 (#382): SEEDH seeds with 200 shares, $2400 basis, and equity
+    trades whose ``unit_amount`` persists (not NULL).
+
+    Proves the equity-import seed lands: two ``buy_stock`` lots at 11.0/13.0, a
+    qualified ``dividend`` income row at 30.0, and a covering ``sell_call`` — and
+    that the per-share/dividend money round-trips through the nullable
+    ``trades.unit_amount`` column rather than being dropped.
+    """
+    with patch("app.services.seed_qa.settings") as mock_settings:
+        mock_settings.app_env = "qa"
+        seed_qa(db_session)
+
+    position = (
+        db_session.query(Position).filter(Position.ticker == "SEEDH").first()
+    )
+    assert position is not None
+    assert position.shares == 200
+    assert position.broker_cost_basis == 2400.0
+    assert position.strategy == "cc"
+
+    trades = (
+        db_session.query(Trade).filter(Trade.position_id == position.id).all()
+    )
+    buys = [t for t in trades if t.trade_type == "buy_stock"]
+    assert len(buys) == 2
+    # unit_amount persists (not NULL) — the equity money round-trips.
+    assert {t.unit_amount for t in buys} == {11.0, 13.0}
+    assert all(t.unit_amount is not None for t in buys)
+    assert all(t.strike is None and t.expiration is None for t in buys)
+
+    dividends = [t for t in trades if t.trade_type == "dividend"]
+    assert len(dividends) == 1
+    assert dividends[0].close_reason == "Qualified Dividend"
+    assert dividends[0].unit_amount == 30.0
+
+    calls = [t for t in trades if t.trade_type == "sell_call"]
+    assert len(calls) == 1
+    assert calls[0].strike == 15.0
+    assert calls[0].quantity == 2
 
 
 @pytest.mark.integration

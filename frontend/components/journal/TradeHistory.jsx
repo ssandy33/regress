@@ -9,7 +9,29 @@ const TYPE_LABELS = {
   sell_call: 'Sell Call',
   buy_call_close: 'Buy Call Close',
   called_away: 'Called Away',
+  // --- equity (issue #389) ---
+  buy_stock: 'Stock Buy',
+  sell_stock: 'Stock Sell',
+  dividend: 'Dividend',
 };
+
+const EQUITY_TYPES = new Set(['buy_stock', 'sell_stock', 'dividend']);
+
+const EQUITY_PILL_CLASSES = {
+  buy_stock: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  sell_stock: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+  dividend: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
+};
+
+// Accessible "this column does not apply to this row kind" placeholder (#389).
+function NotApplicable() {
+  return (
+    <span data-testid="na-placeholder" className="text-slate-400 dark:text-slate-500">
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">Not applicable</span>
+    </span>
+  );
+}
 
 const REASON_LABELS = {
   fifty_pct_target: '50% Target',
@@ -141,16 +163,51 @@ export default function TradeHistory({
             </tr>
           </thead>
           <tbody>
-            {(position.trades || []).map((t) => (
-              <tr key={t.id} data-testid="trade-row" className="border-b border-slate-100 dark:border-slate-700">
+            {(position.trades || []).map((t) => {
+              const isEquity = EQUITY_TYPES.has(t.trade_type);
+              const isDividend = t.trade_type === 'dividend';
+              return (
+              <tr
+                key={t.id}
+                data-testid={isEquity ? 'equity-row' : 'trade-row'}
+                className="border-b border-slate-100 dark:border-slate-700"
+              >
                 <td className="px-4 py-2 text-slate-700 dark:text-slate-300">{t.opened_at?.split('T')[0]}</td>
-                <td className="px-4 py-2 text-slate-700 dark:text-slate-300">{TYPE_LABELS[t.trade_type] || t.trade_type}</td>
-                <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-300">{formatCurrency(t.strike)}</td>
-                <td className="px-4 py-2 text-slate-700 dark:text-slate-300">{t.expiration}</td>
-                <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-300">{formatCurrency(t.premium)}</td>
+                <td className="px-4 py-2 text-slate-700 dark:text-slate-300">
+                  {isEquity ? (
+                    <span
+                      data-testid="row-type-badge"
+                      className={`px-2 py-0.5 text-xs font-medium rounded-full ${EQUITY_PILL_CLASSES[t.trade_type]}`}
+                    >
+                      {TYPE_LABELS[t.trade_type] || t.trade_type}
+                    </span>
+                  ) : (
+                    TYPE_LABELS[t.trade_type] || t.trade_type
+                  )}
+                </td>
+                <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-300">
+                  {isEquity ? <NotApplicable /> : formatCurrency(t.strike)}
+                </td>
+                <td className="px-4 py-2 text-slate-700 dark:text-slate-300">
+                  {isEquity ? <NotApplicable /> : t.expiration}
+                </td>
+                <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-300">
+                  {isEquity ? (
+                    <>
+                      {formatCurrency(t.unit_amount)}
+                      {!isDividend && (
+                        <span className="text-slate-400 dark:text-slate-500">/sh</span>
+                      )}
+                    </>
+                  ) : (
+                    formatCurrency(t.premium)
+                  )}
+                </td>
                 <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-300">{formatCurrency(t.fees)}</td>
-                <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-300">{t.quantity}</td>
-                <td className="px-4 py-2 text-slate-500 dark:text-slate-400">{REASON_LABELS[t.close_reason] || '--'}</td>
+                <td className="px-4 py-2 text-right text-slate-700 dark:text-slate-300">
+                  {isDividend ? <NotApplicable /> : t.quantity}
+                </td>
+                <td className="px-4 py-2 text-slate-500 dark:text-slate-400">{REASON_LABELS[t.close_reason] || t.close_reason || '--'}</td>
                 <td className="px-4 py-2">
                   <button
                     data-testid="trade-delete-btn"
@@ -161,7 +218,8 @@ export default function TradeHistory({
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -171,15 +229,26 @@ export default function TradeHistory({
           title="Delete trade?"
           message={
             pendingDeleteTrade ? (
-              <p>
-                Delete this{' '}
-                <strong>
-                  {TYPE_LABELS[pendingDeleteTrade.trade_type] || pendingDeleteTrade.trade_type}
-                </strong>{' '}
-                at strike {formatCurrency(pendingDeleteTrade.strike)} on{' '}
-                {pendingDeleteTrade.expiration}? The position and its other trades remain
-                intact.
-              </p>
+              EQUITY_TYPES.has(pendingDeleteTrade.trade_type) ? (
+                <p>
+                  Delete this{' '}
+                  <strong>
+                    {TYPE_LABELS[pendingDeleteTrade.trade_type] || pendingDeleteTrade.trade_type}
+                  </strong>{' '}
+                  for {position.ticker} on {pendingDeleteTrade.opened_at?.split('T')[0]}? The
+                  position and its other trades remain intact.
+                </p>
+              ) : (
+                <p>
+                  Delete this{' '}
+                  <strong>
+                    {TYPE_LABELS[pendingDeleteTrade.trade_type] || pendingDeleteTrade.trade_type}
+                  </strong>{' '}
+                  at strike {formatCurrency(pendingDeleteTrade.strike)} on{' '}
+                  {pendingDeleteTrade.expiration}? The position and its other trades remain
+                  intact.
+                </p>
+              )
             ) : (
               <p>Delete this trade? The position and its other trades remain intact.</p>
             )

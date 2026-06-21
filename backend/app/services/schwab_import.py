@@ -143,28 +143,81 @@ def _extract_fees(txn: dict) -> float:
     return float(fees or 0)
 
 
+# Equity / dividend trade types. These rows carry ``strike=None`` and
+# ``expiration=None``, so the option dedup 5-tuple (ticker, strike, expiration,
+# trade_type, opened_at) collapses to (ticker, trade_type, opened_at) for them —
+# two same-day buys at different prices or quantities would dedup to one. The
+# equity dedup key is therefore widened with a discriminator (issue #388).
+_EQUITY_TRADE_TYPES = frozenset({"buy_stock", "sell_stock", "dividend"})
+
+
 def is_duplicate(
     db: Session,
     ticker: str,
-    strike: float,
-    expiration: str,
+    strike: float | None,
+    expiration: str | None,
     trade_type: str,
     opened_at: str,
+    unit_amount: float | None = None,
+    quantity: int | None = None,
+    close_reason: str | None = None,
 ) -> bool:
-    """Check if a matching trade already exists in the journal."""
-    result = (
+    """Check if a matching trade already exists in the journal.
+
+    Option rows dedup on the historical 5-tuple ``(ticker, strike, expiration,
+    trade_type, opened_at)`` — byte-for-byte unchanged.
+
+    Equity / dividend rows (``trade_type`` in :data:`_EQUITY_TRADE_TYPES`) carry
+    ``strike=None`` / ``expiration=None``, so that 5-tuple collapses to
+    ``(ticker, trade_type, opened_at)`` and would wrongly merge two same-day
+    buys at different prices/quantities, or a same-day cash + qualified dividend.
+    For those rows the key is widened with a V1-freeze discriminator —
+    ``unit_amount + quantity + close_reason`` — because no Schwab transaction-id
+    column exists on the ``trades`` table to dedup on (PRD #384, confirmed).
+    NULL columns are matched with ``IS NULL`` (``.is_(None)``) rather than
+    ``== None`` so SQLAlchemy emits the correct predicate.
+    """
+    query = (
         db.query(Trade)
         .join(Position, Trade.position_id == Position.id)
         .filter(
             Position.ticker == ticker,
-            Trade.strike == strike,
-            Trade.expiration == expiration,
             Trade.trade_type == trade_type,
             Trade.opened_at == opened_at,
         )
-        .first()
     )
-    return result is not None
+
+    # Strike / expiration: ``.is_(None)`` when absent (equity rows), else ``==``.
+    query = query.filter(
+        Trade.strike.is_(None) if strike is None else Trade.strike == strike
+    )
+    query = query.filter(
+        Trade.expiration.is_(None)
+        if expiration is None
+        else Trade.expiration == expiration
+    )
+
+    if trade_type in _EQUITY_TRADE_TYPES:
+        # Equity discriminator: keeps AC6a (different price), AC6b (different
+        # quantity), and AC6c (same-day cash vs qualified dividend, which differ
+        # only by close_reason) from collapsing.
+        query = query.filter(
+            Trade.unit_amount.is_(None)
+            if unit_amount is None
+            else Trade.unit_amount == unit_amount
+        )
+        query = query.filter(
+            Trade.quantity.is_(None)
+            if quantity is None
+            else Trade.quantity == quantity
+        )
+        query = query.filter(
+            Trade.close_reason.is_(None)
+            if close_reason is None
+            else Trade.close_reason == close_reason
+        )
+
+    return query.first() is not None
 
 
 def build_preview(
@@ -187,10 +240,13 @@ def build_preview(
         dup = is_duplicate(
             db,
             mapped["ticker"],
-            mapped["strike"],
-            mapped["expiration"],
+            mapped.get("strike"),
+            mapped.get("expiration"),
             mapped["trade_type"],
             mapped["opened_at"],
+            unit_amount=mapped.get("unit_amount"),
+            quantity=mapped.get("quantity"),
+            close_reason=mapped.get("close_reason"),
         )
         if dup:
             duplicates += 1
@@ -223,6 +279,13 @@ def execute_mapped_import(
     ticker to derive ``status`` / ``shares`` / ``broker_cost_basis`` /
     ``closed_at`` / ``strategy`` from the trade ledger.
 
+    Equity sells that have no shares to draw on (the running balance of existing
+    open-position shares plus buys earlier in the same import cannot cover them)
+    are skipped at import time rather than inserted (issue #388 / PRD #384 AC3c).
+    This is the user-visible half of the recomputer's defensive
+    ``shares_sold > shares`` guard: the skipped rows are returned in
+    ``skipped_unmatched`` so the UI can surface the warning.
+
     Shared between the Schwab API import path and the CSV upload import path.
     """
     imported = 0
@@ -230,22 +293,74 @@ def execute_mapped_import(
     positions_created = 0
     touched_position_ids: list[str] = []
     seen_position_ids: set[str] = set()
+    skipped_unmatched: list[dict] = []
+
+    # Per-ticker running share balance, seeded from each ticker's existing open
+    # position so an equity sell can legitimately draw on already-owned /
+    # assigned shares. Lazily populated the first time a ticker is seen.
+    running_shares: dict[str, int] = {}
+
+    def _seed_running_shares(ticker: str) -> int:
+        if ticker not in running_shares:
+            existing = (
+                db.query(Position)
+                .filter(Position.ticker == ticker, Position.status == "open")
+                .order_by(Position.opened_at.desc())
+                .first()
+            )
+            running_shares[ticker] = existing.shares if existing else 0
+        return running_shares[ticker]
 
     for mapped in mapped_trades:
+        ticker = mapped["ticker"]
+        trade_type = mapped["trade_type"]
+        quantity = mapped.get("quantity") or 0
+
         if is_duplicate(
             db,
-            mapped["ticker"],
-            mapped["strike"],
-            mapped["expiration"],
-            mapped["trade_type"],
+            ticker,
+            mapped.get("strike"),
+            mapped.get("expiration"),
+            trade_type,
             mapped["opened_at"],
+            unit_amount=mapped.get("unit_amount"),
+            quantity=mapped.get("quantity"),
+            close_reason=mapped.get("close_reason"),
         ):
+            # A duplicate equity row is already reflected in the existing
+            # position's share balance — do NOT touch ``running_shares``.
             skipped += 1
             continue
 
+        # Unmatched-sell pre-check (AC3c): an equity sell with no shares to draw
+        # from is skipped and recorded, never inserted (prevents negative shares
+        # at the user-visible layer). Buys grow the running balance.
+        if trade_type == "buy_stock":
+            running_shares[ticker] = _seed_running_shares(ticker) + quantity
+        elif trade_type == "sell_stock":
+            available = _seed_running_shares(ticker)
+            if quantity > available:
+                logger.warning(
+                    "Skipping unmatched equity sell with no shares to draw on",
+                    extra={
+                        "event": "equity_import.unmatched_sell",
+                        "outcome": "no_data",
+                        "ticker": ticker,
+                    },
+                )
+                skipped_unmatched.append(
+                    {
+                        "ticker": ticker,
+                        "opened_at": mapped["opened_at"],
+                        "quantity": quantity,
+                    }
+                )
+                continue
+            running_shares[ticker] = available - quantity
+
         position = (
             db.query(Position)
-            .filter(Position.ticker == mapped["ticker"], Position.status == "open")
+            .filter(Position.ticker == ticker, Position.status == "open")
             .order_by(Position.opened_at.desc())
             .first()
         )
@@ -255,7 +370,7 @@ def execute_mapped_import(
             # ``strategy`` is seeded with the journal-service default in
             # ``create_position`` and recomputed in the finalizer.
             pos_data = PositionCreate(
-                ticker=mapped["ticker"],
+                ticker=ticker,
                 shares=1,  # ge=1 schema constraint; real value comes from recomputer
                 broker_cost_basis=0.0,
                 opened_at=mapped["opened_at"],
@@ -266,13 +381,19 @@ def execute_mapped_import(
 
         trade_data = TradeCreate(
             position_id=position.id,
-            trade_type=mapped["trade_type"],
-            strike=mapped["strike"],
-            expiration=mapped["expiration"],
+            trade_type=trade_type,
+            strike=mapped.get("strike"),
+            expiration=mapped.get("expiration"),
             premium=mapped["premium"],
+            # Gap #2 (issue #388): equity per-unit money and the dividend
+            # sub-type were previously dropped on import. Plumb them through so
+            # buy_stock/sell_stock round-trip ``unit_amount`` and dividend rows
+            # round-trip ``close_reason`` (the raw Schwab sub-type).
+            unit_amount=mapped.get("unit_amount"),
             fees=mapped["fees"],
             quantity=mapped["quantity"],
             opened_at=mapped["opened_at"],
+            close_reason=mapped.get("close_reason"),
         )
         create_trade(db, trade_data)
         imported += 1
@@ -293,6 +414,7 @@ def execute_mapped_import(
         "imported": imported,
         "skipped_duplicates": skipped,
         "positions_created": positions_created,
+        "skipped_unmatched": skipped_unmatched,
     }
 
 

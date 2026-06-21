@@ -2,7 +2,7 @@ from typing import Literal, Optional
 
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DateRange(BaseModel):
@@ -360,6 +360,11 @@ TRADE_TYPES = Literal[
     "buy_call_close",
     "called_away",
     "expired",
+    # Equity / dividend rows (issue #382). These carry NULL strike/expiration,
+    # premium=0.0, and route their per-unit money through ``unit_amount``.
+    "buy_stock",
+    "sell_stock",
+    "dividend",
 ]
 CLOSE_REASONS = Literal["fifty_pct_target", "full_expiration", "rolled", "closed_early", "assigned", "called_away"]
 
@@ -399,14 +404,25 @@ class PositionUpdate(BaseModel):
 class TradeCreate(BaseModel):
     position_id: str
     trade_type: TRADE_TYPES
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382): a stock buy/sell or a
+    # dividend has no option strike/expiration. Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows (issue #382): per-share cost
+    # (buy_stock/sell_stock) or total dividend $ (dividend). None for option rows.
+    unit_amount: Optional[float] = None
     fees: float = 0.0
-    quantity: int = Field(default=1, ge=1)
+    # ``quantity`` is the share count for buy_stock/sell_stock and 0 for
+    # dividend rows; ge=0 (relaxed from ge=1) so a dividend's zero quantity
+    # validates (issue #382). Option rows still pass a contract count >= 1.
+    quantity: int = Field(default=1, ge=0)
     opened_at: str
     closed_at: Optional[str] = None
-    close_reason: Optional[CLOSE_REASONS] = None
+    # Free-text rather than the CLOSE_REASONS literal because dividend rows
+    # store the Schwab sub-type label (e.g. "Qualified Dividend") here (issue
+    # #382, Q3) so future tax-bucket reporting can recover it without a re-import.
+    close_reason: Optional[str] = None
     # Entry-compliance hints (issue #160 / Quality v1 Wave 3). All three are
     # optional and default to None for back-compat — Schwab-imported trades
     # never carry them. When provided on a sell_put / sell_call trade they
@@ -423,6 +439,28 @@ class TradeCreate(BaseModel):
     dte_at_entry_hint: Optional[int] = Field(default=None, ge=0)
     delta_at_entry_hint: Optional[float] = Field(default=None, allow_inf_nan=False)
     earnings_buffer_days_hint: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _require_strike_expiration_for_options(self) -> "TradeCreate":
+        """Option rows must carry strike + expiration; equity rows must not.
+
+        ``strike``/``expiration`` were relaxed to Optional for equity import
+        (issue #382), but the position recomputer still dereferences
+        ``float(trade.strike)`` on every option branch. Without this guard a
+        manually-created option trade (e.g. ``sell_put``) with a null strike
+        would validate here and then crash recompute. Equity/dividend rows
+        (``buy_stock``/``sell_stock``/``dividend``) legitimately leave both
+        None (CodeRabbit, PR #392).
+        """
+        equity_types = {"buy_stock", "sell_stock", "dividend"}
+        if self.trade_type not in equity_types:
+            if self.strike is None:
+                raise ValueError(f"strike is required for trade_type {self.trade_type!r}")
+            if self.expiration is None:
+                raise ValueError(
+                    f"expiration is required for trade_type {self.trade_type!r}"
+                )
+        return self
 
 
 class TradeUpdate(BaseModel):
@@ -441,9 +479,15 @@ class TradeResponse(BaseModel):
     id: str
     position_id: str
     trade_type: str
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382/#386): a stock buy/sell or a
+    # dividend has no option strike/expiration. The journal UI renders these as
+    # an N/A placeholder (issue #389). Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows: per-share cost (buy_stock/
+    # sell_stock) or total dividend $ (dividend). None for option rows (#386).
+    unit_amount: Optional[float] = None
     fees: float
     quantity: int
     opened_at: str
@@ -519,6 +563,11 @@ class PositionResponse(BaseModel):
     broker_cost_basis_per_share: Optional[float] = None
     adjusted_cost_basis_per_share: Optional[float] = None
     min_compliant_cc_strike: float
+    # Equity realized P&L and dividend income (issues #386/#387, ADR #391):
+    # derived at read time from the trade ledger, never stored. Default 0.0 so
+    # options-only positions serialize unchanged.
+    realized_equity_pl: float = 0.0
+    dividend_income: float = 0.0
     trades: list[TradeResponse] = []
 
 
@@ -532,12 +581,21 @@ class PositionListResponse(BaseModel):
 class ImportPreviewTrade(BaseModel):
     ticker: str
     trade_type: TRADE_TYPES
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382/#385): a stock buy/sell or a
+    # dividend has no option strike/expiration. The preview UI renders these as
+    # an N/A placeholder (issue #389). Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows (issue #385): per-share cost
+    # (buy_stock/sell_stock) or total dividend $ (dividend). None for option rows.
+    unit_amount: Optional[float] = None
     fees: float
     quantity: int
     opened_at: str
+    # Holds the raw Schwab dividend sub-type (e.g. "Qualified Dividend") on
+    # dividend rows; None otherwise (issue #385, PRD #384 Q1).
+    close_reason: Optional[str] = None
     is_duplicate: bool
 
 
@@ -570,10 +628,29 @@ class ImportRequest(BaseModel):
         return v
 
 
+class SkippedUnmatched(BaseModel):
+    """An equity sell skipped at import because no shares were available to draw on.
+
+    Surfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the
+    user sees *why* a sell row was not inserted instead of silently dropping it.
+    The import-time pre-check is the user-visible half of the recomputer's
+    defensive ``shares_sold > shares`` guard.
+    """
+
+    ticker: str
+    opened_at: str
+    quantity: int
+
+
 class ImportResultResponse(BaseModel):
     imported: int
     skipped_duplicates: int
     positions_created: int
+    # Equity sells dropped because the running share balance (existing open
+    # position shares + buys earlier in the same import) could not cover them
+    # (issue #388 / PRD #384 AC3c). Defaults empty so option-only imports
+    # serialize unchanged.
+    skipped_unmatched: list[SkippedUnmatched] = []
 
 
 class ClearJournalResponse(BaseModel):
