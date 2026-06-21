@@ -3488,6 +3488,11 @@
             ],
             "title": "Closed At"
           },
+          "dividend_income": {
+            "default": 0.0,
+            "title": "Dividend Income",
+            "type": "number"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -3510,6 +3515,11 @@
           "opened_at": {
             "title": "Opened At",
             "type": "string"
+          },
+          "realized_equity_pl": {
+            "default": 0.0,
+            "title": "Realized Equity Pl",
+            "type": "number"
           },
           "shares": {
             "title": "Shares",

@@ -2812,6 +2812,11 @@ export interface components {
             broker_cost_basis_per_share?: number | null;
             /** Closed At */
             closed_at?: string | null;
+            /**
+             * Dividend Income
+             * @default 0
+             */
+            dividend_income: number;
             /** Id */
             id: string;
             /** Min Compliant Cc Strike */
@@ -2820,6 +2825,11 @@ export interface components {
             notes?: string | null;
             /** Opened At */
             opened_at: string;
+            /**
+             * Realized Equity Pl
+             * @default 0
+             */
+            realized_equity_pl: number;
             /** Shares */
             shares: number;
             /** Status */
