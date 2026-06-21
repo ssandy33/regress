@@ -360,6 +360,11 @@ TRADE_TYPES = Literal[
     "buy_call_close",
     "called_away",
     "expired",
+    # Equity / dividend rows (issue #382). These carry NULL strike/expiration,
+    # premium=0.0, and route their per-unit money through ``unit_amount``.
+    "buy_stock",
+    "sell_stock",
+    "dividend",
 ]
 CLOSE_REASONS = Literal["fifty_pct_target", "full_expiration", "rolled", "closed_early", "assigned", "called_away"]
 
@@ -399,14 +404,25 @@ class PositionUpdate(BaseModel):
 class TradeCreate(BaseModel):
     position_id: str
     trade_type: TRADE_TYPES
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382): a stock buy/sell or a
+    # dividend has no option strike/expiration. Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows (issue #382): per-share cost
+    # (buy_stock/sell_stock) or total dividend $ (dividend). None for option rows.
+    unit_amount: Optional[float] = None
     fees: float = 0.0
-    quantity: int = Field(default=1, ge=1)
+    # ``quantity`` is the share count for buy_stock/sell_stock and 0 for
+    # dividend rows; ge=0 (relaxed from ge=1) so a dividend's zero quantity
+    # validates (issue #382). Option rows still pass a contract count >= 1.
+    quantity: int = Field(default=1, ge=0)
     opened_at: str
     closed_at: Optional[str] = None
-    close_reason: Optional[CLOSE_REASONS] = None
+    # Free-text rather than the CLOSE_REASONS literal because dividend rows
+    # store the Schwab sub-type label (e.g. "Qualified Dividend") here (issue
+    # #382, Q3) so future tax-bucket reporting can recover it without a re-import.
+    close_reason: Optional[str] = None
     # Entry-compliance hints (issue #160 / Quality v1 Wave 3). All three are
     # optional and default to None for back-compat — Schwab-imported trades
     # never carry them. When provided on a sell_put / sell_call trade they

@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy import (
     Column,
     Float,
@@ -8,10 +10,14 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -77,10 +83,21 @@ class Trade(Base):
 
     id = Column(String, primary_key=True)  # UUID4
     position_id = Column(String, ForeignKey("positions.id"), nullable=False)
-    trade_type = Column(String, nullable=False)  # "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired"
-    strike = Column(Float, nullable=False)
-    expiration = Column(String, nullable=False)  # date string
+    trade_type = Column(String, nullable=False)  # "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend"
+    # ``strike`` / ``expiration`` are NULL for equity/dividend rows (issue #382):
+    # a stock buy/sell or a dividend has no option strike or expiration. The
+    # recomputer's equity branches ``continue`` before any ``float(trade.strike)``
+    # dereference, so the null is never read on the option-leg path.
+    strike = Column(Float, nullable=True)
+    expiration = Column(String, nullable=True)  # date string; NULL for equity/dividend
     premium = Column(Float, nullable=False)  # per-share, positive for credits, negative for debits
+    # Per-unit money column for equity/dividend rows (issue #382): per-share cost
+    # for buy_stock/sell_stock, total dividend $ for dividend. NULL for option
+    # rows (which use ``premium``). Kept separate from ``premium`` because
+    # ``journal.compute_total_premiums`` multiplies ``premium × quantity × 100``
+    # over ALL trades with no type filter — routing per-share cost through
+    # ``premium`` would inject phantom option premium into the position headline.
+    unit_amount = Column(Float, nullable=True)
     fees = Column(Float, nullable=False, default=0.0)
     quantity = Column(Integer, nullable=False, default=1)  # number of contracts
     opened_at = Column(String, nullable=False)  # ISO datetime
@@ -300,7 +317,108 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db():
+    """Create missing tables and run the equity-import schema migration.
+
+    ``Base.metadata.create_all`` is idempotent but only *creates* missing
+    tables — it never ALTERs an existing one. Issue #382 relaxes ``NOT NULL``
+    on ``trades.strike`` / ``trades.expiration`` and adds a nullable
+    ``trades.unit_amount`` column. On a fresh DB ``create_all`` already builds
+    the new shape, but a deployment whose ``trades`` table predates #382 keeps
+    the old ``NOT NULL`` constraints, which would raise an ``IntegrityError``
+    the first time an equity row (``strike=NULL``) is inserted. The migration
+    below brings such a legacy table up to the new shape. It is guarded and
+    idempotent — a no-op on both fresh and already-migrated databases.
+    """
     Base.metadata.create_all(bind=engine)
+    _migrate_trades_equity_columns(engine)
+
+
+def _migrate_trades_equity_columns(bind) -> None:
+    """Relax NOT NULL on ``trades.strike``/``expiration`` and add ``unit_amount``.
+
+    This is the project's first runtime schema-migration block (no Alembic).
+    SQLite cannot ``ALTER COLUMN`` to drop a ``NOT NULL`` constraint, so a
+    legacy table is rebuilt: a new ``trades`` table is created from the current
+    ORM metadata (which already declares the relaxed/added columns), existing
+    rows are copied across, the old table is dropped, and the new one is
+    renamed into place — all inside one transaction.
+
+    The migration is guarded on two independently-sufficient conditions so it
+    is a no-op on a fresh DB (built correctly by ``create_all``) and on an
+    already-migrated DB:
+
+    * the ``trades`` table must already exist (skip on a brand-new DB where
+      ``create_all`` just built the correct shape — there are no legacy rows),
+    * AND it must still carry a ``NOT NULL`` on ``strike`` *or* ``expiration``,
+      *or* be missing the ``unit_amount`` column.
+
+    Idempotent: re-running after a successful migration finds the relaxed,
+    ``unit_amount``-bearing shape and returns immediately.
+    """
+    inspector = inspect(bind)
+    if "trades" not in inspector.get_table_names():
+        # Fresh DB: ``create_all`` built the correct shape; nothing to migrate.
+        return
+
+    columns = {col["name"]: col for col in inspector.get_columns("trades")}
+    has_unit_amount = "unit_amount" in columns
+    strike_not_null = not columns.get("strike", {}).get("nullable", True)
+    expiration_not_null = not columns.get("expiration", {}).get("nullable", True)
+
+    if has_unit_amount and not strike_not_null and not expiration_not_null:
+        # Already migrated — relaxed nullability and the new column are present.
+        return
+
+    logger.info(
+        "Migrating trades table for equity import (issue #382): "
+        "relaxing strike/expiration NOT NULL and adding unit_amount",
+        extra={"event": "trades_migration.start", "outcome": "success"},
+    )
+
+    # Build the rebuild SQL from the live ORM metadata so the new table matches
+    # the model exactly (relaxed nullability + ``unit_amount``). Copy only the
+    # columns that exist on BOTH the old and new tables so a column added in a
+    # future migration doesn't break the SELECT.
+    target_columns = [col.name for col in Trade.__table__.columns]
+    shared_columns = [name for name in target_columns if name in columns]
+    column_list = ", ".join(shared_columns)
+    create_new_sql = str(
+        _render_create_table(Trade.__table__, bind, override_name="trades_new")
+    )
+
+    with bind.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS trades_new"))
+        conn.execute(text(create_new_sql))
+        conn.execute(
+            text(
+                f"INSERT INTO trades_new ({column_list}) "
+                f"SELECT {column_list} FROM trades"
+            )
+        )
+        conn.execute(text("DROP TABLE trades"))
+        conn.execute(text("ALTER TABLE trades_new RENAME TO trades"))
+
+    logger.info(
+        "trades table migration complete (issue #382)",
+        extra={"event": "trades_migration.complete", "outcome": "success"},
+    )
+
+
+def _render_create_table(table, bind, *, override_name: str) -> str:
+    """Render a ``CREATE TABLE`` statement for ``table`` under a new name.
+
+    Uses SQLAlchemy's SQLite ``CreateTable`` compiler so the emitted DDL
+    matches the ORM definition (column types, nullability, defaults) without
+    hand-writing SQL. ``override_name`` lets the migration build the staging
+    ``trades_new`` table from the same metadata as ``trades``.
+    """
+    from sqlalchemy.schema import CreateTable
+
+    ddl = str(CreateTable(table).compile(bind))
+    # Re-point the statement at the staging table name. The table name appears
+    # immediately after ``CREATE TABLE`` and is the only occurrence of the bare
+    # original name in the rendered DDL (columns are quoted distinctly).
+    return ddl.replace(f"CREATE TABLE {table.name}", f"CREATE TABLE {override_name}", 1)
 
 
 def get_db():
