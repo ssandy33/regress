@@ -468,15 +468,17 @@ def test_zero_shares_rejected():
 
 
 @pytest.mark.unit
-def test_invalid_close_reason_rejected():
-    """Invalid close_reason should be rejected by Pydantic."""
-    with pytest.raises(ValidationError):
-        TradeCreate(
-            position_id="some-id",
-            trade_type="sell_put",
-            strike=48.0,
-            expiration="2025-02-21",
-            premium=1.50,
-            opened_at="2025-01-15T10:00:00Z",
-            close_reason="invalid_reason",
-        )
+def test_freetext_close_reason_accepted():
+    """close_reason is free-text (issue #382), not the CLOSE_REASONS enum, so it
+    can carry a Schwab dividend sub-type label (e.g. "Qualified Dividend") for
+    future tax-bucket recovery. An arbitrary string validates."""
+    trade = TradeCreate(
+        position_id="some-id",
+        trade_type="dividend",
+        premium=0.0,
+        unit_amount=42.0,
+        quantity=0,
+        opened_at="2025-01-15T10:00:00Z",
+        close_reason="Qualified Dividend",
+    )
+    assert trade.close_reason == "Qualified Dividend"

@@ -570,10 +570,13 @@ def test_update_position_negative_shares(client):
 
 @pytest.mark.integration
 def test_create_trade_zero_quantity(client):
-    """quantity=0 should return 422."""
+    """quantity=0 is now valid (issue #382 relaxed ge=1 -> ge=0 so a dividend
+    row's zero share count validates); negative quantity is still rejected."""
     pos = _create_position(client).json()
     resp = _create_trade(client, pos["id"], quantity=0)
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    neg = _create_trade(client, pos["id"], quantity=-1)
+    assert neg.status_code == 422
 
 
 @pytest.mark.integration
