@@ -257,6 +257,15 @@ Work flows through a phased pipeline. Each phase has an owner agent and a delive
 | **5.5 — CodeRabbit triage** | `finapp-code-reviewer` or the orchestrator | Fetch CodeRabbit PR comments after CI-green; filter aggressively (fix / defer / reject each) | Always between CI-green and merge |
 | **6 — Release** | `release-manager` | Tag, GitHub release, milestone close, wiki Roadmap + Changelog sync | On release-worthy merges |
 
+### QA-demoable data (Phase 3, user-facing features only)
+
+Automated test fixtures are always required (PRD #261) — but they only prove the *code*. They do **not** make a feature exercisable by a human in a running environment. So when a Phase 3 change introduces a **new user-facing data shape** — a new import row type, a new rendered entity, a new position/trade/strategy kind — it also ships a way to *demo* it in QA:
+
+- **refresh the QA seed** (`backend/app/services/seed_qa.py`, #349) with a representative archetype, **and/or**
+- **commit a sample input fixture** a tester can use by hand (e.g. a sample Schwab CSV under `backend/tests/fixtures/`).
+
+This is **not** required for pure-backend, internal-only, or non-rendered changes — only for work that a human would want to click through or import in QA before it reaches prod. Rationale: the test pyramid proves correctness; QA-demoable data proves the *feature* to a person at the "stop at QA" gate. Without it, a feature can merge with full green coverage and still have nothing to look at in QA.
+
 ## Artifacts & Source Control
 
 - **Design specs** (`frontend/design-specs/issue-{N}-*.md` + `-mock.html`) — local working artifacts, NOT committed to git. They reference each other and the plan file but live untracked in the working tree.
