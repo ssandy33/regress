@@ -600,10 +600,29 @@ class ImportRequest(BaseModel):
         return v
 
 
+class SkippedUnmatched(BaseModel):
+    """An equity sell skipped at import because no shares were available to draw on.
+
+    Surfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the
+    user sees *why* a sell row was not inserted instead of silently dropping it.
+    The import-time pre-check is the user-visible half of the recomputer's
+    defensive ``shares_sold > shares`` guard.
+    """
+
+    ticker: str
+    opened_at: str
+    quantity: int
+
+
 class ImportResultResponse(BaseModel):
     imported: int
     skipped_duplicates: int
     positions_created: int
+    # Equity sells dropped because the running share balance (existing open
+    # position shares + buys earlier in the same import) could not cover them
+    # (issue #388 / PRD #384 AC3c). Defaults empty so option-only imports
+    # serialize unchanged.
+    skipped_unmatched: list[SkippedUnmatched] = []
 
 
 class ClearJournalResponse(BaseModel):
