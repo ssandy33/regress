@@ -163,11 +163,37 @@ jobs:
               COMPOSE_FILE="${{ inputs.compose_file }}" PROJECT="$(basename "$(pwd)")" \
                 bash deploy/qa-scrub-schwab-tokens.sh
             fi
-            docker compose -f ${{ inputs.compose_file }} up -d
+            # --force-recreate (PR: deploy stale-container fix): plain `up -d`
+            # can leave the OLD container running when only the pinned image
+            # digest changed (the v1.8.0 #392 incident — the new image was
+            # pulled but the running backend stayed on the previous digest, and
+            # the smoke gate passed against old code, so the deploy went green
+            # while shipping nothing). Forcing recreation guarantees the
+            # freshly-pulled @sha256: image is what actually runs.
+            docker compose -f ${{ inputs.compose_file }} up -d --force-recreate
             if [ "$HAS_CADDY" = yes ]; then
               docker compose -f ${{ inputs.compose_file }} restart caddy
             fi
             docker compose -f ${{ inputs.compose_file }} ps
+            # Image-digest assertion (PR: deploy stale-container fix): prove the
+            # running containers are the exact @sha256: digests we just pulled,
+            # so a stale container can NEVER pass the smoke gate as healthy. The
+            # smoke gate only checks /api/health, which old code serves fine.
+            assert_running_digest() {
+              role="$1"; want="$2"
+              svc=$(docker compose -f ${{ inputs.compose_file }} config --services | grep -E "${role}\$" | head -1)
+              if [ -z "$svc" ]; then echo "::warning::digest-assert: no '${role}' service in ${{ inputs.compose_file }} — skipping"; return 0; fi
+              cid=$(docker compose -f ${{ inputs.compose_file }} ps -q "$svc")
+              if [ -z "$cid" ]; then echo "::error::digest-assert: ${svc} has no running container after up -d"; return 1; fi
+              running=$(docker inspect "$cid" --format '{{range .RepoDigests}}{{println .}}{{end}}' | sed -n 's/.*@//p' | head -1)
+              if [ -n "$want" ] && [ "$running" != "$want" ]; then
+                echo "::error::digest-assert: ${svc} is running '${running:-<none>}' but the deploy pinned '${want}' — stale container, failing the deploy."
+                return 1
+              fi
+              echo "digest-assert OK: ${svc} @ ${want}"
+            }
+            assert_running_digest backend "$BACKEND_IMAGE_DIGEST"
+            assert_running_digest frontend "$FRONTEND_IMAGE_DIGEST"
             # Post-deploy smoke gate (#343/SUB-4, ADR #338 §5): fail the deploy
             # (non-zero exit) if the app does not actually serve after `up -d`.
             # A container can start but immediately exit or serve a 502 — `up -d`
