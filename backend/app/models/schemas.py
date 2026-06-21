@@ -535,6 +535,11 @@ class PositionResponse(BaseModel):
     broker_cost_basis_per_share: Optional[float] = None
     adjusted_cost_basis_per_share: Optional[float] = None
     min_compliant_cc_strike: float
+    # Equity realized P&L and dividend income (issues #386/#387, ADR #391):
+    # derived at read time from the trade ledger, never stored. Default 0.0 so
+    # options-only positions serialize unchanged.
+    realized_equity_pl: float = 0.0
+    dividend_income: float = 0.0
     trades: list[TradeResponse] = []
 
 

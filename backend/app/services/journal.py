@@ -58,6 +58,75 @@ def compute_per_share_basis(total: float, shares: int) -> float | None:
     return round(total / shares, 4)
 
 
+def compute_realized_equity_pl(trades: list) -> float:
+    """Realized P&L from equity sells, derived (never stored) per ADR #391.
+
+    Replays the position's trades in chronological order, maintaining a running
+    ``(shares, basis)`` pair, and accumulates realized P&L for each matched
+    ``sell_stock``::
+
+        realized += (unit_amount - avg_basis_before) * shares_sold - fees
+
+    where ``avg_basis_before = basis / shares`` measured immediately before the
+    sell. ``buy_stock`` rows fold into the running weighted-average basis (fees
+    capitalize). An unmatched sell (``shares_sold > shares``) is skipped — the
+    same contract as :func:`app.services.positions.recompute_position_state`.
+    Option trades contribute nothing; an options-only position returns ``0.0``.
+
+    Args:
+        trades: The position's trade rows (ORM objects or any object exposing
+            ``trade_type``, ``quantity``, ``unit_amount``, ``fees``,
+            ``opened_at``, ``id``). Sorting is applied internally.
+
+    Returns:
+        Total realized equity P&L in dollars.
+    """
+    ordered = sorted(
+        trades, key=lambda t: (getattr(t, "opened_at", None) or "", getattr(t, "id", None) or "")
+    )
+    shares = 0
+    basis = 0.0
+    realized = 0.0
+    for trade in ordered:
+        ttype = trade.trade_type
+        if ttype == "buy_stock":
+            qty_shares = int(trade.quantity or 0)
+            unit = float(trade.unit_amount or 0.0)
+            fees = float(trade.fees or 0.0)
+            shares += qty_shares
+            basis += unit * qty_shares + fees
+        elif ttype == "sell_stock":
+            qty_shares = int(trade.quantity or 0)
+            unit = float(trade.unit_amount or 0.0)
+            fees = float(trade.fees or 0.0)
+            if qty_shares > shares:
+                # Unmatched sell — skipped (consistent with the recomputer).
+                continue
+            avg = basis / shares if shares > 0 else 0.0
+            realized += (unit - avg) * qty_shares - fees
+            basis -= avg * qty_shares
+            shares -= qty_shares
+    return realized
+
+
+def compute_dividend_income(trades: list) -> float:
+    """Total dividend income across ``dividend`` trades, derived per ADR #391.
+
+    A dividend row stores the total payout in ``unit_amount`` (not per-share),
+    so the income is a simple sum over ``dividend`` trades. Returns ``0.0`` when
+    the position has no dividends.
+
+    Args:
+        trades: The position's trade rows.
+
+    Returns:
+        Total dividend income in dollars.
+    """
+    return sum(
+        float(t.unit_amount or 0.0) for t in trades if t.trade_type == "dividend"
+    )
+
+
 def _build_trade_response(trade: Trade) -> dict:
     """Build a TradeResponse dict from a Trade ORM object."""
     return {
@@ -137,6 +206,10 @@ def _build_position_response(position: Position) -> dict:
         "broker_cost_basis_per_share": broker_cost_basis_per_share,
         "adjusted_cost_basis_per_share": adjusted_cost_basis_per_share,
         "min_compliant_cc_strike": min_compliant_cc_strike,
+        # Equity P&L / dividend income — derived at read time, never stored
+        # (ADR #391). Options-only positions return 0.0 for both (issue #386/#387).
+        "realized_equity_pl": compute_realized_equity_pl(trades),
+        "dividend_income": compute_dividend_income(trades),
         "trades": [_build_trade_response(t) for t in trades],
     }
 
@@ -237,6 +310,7 @@ def create_trade(db: Session, data: TradeCreate) -> dict | None:
         strike=data.strike,
         expiration=data.expiration,
         premium=data.premium,
+        unit_amount=data.unit_amount,
         fees=data.fees,
         quantity=data.quantity,
         opened_at=data.opened_at,

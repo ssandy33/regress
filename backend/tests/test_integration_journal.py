@@ -482,3 +482,54 @@ def test_freetext_close_reason_accepted():
         close_reason="Qualified Dividend",
     )
     assert trade.close_reason == "Qualified Dividend"
+
+
+@pytest.mark.integration
+def test_create_buy_stock_trade_persists_unit_amount(db_session):
+    """Gap #1 (issue #386): create_trade must persist unit_amount.
+
+    Before the fix, ``Trade(...)`` was built without ``unit_amount``, so every
+    equity row persisted NULL and the recomputer replayed zero basis. This locks
+    the round-trip: a created buy_stock trade reads its per-share unit_amount
+    back off the ORM row.
+    """
+    from app.models.database import Trade
+
+    pos = _create_sample_position(db_session)
+    created = _create_sample_trade(
+        db_session,
+        pos["id"],
+        trade_type="buy_stock",
+        strike=None,
+        expiration=None,
+        premium=0.0,
+        unit_amount=123.45,
+        quantity=100,
+    )
+    assert created is not None
+    row = db_session.query(Trade).filter(Trade.id == created["id"]).first()
+    assert row is not None
+    assert row.unit_amount == pytest.approx(123.45)
+
+
+@pytest.mark.integration
+def test_create_dividend_trade_persists_unit_amount(db_session):
+    """A dividend row round-trips its total-$ unit_amount (issue #387)."""
+    from app.models.database import Trade
+
+    pos = _create_sample_position(db_session)
+    created = _create_sample_trade(
+        db_session,
+        pos["id"],
+        trade_type="dividend",
+        strike=None,
+        expiration=None,
+        premium=0.0,
+        unit_amount=42.0,
+        quantity=0,
+        close_reason="Qualified Dividend",
+    )
+    assert created is not None
+    row = db_session.query(Trade).filter(Trade.id == created["id"]).first()
+    assert row.unit_amount == pytest.approx(42.0)
+    assert row.close_reason == "Qualified Dividend"

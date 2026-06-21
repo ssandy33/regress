@@ -361,3 +361,146 @@ def test_build_position_response_warns_for_negative_shares(db_session, caplog):
     assert "compute_min_cc_strike called with shares=-10" in caplog.text
     assert result["min_compliant_cc_strike"] == 0.0
     assert result["shares"] == -10
+
+
+# --- Equity realized P&L / dividend income (issues #386/#387, ADR #391) ------
+#
+# These are pure-function unit tests: they build trade-like objects with
+# SimpleNamespace and never touch a DB session (per CLAUDE.md Wave-3 lesson —
+# a SQLAlchemy session disqualifies the unit tier).
+
+
+def _equity_trade(
+    trade_type: str,
+    *,
+    quantity: int = 0,
+    unit_amount: float = 0.0,
+    fees: float = 0.0,
+    opened_at: str = "2026-01-01",
+    id: str = "",
+) -> SimpleNamespace:
+    """Build a minimal equity trade-like object for derive-helper unit tests."""
+    return SimpleNamespace(
+        trade_type=trade_type,
+        quantity=quantity,
+        unit_amount=unit_amount,
+        fees=fees,
+        opened_at=opened_at,
+        id=id,
+    )
+
+
+@pytest.mark.unit
+def test_compute_realized_equity_pl_single_buy_full_sell():
+    """Buy 100 @ 10, sell 100 @ 12 → (12-10)*100 = 200 realized."""
+    from app.services.journal import compute_realized_equity_pl
+
+    trades = [
+        _equity_trade("buy_stock", quantity=100, unit_amount=10.0, opened_at="2026-01-01", id="a"),
+        _equity_trade("sell_stock", quantity=100, unit_amount=12.0, opened_at="2026-02-01", id="b"),
+    ]
+    assert compute_realized_equity_pl(trades) == pytest.approx(200.0)
+
+
+@pytest.mark.unit
+def test_compute_realized_equity_pl_weighted_avg_partial_sell():
+    """Two buys at different prices then a partial sell uses weighted-avg basis.
+
+    Buy 100 @ 10 then 100 @ 20 → avg 15. Sell 100 @ 18 → (18-15)*100 = 300.
+    """
+    from app.services.journal import compute_realized_equity_pl
+
+    trades = [
+        _equity_trade("buy_stock", quantity=100, unit_amount=10.0, opened_at="2026-01-01", id="a"),
+        _equity_trade("buy_stock", quantity=100, unit_amount=20.0, opened_at="2026-01-15", id="b"),
+        _equity_trade("sell_stock", quantity=100, unit_amount=18.0, opened_at="2026-02-01", id="c"),
+    ]
+    assert compute_realized_equity_pl(trades) == pytest.approx(300.0)
+
+
+@pytest.mark.unit
+def test_compute_realized_equity_pl_sell_all_to_zero():
+    """Selling the full position to zero realizes the full gain."""
+    from app.services.journal import compute_realized_equity_pl
+
+    trades = [
+        _equity_trade("buy_stock", quantity=50, unit_amount=8.0, opened_at="2026-01-01", id="a"),
+        _equity_trade("buy_stock", quantity=50, unit_amount=12.0, opened_at="2026-01-10", id="b"),
+        _equity_trade("sell_stock", quantity=100, unit_amount=15.0, opened_at="2026-02-01", id="c"),
+    ]
+    # avg basis = (50*8 + 50*12)/100 = 10. (15-10)*100 = 500.
+    assert compute_realized_equity_pl(trades) == pytest.approx(500.0)
+
+
+@pytest.mark.unit
+def test_compute_realized_equity_pl_unmatched_sell_skipped():
+    """A sell of more shares than held is skipped — no P&L contribution."""
+    from app.services.journal import compute_realized_equity_pl
+
+    trades = [
+        _equity_trade("buy_stock", quantity=100, unit_amount=10.0, opened_at="2026-01-01", id="a"),
+        _equity_trade("sell_stock", quantity=200, unit_amount=12.0, opened_at="2026-02-01", id="b"),
+    ]
+    assert compute_realized_equity_pl(trades) == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_compute_realized_equity_pl_sell_fees_reduce_pl():
+    """Sell fees reduce realized P&L (fee convention: sell fees − proceeds)."""
+    from app.services.journal import compute_realized_equity_pl
+
+    trades = [
+        _equity_trade("buy_stock", quantity=100, unit_amount=10.0, opened_at="2026-01-01", id="a"),
+        _equity_trade("sell_stock", quantity=100, unit_amount=12.0, fees=5.0, opened_at="2026-02-01", id="b"),
+    ]
+    # (12-10)*100 - 5 = 195.
+    assert compute_realized_equity_pl(trades) == pytest.approx(195.0)
+
+
+@pytest.mark.unit
+def test_compute_realized_equity_pl_buy_fees_capitalize_into_basis():
+    """Buy fees capitalize into basis, lowering the realized gain on sell."""
+    from app.services.journal import compute_realized_equity_pl
+
+    trades = [
+        _equity_trade("buy_stock", quantity=100, unit_amount=10.0, fees=20.0, opened_at="2026-01-01", id="a"),
+        _equity_trade("sell_stock", quantity=100, unit_amount=12.0, opened_at="2026-02-01", id="b"),
+    ]
+    # basis = 10*100 + 20 = 1020 → avg 10.20. (12-10.20)*100 = 180.
+    assert compute_realized_equity_pl(trades) == pytest.approx(180.0)
+
+
+@pytest.mark.unit
+def test_compute_realized_equity_pl_options_only_returns_zero():
+    """An options-only ledger contributes no equity realized P&L."""
+    from app.services.journal import compute_realized_equity_pl
+
+    trades = [
+        _equity_trade("sell_put", quantity=1, opened_at="2026-01-01", id="a"),
+        _equity_trade("buy_put_close", quantity=1, opened_at="2026-02-01", id="b"),
+    ]
+    assert compute_realized_equity_pl(trades) == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_compute_dividend_income_sums_multiple_dividends():
+    """Dividend income sums unit_amount (total $) across dividend rows."""
+    from app.services.journal import compute_dividend_income
+
+    trades = [
+        _equity_trade("dividend", unit_amount=12.50, opened_at="2026-01-15", id="a"),
+        _equity_trade("dividend", unit_amount=7.25, opened_at="2026-04-15", id="b"),
+        _equity_trade("buy_stock", quantity=100, unit_amount=10.0, opened_at="2026-01-01", id="c"),
+    ]
+    assert compute_dividend_income(trades) == pytest.approx(19.75)
+
+
+@pytest.mark.unit
+def test_compute_dividend_income_zero_when_none():
+    """No dividend rows → 0.0 income."""
+    from app.services.journal import compute_dividend_income
+
+    trades = [
+        _equity_trade("buy_stock", quantity=100, unit_amount=10.0, opened_at="2026-01-01", id="a"),
+    ]
+    assert compute_dividend_income(trades) == pytest.approx(0.0)

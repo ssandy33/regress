@@ -512,6 +512,19 @@ def _compute_realized_pl(closed_positions: list[dict]) -> tuple[float, float | N
     return realized_pl, realized_pl / cost_basis_total
 
 
+def _sum_equity_realized_pl(positions: list[dict]) -> float:
+    """Sum derived equity realized P&L across positions (issues #386/#387).
+
+    Each position row carries ``realized_equity_pl`` from
+    :func:`app.services.journal._build_position_response` (derived per ADR #391,
+    not stored). Open positions can carry realized P&L from a partial sell, so
+    this sums across the full open+closed set rather than the closed-only set
+    used by the premium-based realized-P/L formula. Options-only positions
+    contribute ``0.0``.
+    """
+    return sum(float(p.get("realized_equity_pl") or 0.0) for p in positions)
+
+
 def _compute_largest_loser(closed_positions: list[dict]) -> dict | None:
     """Return the worst realized loser among closed positions, or ``None``."""
     if not closed_positions:
@@ -577,7 +590,14 @@ def _build_kpis(
     premium_total, premium_trades = _sum_premium_for_positions(all_positions)
     premium_ytd = _sum_premium_ytd(all_positions, today=today)
 
+    # Realized P/L from CLOSED positions' premium (existing simple formula,
+    # issue #146) PLUS equity realized P&L across ALL positions. Equity
+    # realized P&L can exist on an OPEN position (partially sold) so it cannot
+    # be folded into the closed-only premium path; it is added as a separate
+    # addend (issues #386/#387, ADR #391). The premium semantics are unchanged.
     realized_pl, realized_pl_pct = _compute_realized_pl(closed_positions)
+    equity_realized_pl = _sum_equity_realized_pl(all_positions)
+    realized_pl += equity_realized_pl
 
     return {
         "open_positions": open_positions_count,
