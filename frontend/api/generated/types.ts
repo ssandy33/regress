@@ -3837,7 +3837,7 @@ export interface components {
             /** Closed At */
             closed_at?: string | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /** Fees */
             fees: number;
             /** Id */
@@ -3851,9 +3851,11 @@ export interface components {
             /** Quantity */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /** Trade Type */
             trade_type: string;
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /** TradeUpdate */
         TradeUpdate: {

@@ -136,6 +136,7 @@ def _build_trade_response(trade: Trade) -> dict:
         "strike": trade.strike,
         "expiration": trade.expiration,
         "premium": trade.premium,
+        "unit_amount": trade.unit_amount,
         "fees": trade.fees,
         "quantity": trade.quantity,
         "opened_at": trade.opened_at,

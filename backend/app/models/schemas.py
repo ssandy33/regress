@@ -457,9 +457,15 @@ class TradeResponse(BaseModel):
     id: str
     position_id: str
     trade_type: str
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382/#386): a stock buy/sell or a
+    # dividend has no option strike/expiration. The journal UI renders these as
+    # an N/A placeholder (issue #389). Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows: per-share cost (buy_stock/
+    # sell_stock) or total dividend $ (dividend). None for option rows (#386).
+    unit_amount: Optional[float] = None
     fees: float
     quantity: int
     opened_at: str

@@ -5715,8 +5715,15 @@
             "title": "Closed At"
           },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "title": "Fees",
@@ -5743,20 +5750,36 @@
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "trade_type": {
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "id",
           "position_id",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "fees",
           "quantity",
