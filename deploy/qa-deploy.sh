@@ -52,6 +52,13 @@ echo ""
 #   echo "$GHCR_PULL_TOKEN" | docker login ghcr.io -u <user> --password-stdin
 echo ">>> Pulling and starting QA containers..."
 $COMPOSE pull
+# Pre-start Schwab-token scrub (#379 root-cause fix): clear any stale schwab_*
+# token rows from the persistent QA volume BEFORE `up -d`, so the backend's
+# fail-closed startup check (no SCHWAB_ENCRYPTION_KEY on QA) can't crash-loop
+# it. Runs from a one-off container that never boots the app — works even when
+# the long-running backend can't start. See deploy/qa-scrub-schwab-tokens.sh.
+COMPOSE_FILE="docker-compose.qa.yml" PROJECT="regress-qa" \
+    bash deploy/qa-scrub-schwab-tokens.sh
 $COMPOSE up -d
 echo ""
 

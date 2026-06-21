@@ -149,6 +149,20 @@ jobs:
             # artifact CI tested. Compose/Caddyfile still arrive via the
             # `git reset --hard` above.
             docker compose -f ${{ inputs.compose_file }} pull
+            # QA pre-start Schwab-token scrub (#379 root-cause fix). QA boots
+            # with SCHWAB_ENCRYPTION_KEY unset; if stale schwab_* token rows sit
+            # in the persistent QA volume (a prod-snapshot restore or a manual
+            # schwab-auth), the backend's fail-closed startup check crash-loops
+            # the container — taking all QA /api/* to 502. The #380 seed scrub
+            # can't recover this: it runs via `compose exec` into a container the
+            # tokens prevent from starting (a deadlock). So we scrub FIRST, from
+            # a one-off container that never boots the app, BEFORE `up -d`. Image
+            # is already pulled above. QA-only — prod legitimately holds tokens +
+            # the key, and seed-qa's APP_ENV=production guard never reaches here.
+            if [ "${{ inputs.environment }}" = "qa" ]; then
+              COMPOSE_FILE="${{ inputs.compose_file }}" PROJECT="$(basename "$(pwd)")" \
+                bash deploy/qa-scrub-schwab-tokens.sh
+            fi
             docker compose -f ${{ inputs.compose_file }} up -d
             if [ "$HAS_CADDY" = yes ]; then
               docker compose -f ${{ inputs.compose_file }} restart caddy
