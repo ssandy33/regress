@@ -538,7 +538,23 @@ def recompute_position_state(
     assignment (PUT)      + qty*100     + strike * qty * 100                 -1 put leg
     called_away (CALL)    - qty*100     - basis * (qty*100 / shares)         -1 call leg
     expired               0             0                                    -1 leg (any)
+    buy_stock             + shares      + unit * shares + fees               0
+    sell_stock            - shares      - avg_basis * shares                 0
+    dividend              0             0                                    0
     ====================  ============  ===================================  ============
+
+    **Equity branches (issues #386 / PRD #384):** ``buy_stock`` adds shares at
+    its per-share ``unit_amount`` and capitalizes ``fees`` into
+    ``broker_cost_basis``. ``sell_stock`` removes shares and reduces basis
+    proportionally by the running weighted-average basis-per-share measured
+    immediately before the sell (lot-FIFO is intentionally not tracked — same
+    trade-off as the partial called-away rule). An unmatched ``sell_stock``
+    (more shares sold than held) is skipped with a warning and never mutates
+    state, so shares can never go negative. ``dividend`` rows carry income only
+    (derived at read time per ADR #391) and never touch shares, basis, or
+    ``close_reason``. A fully-sold equity position reaches ``shares == 0`` with
+    no open legs and closes naturally via the existing close-at-zero path; its
+    strategy label resolves to ``"holding"`` while shares remain (issue #131).
 
     **Partial called-away basis rule:** if the user holds 200 shares and a
     single call (100 shares' worth) is exercised, basis is reduced
@@ -708,6 +724,51 @@ def recompute_position_state(
             if shares == 0 and not open_legs:
                 last_close_at = trade.opened_at
 
+            continue
+
+        # Equity branches (issues #386 / PRD #384). Use equity-specific locals
+        # so the option ``qty``/``contract_shares`` (which multiply by 100) are
+        # never reused — an equity ``quantity`` is a raw share count.
+        if ttype == "buy_stock":
+            qty_shares = int(trade.quantity or 0)
+            unit = float(trade.unit_amount or 0.0)
+            fees = float(trade.fees or 0.0)
+            shares += qty_shares
+            basis += unit * qty_shares + fees  # fees capitalize into basis
+            continue
+
+        if ttype == "sell_stock":
+            qty_shares = int(trade.quantity or 0)
+            unit = float(trade.unit_amount or 0.0)
+            if qty_shares > shares:
+                # Q2 unmatched sell: skip, warn, no mutation (no negative shares).
+                logger.warning(
+                    "recompute_position_state: unmatched sell_stock on %s — %d "
+                    "shares sold but only %d held; skipping",
+                    position.ticker,
+                    qty_shares,
+                    shares,
+                    extra={
+                        "event": "equity_sell.unmatched",
+                        "outcome": "no_data",
+                        "ticker": position.ticker,
+                    },
+                )
+                continue
+            avg = basis / shares if shares > 0 else 0.0
+            basis -= avg * qty_shares  # proportional (weighted-avg) basis reduction
+            shares -= qty_shares
+            # A fully-sold equity position closes via the existing close-at-zero
+            # path below; record the resolving timestamp the same way option
+            # closes do so ``closed_at`` is populated.
+            if shares == 0 and not open_legs:
+                last_close_at = trade.opened_at
+            continue
+
+        if ttype == "dividend":
+            # Income only — derived at read time per ADR #391. Never mutate
+            # shares/basis and never touch ``close_reason`` (it carries the raw
+            # Schwab dividend sub-type for display).
             continue
 
         logger.warning(

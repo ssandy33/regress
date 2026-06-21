@@ -570,10 +570,13 @@ def test_update_position_negative_shares(client):
 
 @pytest.mark.integration
 def test_create_trade_zero_quantity(client):
-    """quantity=0 should return 422."""
+    """quantity=0 is now valid (issue #382 relaxed ge=1 -> ge=0 so a dividend
+    row's zero share count validates); negative quantity is still rejected."""
     pos = _create_position(client).json()
     resp = _create_trade(client, pos["id"], quantity=0)
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    neg = _create_trade(client, pos["id"], quantity=-1)
+    assert neg.status_code == 422
 
 
 @pytest.mark.integration
@@ -631,3 +634,30 @@ def test_position_response_adjusted_per_share_nets_premiums(client):
     # adjusted total = 5000 - 150 = 4850 → /100 = 48.50/sh.
     assert data["broker_cost_basis_per_share"] == 50.0
     assert data["adjusted_cost_basis_per_share"] == 48.5
+
+
+@pytest.mark.integration
+def test_journal_get_serializes_equity_trade(client):
+    """Regression (#386/#389 seam): a position holding an equity trade must
+    serialize through TradeResponse — strike/expiration are None and
+    unit_amount is surfaced — rather than 500 on response validation."""
+    pos = _create_position(client).json()
+    resp = _create_trade(
+        client,
+        pos["id"],
+        trade_type="buy_stock",
+        strike=None,
+        expiration=None,
+        premium=0.0,
+        unit_amount=150.0,
+        quantity=100,
+    )
+    assert resp.status_code == 201
+    got = client.get(f"/api/journal/positions/{pos['id']}")
+    assert got.status_code == 200
+    trade = next(
+        t for t in got.json()["trades"] if t["trade_type"] == "buy_stock"
+    )
+    assert trade["strike"] is None
+    assert trade["expiration"] is None
+    assert trade["unit_amount"] == 150.0

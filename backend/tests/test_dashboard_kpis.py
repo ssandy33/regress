@@ -417,3 +417,62 @@ class TestAttachNextSuggestedActions:
         ]
         _attach_next_suggested_actions(rows, next_actions=next_actions, open_legs=[])
         assert rows[0]["next_suggested_action"] == "Review"
+
+
+class TestSumEquityRealizedPl:
+    """Equity realized P&L fold across all positions (issues #386/#387)."""
+
+    @pytest.mark.unit
+    def test_sums_realized_equity_pl_across_positions(self):
+        from app.services.dashboard import _sum_equity_realized_pl
+
+        positions = [
+            {"realized_equity_pl": 198.0},
+            {"realized_equity_pl": 50.0},
+        ]
+        assert _sum_equity_realized_pl(positions) == pytest.approx(248.0)
+
+    @pytest.mark.unit
+    def test_missing_field_treated_as_zero(self):
+        from app.services.dashboard import _sum_equity_realized_pl
+
+        # Options-only rows omit the field entirely (defaults to 0.0).
+        positions = [{"ticker": "SPY"}, {"realized_equity_pl": None}]
+        assert _sum_equity_realized_pl(positions) == pytest.approx(0.0)
+
+    @pytest.mark.unit
+    def test_realized_pl_folds_equity_from_open_position(self):
+        """An OPEN position's equity realized P&L is added to the realized total.
+
+        The premium-based realized P/L (closed positions only) is unchanged; the
+        equity addend lifts the headline by the open position's realized gain.
+        """
+        rows = [
+            _row(position_id="p-1", ticker="AAPL", unrealized_pl=0.0, pl_pct=0.0),
+        ]
+        open_positions = [
+            {
+                **_open_position_with_trades(
+                    ticker="AAPL",
+                    trades=[],
+                ),
+                # Partially-sold open equity position carries realized P&L.
+                "realized_equity_pl": 300.0,
+            }
+        ]
+        closed_positions = [
+            _closed_position(ticker="TSLA", total_premiums=400.0, broker_cost_basis=20000.0),
+        ]
+        kpis = _build_kpis(
+            rows,
+            [],
+            open_positions,
+            closed_positions=closed_positions,
+            today=date(2026, 5, 11),
+        )
+        # 400 (closed premium) + 300 (open equity realized) = 700.
+        assert kpis["realized_pl"] == pytest.approx(700.0)
+        # With an equity component folded in, the percent has no coherent
+        # shared denominator and is nulled rather than reported mismatched
+        # (CodeRabbit, PR #392).
+        assert kpis["realized_pl_pct"] is None

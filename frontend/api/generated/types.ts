@@ -2491,8 +2491,10 @@ export interface components {
         };
         /** ImportPreviewTrade */
         ImportPreviewTrade: {
+            /** Close Reason */
+            close_reason?: string | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /** Fees */
             fees: number;
             /** Is Duplicate */
@@ -2504,14 +2506,16 @@ export interface components {
             /** Quantity */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /** Ticker */
             ticker: string;
             /**
              * Trade Type
              * @enum {string}
              */
-            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired";
+            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend";
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /**
          * ImportRequest
@@ -2538,6 +2542,11 @@ export interface components {
             positions_created: number;
             /** Skipped Duplicates */
             skipped_duplicates: number;
+            /**
+             * Skipped Unmatched
+             * @default []
+             */
+            skipped_unmatched: components["schemas"]["SkippedUnmatched"][];
         };
         /** LinearRegressionRequest */
         LinearRegressionRequest: {
@@ -2808,6 +2817,11 @@ export interface components {
             broker_cost_basis_per_share?: number | null;
             /** Closed At */
             closed_at?: string | null;
+            /**
+             * Dividend Income
+             * @default 0
+             */
+            dividend_income: number;
             /** Id */
             id: string;
             /** Min Compliant Cc Strike */
@@ -2816,6 +2830,11 @@ export interface components {
             notes?: string | null;
             /** Opened At */
             opened_at: string;
+            /**
+             * Realized Equity Pl
+             * @default 0
+             */
+            realized_equity_pl: number;
             /** Shares */
             shares: number;
             /** Status */
@@ -3629,6 +3648,23 @@ export interface components {
             /** Value */
             value: string;
         };
+        /**
+         * SkippedUnmatched
+         * @description An equity sell skipped at import because no shares were available to draw on.
+         *
+         *     Surfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the
+         *     user sees *why* a sell row was not inserted instead of silently dropping it.
+         *     The import-time pre-check is the user-visible half of the recomputer's
+         *     defensive ``shares_sold > shares`` guard.
+         */
+        SkippedUnmatched: {
+            /** Opened At */
+            opened_at: string;
+            /** Quantity */
+            quantity: number;
+            /** Ticker */
+            ticker: string;
+        };
         /** StationarityResult */
         StationarityResult: {
             /** Adf Statistic */
@@ -3739,7 +3775,7 @@ export interface components {
         /** TradeCreate */
         TradeCreate: {
             /** Close Reason */
-            close_reason?: ("fifty_pct_target" | "full_expiration" | "rolled" | "closed_early" | "assigned" | "called_away") | null;
+            close_reason?: string | null;
             /** Closed At */
             closed_at?: string | null;
             /** Delta At Entry Hint */
@@ -3749,7 +3785,7 @@ export interface components {
             /** Earnings Buffer Days Hint */
             earnings_buffer_days_hint?: number | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /**
              * Fees
              * @default 0
@@ -3767,12 +3803,14 @@ export interface components {
              */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /**
              * Trade Type
              * @enum {string}
              */
-            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired";
+            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend";
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /**
          * TradeEvent
@@ -3799,7 +3837,7 @@ export interface components {
             /** Closed At */
             closed_at?: string | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /** Fees */
             fees: number;
             /** Id */
@@ -3813,9 +3851,11 @@ export interface components {
             /** Quantity */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /** Trade Type */
             trade_type: string;
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /** TradeUpdate */
         TradeUpdate: {
@@ -3836,7 +3876,7 @@ export interface components {
             /** Strike */
             strike?: number | null;
             /** Trade Type */
-            trade_type?: ("sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired") | null;
+            trade_type?: ("sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend") | null;
         };
         /**
          * UniverseRules

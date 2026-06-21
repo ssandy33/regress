@@ -53,12 +53,16 @@ def test_assert_seed_allowed_permits_non_production(env):
 
 @pytest.mark.unit
 @pytest.mark.ac("349-AC9")
-def test_build_archetypes_yields_seven_with_unique_keys():
-    """The frozen archetype list is exactly seven with distinct keys."""
+def test_build_archetypes_yields_eight_with_unique_keys():
+    """The frozen archetype list is exactly eight with distinct keys.
+
+    Was seven through v1.7; #382 added the ``imported_equity_cc`` equity-import
+    archetype, bringing the total to eight.
+    """
     archetypes = build_archetypes(_FIXED_NOW)
-    assert len(archetypes) == 7
+    assert len(archetypes) == 8
     keys = [a.key for a in archetypes]
-    assert len(set(keys)) == 7
+    assert len(set(keys)) == 8
 
 
 @pytest.mark.unit
@@ -156,6 +160,47 @@ def test_archetype_equity_adjusted_basis_has_premium_trades():
 
 
 @pytest.mark.unit
+@pytest.mark.ac("382-AC2")
+def test_archetype_imported_equity_cc_present_and_shaped():
+    """Archetype 8 (#382): imported equity + dividend + CC against the bought lot.
+
+    Proves the equity-import archetype exists and carries the v1.8.0 shape: two
+    ``buy_stock`` lots at 11.0/13.0, a qualified ``dividend`` income row at 30.0,
+    and a ``sell_call`` covering the 200 imported shares.
+    """
+    by_key = {a.key: a for a in build_archetypes(_FIXED_NOW)}
+    assert "imported_equity_cc" in by_key
+    arch = by_key["imported_equity_cc"]
+    assert arch.ticker == "SEEDH"
+    assert arch.shares == 200
+    assert arch.broker_cost_basis == 2400.0  # weighted avg $12/sh
+    assert arch.strategy == "cc"
+
+    buys = [t for t in arch.trades if t.trade_type == "buy_stock"]
+    assert len(buys) == 2
+    assert {b.unit_amount for b in buys} == {11.0, 13.0}
+    assert all(b.strike is None and b.expiration is None for b in buys)
+    assert all(b.quantity == 100 for b in buys)
+
+    dividends = [t for t in arch.trades if t.trade_type == "dividend"]
+    assert len(dividends) == 1
+    assert dividends[0].unit_amount == 30.0
+    assert dividends[0].close_reason == "Qualified Dividend"
+    assert dividends[0].quantity == 0
+    assert dividends[0].strike is None and dividends[0].expiration is None
+
+    # A 2-contract short call covers the 200 imported shares (#390 proof).
+    calls = [t for t in arch.trades if t.trade_type == "sell_call"]
+    assert len(calls) == 1
+    assert calls[0].strike == 15.0
+    assert calls[0].quantity == 2
+    # A live stub mark lights up the BTC/CC panel against the bought lot.
+    assert len(arch.marks) == 1
+    assert arch.marks[0].option_type == "call"
+    assert arch.marks[0].strike == 15.0
+
+
+@pytest.mark.unit
 @pytest.mark.ac("349-AC8")
 def test_seed_tag_prefix_is_frozen():
     """The sentinel prefix is the frozen contract literal."""
@@ -169,7 +214,7 @@ def test_expected_archetype_count_matches_built_list():
     The QA deploy fails if the post-seed count != this constant, so it must stay
     in lockstep with the archetype list (drift would falsely fail every deploy).
     """
-    assert EXPECTED_ARCHETYPE_COUNT == 7
+    assert EXPECTED_ARCHETYPE_COUNT == 8
     assert EXPECTED_ARCHETYPE_COUNT == len(build_archetypes(_FIXED_NOW))
 
 

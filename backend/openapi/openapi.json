@@ -2542,9 +2542,27 @@
       },
       "ImportPreviewTrade": {
         "properties": {
+          "close_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Reason"
+          },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "title": "Fees",
@@ -2567,8 +2585,15 @@
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "ticker": {
             "title": "Ticker",
@@ -2582,17 +2607,29 @@
               "sell_call",
               "buy_call_close",
               "called_away",
-              "expired"
+              "expired",
+              "buy_stock",
+              "sell_stock",
+              "dividend"
             ],
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "ticker",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "fees",
           "quantity",
@@ -2651,6 +2688,14 @@
           "skipped_duplicates": {
             "title": "Skipped Duplicates",
             "type": "integer"
+          },
+          "skipped_unmatched": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SkippedUnmatched"
+            },
+            "title": "Skipped Unmatched",
+            "type": "array"
           }
         },
         "required": [
@@ -3451,6 +3496,11 @@
             ],
             "title": "Closed At"
           },
+          "dividend_income": {
+            "default": 0.0,
+            "title": "Dividend Income",
+            "type": "number"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -3473,6 +3523,11 @@
           "opened_at": {
             "title": "Opened At",
             "type": "string"
+          },
+          "realized_equity_pl": {
+            "default": 0.0,
+            "title": "Realized Equity Pl",
+            "type": "number"
           },
           "shares": {
             "title": "Shares",
@@ -5187,6 +5242,30 @@
         "title": "SettingsResponse",
         "type": "object"
       },
+      "SkippedUnmatched": {
+        "description": "An equity sell skipped at import because no shares were available to draw on.\n\nSurfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the\nuser sees *why* a sell row was not inserted instead of silently dropping it.\nThe import-time pre-check is the user-visible half of the recomputer's\ndefensive ``shares_sold > shares`` guard.",
+        "properties": {
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "opened_at",
+          "quantity"
+        ],
+        "title": "SkippedUnmatched",
+        "type": "object"
+      },
       "StationarityResult": {
         "properties": {
           "adf_statistic": {
@@ -5444,14 +5523,6 @@
           "close_reason": {
             "anyOf": [
               {
-                "enum": [
-                  "fifty_pct_target",
-                  "full_expiration",
-                  "rolled",
-                  "closed_early",
-                  "assigned",
-                  "called_away"
-                ],
                 "type": "string"
               },
               {
@@ -5507,8 +5578,15 @@
             "title": "Earnings Buffer Days Hint"
           },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "default": 0.0,
@@ -5529,13 +5607,20 @@
           },
           "quantity": {
             "default": 1,
-            "minimum": 1.0,
+            "minimum": 0.0,
             "title": "Quantity",
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "trade_type": {
             "enum": [
@@ -5545,17 +5630,29 @@
               "sell_call",
               "buy_call_close",
               "called_away",
-              "expired"
+              "expired",
+              "buy_stock",
+              "sell_stock",
+              "dividend"
             ],
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "position_id",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "opened_at"
         ],
@@ -5618,8 +5715,15 @@
             "title": "Closed At"
           },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "title": "Fees",
@@ -5646,20 +5750,36 @@
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "trade_type": {
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "id",
           "position_id",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "fees",
           "quantity",
@@ -5777,7 +5897,10 @@
                   "sell_call",
                   "buy_call_close",
                   "called_away",
-                  "expired"
+                  "expired",
+                  "buy_stock",
+                  "sell_stock",
+                  "dividend"
                 ],
                 "type": "string"
               },
