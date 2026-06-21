@@ -2491,8 +2491,10 @@ export interface components {
         };
         /** ImportPreviewTrade */
         ImportPreviewTrade: {
+            /** Close Reason */
+            close_reason?: string | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /** Fees */
             fees: number;
             /** Is Duplicate */
@@ -2504,14 +2506,16 @@ export interface components {
             /** Quantity */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /** Ticker */
             ticker: string;
             /**
              * Trade Type
              * @enum {string}
              */
-            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired";
+            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend";
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /**
          * ImportRequest
@@ -3739,7 +3743,7 @@ export interface components {
         /** TradeCreate */
         TradeCreate: {
             /** Close Reason */
-            close_reason?: ("fifty_pct_target" | "full_expiration" | "rolled" | "closed_early" | "assigned" | "called_away") | null;
+            close_reason?: string | null;
             /** Closed At */
             closed_at?: string | null;
             /** Delta At Entry Hint */
@@ -3749,7 +3753,7 @@ export interface components {
             /** Earnings Buffer Days Hint */
             earnings_buffer_days_hint?: number | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /**
              * Fees
              * @default 0
@@ -3767,12 +3771,14 @@ export interface components {
              */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /**
              * Trade Type
              * @enum {string}
              */
-            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired";
+            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend";
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /**
          * TradeEvent
@@ -3836,7 +3842,7 @@ export interface components {
             /** Strike */
             strike?: number | null;
             /** Trade Type */
-            trade_type?: ("sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired") | null;
+            trade_type?: ("sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend") | null;
         };
         /**
          * UniverseRules

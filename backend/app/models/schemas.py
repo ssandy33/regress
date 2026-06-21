@@ -548,12 +548,21 @@ class PositionListResponse(BaseModel):
 class ImportPreviewTrade(BaseModel):
     ticker: str
     trade_type: TRADE_TYPES
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382/#385): a stock buy/sell or a
+    # dividend has no option strike/expiration. The preview UI renders these as
+    # an N/A placeholder (issue #389). Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows (issue #385): per-share cost
+    # (buy_stock/sell_stock) or total dividend $ (dividend). None for option rows.
+    unit_amount: Optional[float] = None
     fees: float
     quantity: int
     opened_at: str
+    # Holds the raw Schwab dividend sub-type (e.g. "Qualified Dividend") on
+    # dividend rows; None otherwise (issue #385, PRD #384 Q1).
+    close_reason: Optional[str] = None
     is_duplicate: bool
 
 

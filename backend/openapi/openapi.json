@@ -2542,9 +2542,27 @@
       },
       "ImportPreviewTrade": {
         "properties": {
+          "close_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Reason"
+          },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "title": "Fees",
@@ -2567,8 +2585,15 @@
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "ticker": {
             "title": "Ticker",
@@ -2582,17 +2607,29 @@
               "sell_call",
               "buy_call_close",
               "called_away",
-              "expired"
+              "expired",
+              "buy_stock",
+              "sell_stock",
+              "dividend"
             ],
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "ticker",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "fees",
           "quantity",
@@ -5444,14 +5481,6 @@
           "close_reason": {
             "anyOf": [
               {
-                "enum": [
-                  "fifty_pct_target",
-                  "full_expiration",
-                  "rolled",
-                  "closed_early",
-                  "assigned",
-                  "called_away"
-                ],
                 "type": "string"
               },
               {
@@ -5507,8 +5536,15 @@
             "title": "Earnings Buffer Days Hint"
           },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "default": 0.0,
@@ -5529,13 +5565,20 @@
           },
           "quantity": {
             "default": 1,
-            "minimum": 1.0,
+            "minimum": 0.0,
             "title": "Quantity",
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "trade_type": {
             "enum": [
@@ -5545,17 +5588,29 @@
               "sell_call",
               "buy_call_close",
               "called_away",
-              "expired"
+              "expired",
+              "buy_stock",
+              "sell_stock",
+              "dividend"
             ],
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "position_id",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "opened_at"
         ],
@@ -5777,7 +5832,10 @@
                   "sell_call",
                   "buy_call_close",
                   "called_away",
-                  "expired"
+                  "expired",
+                  "buy_stock",
+                  "sell_stock",
+                  "dividend"
                 ],
                 "type": "string"
               },

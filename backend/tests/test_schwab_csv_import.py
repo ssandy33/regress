@@ -298,37 +298,46 @@ class TestImportCsvPreviewEndpoint:
 
     @pytest.mark.integration
     def test_preview_returns_correct_shape(self, client):
+        # Bridge edit (issue #385): the equity STOCK_BUY_ROW is now recognized
+        # alongside the two option rows, so the preview counts all three. The
+        # equity row carries N/A (None) strike/expiration and a unit_amount.
         resp = client.post(
             "/api/journal/import/csv/preview",
             files=_csv_file(_csv([SELL_PUT_ROW, SELL_CALL_ROW, STOCK_BUY_ROW])),
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 2
-        assert data["new_count"] == 2
+        assert data["total"] == 3
+        assert data["new_count"] == 3
         assert data["duplicates"] == 0
         # CSV path has no account number — UI handles the empty value.
         assert data["account_number"] == ""
         tickers = sorted(t["ticker"] for t in data["trades"])
-        assert tickers == ["F", "SOFI"]
+        assert tickers == ["AAPL", "F", "SOFI"]
         for trade in data["trades"]:
             assert trade["is_duplicate"] is False
+        equity = next(t for t in data["trades"] if t["trade_type"] == "buy_stock")
+        assert equity["strike"] is None
+        assert equity["expiration"] is None
+        assert equity["unit_amount"] == 150.0
 
     @pytest.mark.integration
-    def test_preview_with_only_non_options_returns_empty(self, client):
+    def test_preview_counts_equity_and_ignores_transfers(self, client):
+        # Bridge edit (issue #385): equity rows are no longer "non-options =
+        # empty". A stock buy and a dividend are recognized and counted; a pure
+        # cash transfer (ACH) is still ignored. Replaces the old
+        # ``test_preview_with_only_non_options_returns_empty`` whose premise
+        # (equity → empty) AC1a overturns.
         resp = client.post(
             "/api/journal/import/csv/preview",
             files=_csv_file(_csv([STOCK_BUY_ROW, DIVIDEND_ROW, ACH_ROW])),
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data == {
-            "account_number": "",
-            "trades": [],
-            "total": 0,
-            "duplicates": 0,
-            "new_count": 0,
-        }
+        assert data["total"] == 2
+        assert data["new_count"] == 2
+        types = sorted(t["trade_type"] for t in data["trades"])
+        assert types == ["buy_stock", "dividend"]
 
     @pytest.mark.integration
     def test_preview_does_not_leak_exception_message(self, client):
