@@ -2688,6 +2688,14 @@
           "skipped_duplicates": {
             "title": "Skipped Duplicates",
             "type": "integer"
+          },
+          "skipped_unmatched": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SkippedUnmatched"
+            },
+            "title": "Skipped Unmatched",
+            "type": "array"
           }
         },
         "required": [
@@ -5232,6 +5240,30 @@
           "theme"
         ],
         "title": "SettingsResponse",
+        "type": "object"
+      },
+      "SkippedUnmatched": {
+        "description": "An equity sell skipped at import because no shares were available to draw on.\n\nSurfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the\nuser sees *why* a sell row was not inserted instead of silently dropping it.\nThe import-time pre-check is the user-visible half of the recomputer's\ndefensive ``shares_sold > shares`` guard.",
+        "properties": {
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "opened_at",
+          "quantity"
+        ],
+        "title": "SkippedUnmatched",
         "type": "object"
       },
       "StationarityResult": {

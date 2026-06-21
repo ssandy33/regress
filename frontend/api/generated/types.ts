@@ -2542,6 +2542,11 @@ export interface components {
             positions_created: number;
             /** Skipped Duplicates */
             skipped_duplicates: number;
+            /**
+             * Skipped Unmatched
+             * @default []
+             */
+            skipped_unmatched: components["schemas"]["SkippedUnmatched"][];
         };
         /** LinearRegressionRequest */
         LinearRegressionRequest: {
@@ -3642,6 +3647,23 @@ export interface components {
             key: string;
             /** Value */
             value: string;
+        };
+        /**
+         * SkippedUnmatched
+         * @description An equity sell skipped at import because no shares were available to draw on.
+         *
+         *     Surfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the
+         *     user sees *why* a sell row was not inserted instead of silently dropping it.
+         *     The import-time pre-check is the user-visible half of the recomputer's
+         *     defensive ``shares_sold > shares`` guard.
+         */
+        SkippedUnmatched: {
+            /** Opened At */
+            opened_at: string;
+            /** Quantity */
+            quantity: number;
+            /** Ticker */
+            ticker: string;
         };
         /** StationarityResult */
         StationarityResult: {
