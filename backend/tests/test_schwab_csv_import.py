@@ -160,14 +160,18 @@ class TestParseSchwabCsv:
             ACH_ROW,
         ]
         result = parse_schwab_csv(_csv(rows))
-        # Five options rows survive; three non-options skipped silently.
-        assert len(result) == 5
+        # Bridge edit (issue #385): five options rows survive PLUS the stock
+        # buy and dividend rows are now recognized as equity trades. Only the
+        # ACH transfer is skipped silently.
+        assert len(result) == 7
         trade_types = sorted(r["trade_type"] for r in result)
-        # "Expired" now maps to its own trade_type (issue #127); previously
-        # an expired call was conflated with called_away.
+        # "Expired" maps to its own trade_type (issue #127); buy_stock and
+        # dividend are the new equity types (issue #385).
         assert trade_types == [
             "assignment",
             "buy_put_close",
+            "buy_stock",
+            "dividend",
             "expired",
             "sell_call",
             "sell_put",
@@ -175,8 +179,12 @@ class TestParseSchwabCsv:
 
     @pytest.mark.unit
     def test_non_options_rows_skipped(self):
+        # Bridge edit (issue #385): STOCK_BUY_ROW and DIVIDEND_ROW are now
+        # recognized as equity/dividend trades. Only genuine non-equity noise
+        # (ACH transfer) is still silently skipped.
         result = parse_schwab_csv(_csv([STOCK_BUY_ROW, DIVIDEND_ROW, ACH_ROW]))
-        assert result == []
+        trade_types = sorted(r["trade_type"] for r in result)
+        assert trade_types == ["buy_stock", "dividend"]
 
     @pytest.mark.unit
     def test_unknown_action_skipped(self):
@@ -435,3 +443,168 @@ class TestImportCsvEndpoint:
             )
         assert resp.status_code == 422
         assert "internal secret" not in resp.json()["detail"]
+
+
+# --- Equity / dividend parsing unit tests (issue #385) ----------------------
+#
+# L1 parser support for stock buys, stock sells, and dividends. Equity rows
+# carry a plain ticker the option parser rejects; their mapped-dict shape is the
+# frozen contract: premium is always 0.0 (money flows through ``unit_amount``),
+# strike/expiration are None, and dividends stash the raw Schwab action verb in
+# ``close_reason``. Appended at EOF per the parallel-execution convention.
+
+# Equity-style CSV rows: Action is Buy/Sell/<dividend verb>, Symbol is a plain
+# ticker. Columns: Date,Action,Symbol,Description,Quantity,Price,Fees & Comm,Amount
+EQUITY_BUY_ROW = '03/01/2026,Buy,AAPL,APPLE INC,100,150.00,1.00,(15001.00)'
+EQUITY_SELL_ROW = '03/05/2026,Sell,F,FORD MOTOR CO,200,13.25,0.50,2649.50'
+EQUITY_BUY_NO_PRICE_ROW = '03/02/2026,Buy,MSFT,MICROSOFT CORP,10,,0.00,(4000.00)'
+CASH_DIV_ROW = '03/15/2026,Cash Dividend,AAPL,APPLE INC,,,,25.00'
+QUALIFIED_DIV_ROW = '03/16/2026,Qualified Dividend,F,FORD MOTOR CO,,,,12.34'
+ORDINARY_DIV_ROW = '03/17/2026,Ordinary Dividend,MSFT,MICROSOFT CORP,,,,8.00'
+
+
+class TestParseEquityRows:
+    """Cover equity buy/sell + dividend mapping (issue #385, AC1a-AC1e, AC4a)."""
+
+    @pytest.mark.unit
+    def test_buy_stock_mapping(self):
+        result = parse_schwab_csv(_csv([EQUITY_BUY_ROW]))
+        assert len(result) == 1
+        row = result[0]
+        assert row["ticker"] == "AAPL"
+        assert row["trade_type"] == "buy_stock"
+        # Per-share price from the Price column.
+        assert row["unit_amount"] == pytest.approx(150.00, abs=1e-4)
+        assert row["quantity"] == 100
+        # Equity money never flows through premium — it would corrupt the
+        # position headline (premium x qty x 100 over all trades).
+        assert row["premium"] == 0.0
+        assert row["strike"] is None
+        assert row["expiration"] is None
+        assert row["close_reason"] is None
+        assert row["fees"] == 1.00
+        assert row["opened_at"] == "2026-03-01"
+
+    @pytest.mark.unit
+    def test_sell_stock_mapping(self):
+        result = parse_schwab_csv(_csv([EQUITY_SELL_ROW]))
+        assert len(result) == 1
+        row = result[0]
+        assert row["ticker"] == "F"
+        assert row["trade_type"] == "sell_stock"
+        assert row["unit_amount"] == pytest.approx(13.25, abs=1e-4)
+        assert row["quantity"] == 200
+        assert row["premium"] == 0.0
+        assert row["strike"] is None
+        assert row["expiration"] is None
+        assert row["close_reason"] is None
+
+    @pytest.mark.unit
+    def test_buy_stock_price_missing_falls_back_to_amount(self):
+        # No Price column value: unit_amount = abs(Amount) / quantity.
+        result = parse_schwab_csv(_csv([EQUITY_BUY_NO_PRICE_ROW]))
+        assert len(result) == 1
+        row = result[0]
+        assert row["trade_type"] == "buy_stock"
+        # 4000.00 / 10 = 400.00 per share.
+        assert row["unit_amount"] == pytest.approx(400.00, abs=1e-4)
+        assert row["quantity"] == 10
+
+    @pytest.mark.unit
+    def test_dividend_mapping(self):
+        result = parse_schwab_csv(_csv([CASH_DIV_ROW]))
+        assert len(result) == 1
+        row = result[0]
+        assert row["ticker"] == "AAPL"
+        assert row["trade_type"] == "dividend"
+        # Dividend unit_amount is the TOTAL dollar amount, not per-share.
+        assert row["unit_amount"] == pytest.approx(25.00, abs=1e-2)
+        # A dividend moves no shares.
+        assert row["quantity"] == 0
+        assert row["premium"] == 0.0
+        assert row["strike"] is None
+        assert row["expiration"] is None
+        # Raw Schwab sub-type verbatim for future tax-bucket reporting.
+        assert row["close_reason"] == "Cash Dividend"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "row,expected_reason",
+        [
+            (CASH_DIV_ROW, "Cash Dividend"),
+            (QUALIFIED_DIV_ROW, "Qualified Dividend"),
+            (ORDINARY_DIV_ROW, "Ordinary Dividend"),
+        ],
+    )
+    def test_dividend_subtype_variants(self, row, expected_reason):
+        # All dividend sub-types classify as dividend and preserve the raw verb.
+        result = parse_schwab_csv(_csv([row]))
+        assert len(result) == 1
+        assert result[0]["trade_type"] == "dividend"
+        assert result[0]["close_reason"] == expected_reason
+
+    @pytest.mark.unit
+    def test_dividend_contains_fallback_recognizes_unseen_verb(self):
+        # A verb not in the explicit set but containing "dividend" still maps.
+        row = '03/18/2026,Pr Yr Special Dividend,AAPL,APPLE INC,,,,5.00'
+        result = parse_schwab_csv(_csv([row]))
+        assert len(result) == 1
+        assert result[0]["trade_type"] == "dividend"
+        assert result[0]["close_reason"] == "Pr Yr Special Dividend"
+
+    @pytest.mark.unit
+    def test_equity_only_csv_returns_count_gt_zero(self):
+        # AC1a: an all-equity CSV no longer parses to empty.
+        result = parse_schwab_csv(_csv([EQUITY_BUY_ROW, EQUITY_SELL_ROW, CASH_DIV_ROW]))
+        assert len(result) == 3
+        assert sorted(r["trade_type"] for r in result) == [
+            "buy_stock",
+            "dividend",
+            "sell_stock",
+        ]
+
+    @pytest.mark.unit
+    def test_unrecognized_equity_verb_logs_and_skips(self, caplog):
+        # AC1e: a plain-ticker row with a money Amount but an unclassifiable
+        # verb must log a structured warning and be skipped — not crash, not
+        # counted.
+        # Plain ticker + a money Amount trips the equity-activity heuristic.
+        row = '03/19/2026,Stock Split,AAPL,APPLE INC SPLIT,5,,0.00,500.00'
+        with caplog.at_level("WARNING"):
+            result = parse_schwab_csv(_csv([row]))
+        assert result == []
+        events = [
+            rec for rec in caplog.records
+            if getattr(rec, "event", None) == "equity_row.skipped"
+        ]
+        assert len(events) == 1
+        assert events[0].ticker == "AAPL"
+        assert events[0].outcome == "no_data"
+
+    @pytest.mark.unit
+    def test_mixed_options_and_equity_parses_both(self):
+        # Options rows and equity rows both survive in one file.
+        rows = [SELL_PUT_ROW, EQUITY_BUY_ROW, CASH_DIV_ROW, EXPIRED_CALL_ROW]
+        result = parse_schwab_csv(_csv(rows))
+        assert len(result) == 4
+        by_type = sorted(r["trade_type"] for r in result)
+        assert by_type == ["buy_stock", "dividend", "expired", "sell_put"]
+        # The option row keeps its option shape (non-null strike/expiration).
+        sell_put = next(r for r in result if r["trade_type"] == "sell_put")
+        assert sell_put["strike"] == 13.50
+        assert sell_put["expiration"] == "2026-03-27"
+
+    @pytest.mark.unit
+    def test_equity_buy_zero_quantity_logs_and_skips(self, caplog):
+        # A share-moving row with no positive quantity is skipped with a warning
+        # rather than emitting a divide-by-zero or a 0-share trade.
+        row = '03/01/2026,Buy,AAPL,APPLE INC,0,150.00,0.00,0.00'
+        with caplog.at_level("WARNING"):
+            result = parse_schwab_csv(_csv([row]))
+        assert result == []
+        events = [
+            rec for rec in caplog.records
+            if getattr(rec, "event", None) == "equity_row.skipped"
+        ]
+        assert len(events) == 1
+        assert events[0].ticker == "AAPL"
