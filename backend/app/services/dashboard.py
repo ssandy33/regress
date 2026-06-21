@@ -598,6 +598,14 @@ def _build_kpis(
     realized_pl, realized_pl_pct = _compute_realized_pl(closed_positions)
     equity_realized_pl = _sum_equity_realized_pl(all_positions)
     realized_pl += equity_realized_pl
+    # ``realized_pl_pct`` from _compute_realized_pl describes only the
+    # closed-position premium numerator over its cost basis. Once equity
+    # realized P&L is folded into the amount, the percent no longer refers to
+    # the same numerator and there is no single coherent denominator (equity
+    # P&L can come from still-open partial sells). Null it rather than report a
+    # mismatched percent (CodeRabbit, PR #392).
+    if equity_realized_pl != 0:
+        realized_pl_pct = None
 
     return {
         "open_positions": open_positions_count,

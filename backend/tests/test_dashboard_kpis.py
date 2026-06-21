@@ -472,3 +472,7 @@ class TestSumEquityRealizedPl:
         )
         # 400 (closed premium) + 300 (open equity realized) = 700.
         assert kpis["realized_pl"] == pytest.approx(700.0)
+        # With an equity component folded in, the percent has no coherent
+        # shared denominator and is nulled rather than reported mismatched
+        # (CodeRabbit, PR #392).
+        assert kpis["realized_pl_pct"] is None

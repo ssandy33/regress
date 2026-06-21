@@ -2,7 +2,7 @@ from typing import Literal, Optional
 
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DateRange(BaseModel):
@@ -439,6 +439,28 @@ class TradeCreate(BaseModel):
     dte_at_entry_hint: Optional[int] = Field(default=None, ge=0)
     delta_at_entry_hint: Optional[float] = Field(default=None, allow_inf_nan=False)
     earnings_buffer_days_hint: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _require_strike_expiration_for_options(self) -> "TradeCreate":
+        """Option rows must carry strike + expiration; equity rows must not.
+
+        ``strike``/``expiration`` were relaxed to Optional for equity import
+        (issue #382), but the position recomputer still dereferences
+        ``float(trade.strike)`` on every option branch. Without this guard a
+        manually-created option trade (e.g. ``sell_put``) with a null strike
+        would validate here and then crash recompute. Equity/dividend rows
+        (``buy_stock``/``sell_stock``/``dividend``) legitimately leave both
+        None (CodeRabbit, PR #392).
+        """
+        equity_types = {"buy_stock", "sell_stock", "dividend"}
+        if self.trade_type not in equity_types:
+            if self.strike is None:
+                raise ValueError(f"strike is required for trade_type {self.trade_type!r}")
+            if self.expiration is None:
+                raise ValueError(
+                    f"expiration is required for trade_type {self.trade_type!r}"
+                )
+        return self
 
 
 class TradeUpdate(BaseModel):

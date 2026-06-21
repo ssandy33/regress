@@ -1,4 +1,5 @@
 import logging
+import time
 
 from sqlalchemy import (
     Column,
@@ -369,6 +370,7 @@ def _migrate_trades_equity_columns(bind) -> None:
         # Already migrated — relaxed nullability and the new column are present.
         return
 
+    migration_started = time.perf_counter()
     logger.info(
         "Migrating trades table for equity import (issue #382): "
         "relaxing strike/expiration NOT NULL and adding unit_amount",
@@ -389,9 +391,11 @@ def _migrate_trades_equity_columns(bind) -> None:
     with bind.begin() as conn:
         conn.execute(text("DROP TABLE IF EXISTS trades_new"))
         conn.execute(text(create_new_sql))
+        # column_list is built from Trade.__table__ ORM metadata (above), not
+        # from any user input, so the f-string interpolation is safe.
         conn.execute(
             text(
-                f"INSERT INTO trades_new ({column_list}) "
+                f"INSERT INTO trades_new ({column_list}) "  # noqa: S608
                 f"SELECT {column_list} FROM trades"
             )
         )
@@ -400,7 +404,11 @@ def _migrate_trades_equity_columns(bind) -> None:
 
     logger.info(
         "trades table migration complete (issue #382)",
-        extra={"event": "trades_migration.complete", "outcome": "success"},
+        extra={
+            "event": "trades_migration.complete",
+            "outcome": "success",
+            "duration_ms": int((time.perf_counter() - migration_started) * 1000),
+        },
     )
 
 
