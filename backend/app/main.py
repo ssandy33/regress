@@ -137,7 +137,7 @@ def _run_security_checks():
 app = FastAPI(
     title="Financial Regression Analysis Tool",
     description="Backend API for financial data fetching, caching, and regression analysis",
-    version="1.6.1",
+    version="1.8.0",
     lifespan=lifespan,
 )
 
