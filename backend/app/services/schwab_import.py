@@ -220,6 +220,59 @@ def is_duplicate(
     return query.first() is not None
 
 
+def _detect_unmatched_sells(db: Session, mapped_trades: list[dict]) -> set[int]:
+    """Return the indices of ``mapped_trades`` that are equity sells with no
+    shares to draw on.
+
+    Replays the same per-ticker running-share simulation
+    :func:`execute_mapped_import` uses, so the preview and the execute path
+    AGREE on exactly which ``sell_stock`` rows will be skipped as unmatched
+    (AC3c / PRD #384 Q2). Seeds each ticker from its existing open position so a
+    sell can legitimately draw on already-owned/assigned shares; buys earlier in
+    the same import grow the balance; duplicate rows are already reflected in the
+    existing share count and do not move the balance.
+    """
+    running: dict[str, int] = {}
+    unmatched: set[int] = set()
+
+    def _seed(ticker: str) -> int:
+        if ticker not in running:
+            existing = (
+                db.query(Position)
+                .filter(Position.ticker == ticker, Position.status == "open")
+                .order_by(Position.opened_at.desc())
+                .first()
+            )
+            running[ticker] = existing.shares if existing else 0
+        return running[ticker]
+
+    for idx, mapped in enumerate(mapped_trades):
+        ticker = mapped["ticker"]
+        trade_type = mapped["trade_type"]
+        quantity = mapped.get("quantity") or 0
+        if is_duplicate(
+            db,
+            ticker,
+            mapped.get("strike"),
+            mapped.get("expiration"),
+            trade_type,
+            mapped["opened_at"],
+            unit_amount=mapped.get("unit_amount"),
+            quantity=mapped.get("quantity"),
+            close_reason=mapped.get("close_reason"),
+        ):
+            continue
+        if trade_type == "buy_stock":
+            running[ticker] = _seed(ticker) + quantity
+        elif trade_type == "sell_stock":
+            available = _seed(ticker)
+            if quantity > available:
+                unmatched.add(idx)
+                continue
+            running[ticker] = available - quantity
+    return unmatched
+
+
 def build_preview(
     db: Session,
     mapped_trades: list[dict],
@@ -229,14 +282,19 @@ def build_preview(
 
     Shared between the API preview path (``preview_import``) and the CSV
     preview path so both produce identical response shapes and apply the same
-    duplicate-detection logic.
+    duplicate-detection logic. Equity sells that cannot be covered are flagged
+    ``is_unmatched`` (and excluded from ``new_count``) so the user sees, before
+    confirming, that they will be skipped — matching what
+    :func:`execute_mapped_import` actually does (AC3c / PRD #384 Q2).
     """
     masked_account = (
         f"****{account_number[-4:]}" if len(account_number) >= 4 else account_number
     )
+    unmatched_indices = _detect_unmatched_sells(db, mapped_trades)
     trades: list[dict] = []
     duplicates = 0
-    for mapped in mapped_trades:
+    unmatched = 0
+    for idx, mapped in enumerate(mapped_trades):
         dup = is_duplicate(
             db,
             mapped["ticker"],
@@ -248,16 +306,20 @@ def build_preview(
             quantity=mapped.get("quantity"),
             close_reason=mapped.get("close_reason"),
         )
+        is_unmatched = idx in unmatched_indices
         if dup:
             duplicates += 1
-        trades.append({**mapped, "is_duplicate": dup})
+        elif is_unmatched:
+            unmatched += 1
+        trades.append({**mapped, "is_duplicate": dup, "is_unmatched": is_unmatched})
 
     return {
         "account_number": masked_account,
         "trades": trades,
         "total": len(trades),
         "duplicates": duplicates,
-        "new_count": len(trades) - duplicates,
+        "unmatched": unmatched,
+        "new_count": len(trades) - duplicates - unmatched,
     }
 
 
@@ -295,26 +357,16 @@ def execute_mapped_import(
     seen_position_ids: set[str] = set()
     skipped_unmatched: list[dict] = []
 
-    # Per-ticker running share balance, seeded from each ticker's existing open
-    # position so an equity sell can legitimately draw on already-owned /
-    # assigned shares. Lazily populated the first time a ticker is seen.
-    running_shares: dict[str, int] = {}
+    # Unmatched-sell pre-check (AC3c): equity sells with no shares to draw on
+    # are skipped and recorded, never inserted (prevents negative shares at the
+    # user-visible layer). Computed once here from the SAME simulation
+    # ``build_preview`` uses, so the preview's "will skip" flag and what we
+    # actually skip can never drift.
+    unmatched_indices = _detect_unmatched_sells(db, mapped_trades)
 
-    def _seed_running_shares(ticker: str) -> int:
-        if ticker not in running_shares:
-            existing = (
-                db.query(Position)
-                .filter(Position.ticker == ticker, Position.status == "open")
-                .order_by(Position.opened_at.desc())
-                .first()
-            )
-            running_shares[ticker] = existing.shares if existing else 0
-        return running_shares[ticker]
-
-    for mapped in mapped_trades:
+    for idx, mapped in enumerate(mapped_trades):
         ticker = mapped["ticker"]
         trade_type = mapped["trade_type"]
-        quantity = mapped.get("quantity") or 0
 
         if is_duplicate(
             db,
@@ -327,36 +379,26 @@ def execute_mapped_import(
             quantity=mapped.get("quantity"),
             close_reason=mapped.get("close_reason"),
         ):
-            # A duplicate equity row is already reflected in the existing
-            # position's share balance — do NOT touch ``running_shares``.
             skipped += 1
             continue
 
-        # Unmatched-sell pre-check (AC3c): an equity sell with no shares to draw
-        # from is skipped and recorded, never inserted (prevents negative shares
-        # at the user-visible layer). Buys grow the running balance.
-        if trade_type == "buy_stock":
-            running_shares[ticker] = _seed_running_shares(ticker) + quantity
-        elif trade_type == "sell_stock":
-            available = _seed_running_shares(ticker)
-            if quantity > available:
-                logger.warning(
-                    "Skipping unmatched equity sell with no shares to draw on",
-                    extra={
-                        "event": "equity_import.unmatched_sell",
-                        "outcome": "no_data",
-                        "ticker": ticker,
-                    },
-                )
-                skipped_unmatched.append(
-                    {
-                        "ticker": ticker,
-                        "opened_at": mapped["opened_at"],
-                        "quantity": quantity,
-                    }
-                )
-                continue
-            running_shares[ticker] = available - quantity
+        if idx in unmatched_indices:
+            logger.warning(
+                "Skipping unmatched equity sell with no shares to draw on",
+                extra={
+                    "event": "equity_import.unmatched_sell",
+                    "outcome": "no_data",
+                    "ticker": ticker,
+                },
+            )
+            skipped_unmatched.append(
+                {
+                    "ticker": ticker,
+                    "opened_at": mapped["opened_at"],
+                    "quantity": mapped.get("quantity") or 0,
+                }
+            )
+            continue
 
         position = (
             db.query(Position)

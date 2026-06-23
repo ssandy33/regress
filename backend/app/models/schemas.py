@@ -597,6 +597,10 @@ class ImportPreviewTrade(BaseModel):
     # dividend rows; None otherwise (issue #385, PRD #384 Q1).
     close_reason: Optional[str] = None
     is_duplicate: bool
+    # True for an equity sell with no shares to draw on — it will be skipped at
+    # import time, so the preview flags it instead of showing "New" (AC3c /
+    # PRD #384 Q2). Default False so option/buy/dividend rows are unaffected.
+    is_unmatched: bool = False
 
 
 class ImportPreviewResponse(BaseModel):
@@ -604,6 +608,9 @@ class ImportPreviewResponse(BaseModel):
     trades: list[ImportPreviewTrade]
     total: int
     duplicates: int
+    # Count of rows flagged ``is_unmatched`` (unmatched equity sells that will be
+    # skipped on import). Default 0; excluded from ``new_count`` (issue: AC3c).
+    unmatched: int = 0
     new_count: int
 
 
