@@ -338,3 +338,65 @@ test.describe('Equity journal rendering (issues #389 + #387) @e2e', () => {
     await expect(dividendRow.getByTestId('na-placeholder')).toHaveCount(3);
   });
 });
+
+// --- Unmatched-sell surfacing (AC3c / PRD #384 Q2) ---------------------------
+
+// A buy + an unmatched sell (no prior shares): the sell is flagged in the
+// preview and reported in the result instead of being silently dropped.
+const UNMATCHED_PREVIEW = {
+  account_number: '',
+  trades: [
+    {
+      ticker: 'F', trade_type: 'buy_stock', strike: null, expiration: null,
+      premium: 0.0, unit_amount: 11.0, fees: 0.0, quantity: 100,
+      opened_at: '2026-03-01', close_reason: null, is_duplicate: false, is_unmatched: false,
+    },
+    {
+      ticker: 'T', trade_type: 'sell_stock', strike: null, expiration: null,
+      premium: 0.0, unit_amount: 18.0, fees: 0.65, quantity: 100,
+      opened_at: '2026-03-28', close_reason: null, is_duplicate: false, is_unmatched: true,
+    },
+  ],
+  total: 2, duplicates: 0, unmatched: 1, new_count: 1,
+};
+
+const UNMATCHED_RESULT = {
+  imported: 1, skipped_duplicates: 0, positions_created: 1,
+  skipped_unmatched: [{ ticker: 'T', opened_at: '2026-03-28', quantity: 100 }],
+};
+
+test.describe('Unmatched equity sells (AC3c / PRD #384 Q2) @e2e', () => {
+  test.beforeEach(async ({ page }) => {
+    await setupPreviewMocks(page, UNMATCHED_PREVIEW);
+    await page.goto('/journal');
+  });
+
+  test('preview flags the unmatched sell and counts it', async ({ page }) => {
+    await openCsvPreview(page);
+    const badge = page.getByTestId('unmatched-badge');
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toContainText('Unmatched');
+    await expect(page.getByTestId('import-preview')).toContainText('1 unmatched');
+  });
+
+  test('result modal reports the skipped unmatched sell', async ({ page }) => {
+    await page.route('**/api/journal/import/csv', (route) => {
+      if (route.request().method() === 'POST') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(UNMATCHED_RESULT),
+        });
+      }
+      return route.continue();
+    });
+    await openCsvPreview(page);
+    await page.getByTestId('confirm-import-btn').click();
+    const result = page.getByTestId('import-result');
+    await expect(result).toBeVisible();
+    const warning = page.getByTestId('import-unmatched-warning');
+    await expect(warning).toBeVisible();
+    await expect(warning).toContainText('Skipped 1 unmatched');
+    await expect(warning).toContainText('T');
+  });
+});

@@ -2528,6 +2528,11 @@
             },
             "title": "Trades",
             "type": "array"
+          },
+          "unmatched": {
+            "default": 0,
+            "title": "Unmatched",
+            "type": "integer"
           }
         },
         "required": [
@@ -2570,6 +2575,11 @@
           },
           "is_duplicate": {
             "title": "Is Duplicate",
+            "type": "boolean"
+          },
+          "is_unmatched": {
+            "default": false,
+            "title": "Is Unmatched",
             "type": "boolean"
           },
           "opened_at": {

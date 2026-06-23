@@ -175,6 +175,22 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                 <li>Positions created: {result.positions_created}</li>
               </ul>
             </div>
+            {result.skipped_unmatched && result.skipped_unmatched.length > 0 && (
+              <div
+                data-testid="import-unmatched-warning"
+                className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4"
+              >
+                <p className="text-amber-800 dark:text-amber-200 font-medium">
+                  Skipped {result.skipped_unmatched.length} unmatched{' '}
+                  {result.skipped_unmatched.length === 1 ? 'sell' : 'sells'}
+                </p>
+                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+                  These stock sells had no prior shares to draw on (
+                  {[...new Set(result.skipped_unmatched.map((s) => s.ticker))].join(', ')}
+                  ). Import the matching buys first, then re-import to capture them.
+                </p>
+              </div>
+            )}
             <button onClick={onClose} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
               Done
             </button>
@@ -183,7 +199,8 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
           <div data-testid="import-preview" className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-400">
               {preview.account_number ? `Account: ${preview.account_number} | ` : ''}
-              {preview.total} trades found | {preview.duplicates} duplicates | {preview.new_count} new
+              {preview.total} trades found | {preview.duplicates} duplicates
+              {preview.unmatched > 0 ? ` | ${preview.unmatched} unmatched` : ''} | {preview.new_count} new
             </p>
 
             {emptyPreview && mode === MODES.API && (
@@ -280,6 +297,10 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                           {t.is_duplicate ? (
                             <span data-testid="duplicate-badge" className="px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                               Duplicate
+                            </span>
+                          ) : t.is_unmatched ? (
+                            <span data-testid="unmatched-badge" title="No prior shares to draw on — will be skipped on import" className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                              Unmatched — will skip
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">

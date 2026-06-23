@@ -2488,6 +2488,11 @@ export interface components {
             total: number;
             /** Trades */
             trades: components["schemas"]["ImportPreviewTrade"][];
+            /**
+             * Unmatched
+             * @default 0
+             */
+            unmatched: number;
         };
         /** ImportPreviewTrade */
         ImportPreviewTrade: {
@@ -2499,6 +2504,11 @@ export interface components {
             fees: number;
             /** Is Duplicate */
             is_duplicate: boolean;
+            /**
+             * Is Unmatched
+             * @default false
+             */
+            is_unmatched: boolean;
             /** Opened At */
             opened_at: string;
             /** Premium */

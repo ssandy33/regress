@@ -834,3 +834,88 @@ class TestDedupDiscriminatorComposition:
         # Option lifecycle types are NOT equity — they keep the 5-tuple key.
         assert "sell_put" not in _EQUITY_TRADE_TYPES
         assert "assignment" not in _EQUITY_TRADE_TYPES
+
+
+@pytest.mark.integration
+class TestPreviewFlagsUnmatchedSells:
+    """The preview must flag unmatched equity sells (AC3c / PRD #384 Q2) and the
+    flag must agree with what execute_mapped_import actually skips."""
+
+    def test_preview_flags_unmatched_sell_and_excludes_from_new_count(self, db_session):
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("F", "sell_stock", "2026-03-20", unit_amount=15.0, quantity=50),
+            _equity_mapped("T", "sell_stock", "2026-03-28", unit_amount=18.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)
+
+        assert preview["total"] == 3
+        assert preview["duplicates"] == 0
+        assert preview["unmatched"] == 1
+        # buy F + matched sell F count as importable; the unmatched T sell does not.
+        assert preview["new_count"] == 2
+
+        by_ticker = {(t["ticker"], t["trade_type"]): t for t in preview["trades"]}
+        assert by_ticker[("T", "sell_stock")]["is_unmatched"] is True
+        assert by_ticker[("F", "sell_stock")]["is_unmatched"] is False
+        assert by_ticker[("F", "buy_stock")]["is_unmatched"] is False
+
+    def test_preview_flag_agrees_with_execute_skip(self, db_session):
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("T", "sell_stock", "2026-03-28", unit_amount=18.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)  # read-only
+        result = execute_mapped_import(db_session, mapped)
+
+        # The preview's unmatched count must equal what execute actually skipped.
+        assert preview["unmatched"] == len(result["skipped_unmatched"]) == 1
+        assert result["skipped_unmatched"][0]["ticker"] == "T"
+        assert result["imported"] == 1  # only the F buy
+
+    def test_preview_no_unmatched_when_all_sells_covered(self, db_session):
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("F", "sell_stock", "2026-03-20", unit_amount=15.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 0
+        assert all(t["is_unmatched"] is False for t in preview["trades"])
+
+    def test_buy_listed_after_sell_but_earlier_in_time_is_matched(self, db_session):
+        # CodeRabbit #397: Schwab exports are often newest-first, so the sell can
+        # be listed ABOVE the buy that covers it. Chronological simulation must
+        # NOT flag it as unmatched.
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "sell_stock", "2026-03-20", unit_amount=15.0, quantity=50),
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 0
+        assert all(t["is_unmatched"] is False for t in preview["trades"])
+
+        result = execute_mapped_import(db_session, mapped)
+        assert result["skipped_unmatched"] == []
+        assert result["imported"] == 2
+
+    def test_sell_chronologically_before_any_buy_is_unmatched(self, db_session):
+        # The sell (01-01) genuinely precedes the buy (02-01) in time, even though
+        # the buy is listed first -> correctly flagged unmatched.
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-02-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("F", "sell_stock", "2026-01-01", unit_amount=15.0, quantity=50),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 1
+        by = {(t["ticker"], t["trade_type"]): t for t in preview["trades"]}
+        assert by[("F", "sell_stock")]["is_unmatched"] is True
