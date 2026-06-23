@@ -188,7 +188,12 @@ jobs:
               if [ -z "$svc" ]; then echo "::warning::digest-assert: no '${role}' service in ${{ inputs.compose_file }} — skipping"; return 0; fi
               cid=$(docker compose -f ${{ inputs.compose_file }} ps -q "$svc")
               if [ -z "$cid" ]; then echo "::error::digest-assert: ${svc} has no running container after up -d"; return 1; fi
-              running=$(docker inspect "$cid" --format '{{range .RepoDigests}}{{println .}}{{end}}' | sed -n 's/.*@//p' | head -1)
+              # RepoDigests lives on the IMAGE, not the container — resolve the
+              # container's image id first, then read the image's repo digest.
+              # (Inspecting the container for RepoDigests yields <none> and
+              # false-fails the assert.)
+              img=$(docker inspect "$cid" --format '{{.Image}}')
+              running=$(docker inspect "$img" --format '{{range .RepoDigests}}{{println .}}{{end}}' | sed -n 's/.*@//p' | head -1)
               if [ -n "$want" ] && [ "$running" != "$want" ]; then
                 echo "::error::digest-assert: ${svc} is running '${running:-<none>}' but the deploy pinned '${want}' — stale container, failing the deploy."
                 return 1
