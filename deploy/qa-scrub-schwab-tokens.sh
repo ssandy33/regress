@@ -46,4 +46,9 @@ echo ">>> Pre-start Schwab-token scrub (QA boots without SCHWAB_ENCRYPTION_KEY).
 # --no-deps: don't pull up qa-frontend etc. --rm: leave no stray container.
 # The overridden command (`python -m ...`) bypasses the uvicorn CMD, so the
 # fail-closed lifespan check never runs — this works even mid-crash-loop.
-$COMPOSE run --rm --no-deps "$BACKEND_SVC" python -m scripts.scrub_schwab_tokens
+# -T (no TTY) + </dev/null: when this runs from the deploy heredoc (ssh pipes
+# the whole script to `bash -s`), an attached stdin makes `compose run` consume
+# the REST of the heredoc as the container's input — silently swallowing the
+# subsequent `up -d` / seed / digest-assert steps (the QA stale-container
+# incident). Detach stdin so only this scrub runs in the one-off container.
+$COMPOSE run --rm --no-deps -T "$BACKEND_SVC" python -m scripts.scrub_schwab_tokens </dev/null

@@ -160,8 +160,16 @@ jobs:
             # is already pulled above. QA-only — prod legitimately holds tokens +
             # the key, and seed-qa's APP_ENV=production guard never reaches here.
             if [ "${{ inputs.environment }}" = "qa" ]; then
+              # ``</dev/null`` is load-bearing: this whole script is piped to
+              # ``bash -s`` over ssh stdin (the <<'ENDSSH' heredoc). The scrub's
+              # ``docker compose run`` would otherwise inherit that stdin and
+              # consume the REST of the heredoc (``up -d --force-recreate``, the
+              # smoke gate, the seed, the digest assertion) as the container's
+              # input — they would silently never execute and the deploy would
+              # still report success on the stale container. Detaching stdin
+              # here keeps the remaining deploy steps runnable.
               COMPOSE_FILE="${{ inputs.compose_file }}" PROJECT="$(basename "$(pwd)")" \
-                bash deploy/qa-scrub-schwab-tokens.sh
+                bash deploy/qa-scrub-schwab-tokens.sh </dev/null
             fi
             # --force-recreate (PR: deploy stale-container fix): plain `up -d`
             # can leave the OLD container running when only the pinned image
