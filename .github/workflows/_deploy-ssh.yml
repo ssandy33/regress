@@ -160,14 +160,9 @@ jobs:
             # is already pulled above. QA-only — prod legitimately holds tokens +
             # the key, and seed-qa's APP_ENV=production guard never reaches here.
             if [ "${{ inputs.environment }}" = "qa" ]; then
-              # ``</dev/null`` is load-bearing: this whole script is piped to
-              # ``bash -s`` over ssh stdin (the <<'ENDSSH' heredoc). The scrub's
-              # ``docker compose run`` would otherwise inherit that stdin and
-              # consume the REST of the heredoc (``up -d --force-recreate``, the
-              # smoke gate, the seed, the digest assertion) as the container's
-              # input — they would silently never execute and the deploy would
-              # still report success on the stale container. Detaching stdin
-              # here keeps the remaining deploy steps runnable.
+              # </dev/null is load-bearing — without it the scrub's `compose run`
+              # reads this ssh heredoc as stdin and swallows the rest of the
+              # deploy (up -d, seed, digest assert). See the scrub script header.
               COMPOSE_FILE="${{ inputs.compose_file }}" PROJECT="$(basename "$(pwd)")" \
                 bash deploy/qa-scrub-schwab-tokens.sh </dev/null
             fi
