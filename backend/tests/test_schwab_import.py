@@ -887,3 +887,35 @@ class TestPreviewFlagsUnmatchedSells:
         preview = build_preview(db_session, mapped)
         assert preview["unmatched"] == 0
         assert all(t["is_unmatched"] is False for t in preview["trades"])
+
+    def test_buy_listed_after_sell_but_earlier_in_time_is_matched(self, db_session):
+        # CodeRabbit #397: Schwab exports are often newest-first, so the sell can
+        # be listed ABOVE the buy that covers it. Chronological simulation must
+        # NOT flag it as unmatched.
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "sell_stock", "2026-03-20", unit_amount=15.0, quantity=50),
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 0
+        assert all(t["is_unmatched"] is False for t in preview["trades"])
+
+        result = execute_mapped_import(db_session, mapped)
+        assert result["skipped_unmatched"] == []
+        assert result["imported"] == 2
+
+    def test_sell_chronologically_before_any_buy_is_unmatched(self, db_session):
+        # The sell (01-01) genuinely precedes the buy (02-01) in time, even though
+        # the buy is listed first -> correctly flagged unmatched.
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-02-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("F", "sell_stock", "2026-01-01", unit_amount=15.0, quantity=50),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 1
+        by = {(t["ticker"], t["trade_type"]): t for t in preview["trades"]}
+        assert by[("F", "sell_stock")]["is_unmatched"] is True

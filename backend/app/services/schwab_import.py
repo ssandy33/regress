@@ -231,6 +231,13 @@ def _detect_unmatched_sells(db: Session, mapped_trades: list[dict]) -> set[int]:
     sell can legitimately draw on already-owned/assigned shares; buys earlier in
     the same import grow the balance; duplicate rows are already reflected in the
     existing share count and do not move the balance.
+
+    The simulation walks rows in **chronological order** (by ``opened_at``), not
+    file order: Schwab CSV exports are often newest-first, so a sell can be
+    listed *above* the buy that covers it. Walking by date prevents falsely
+    flagging such a sell as unmatched. Returned indices are into the ORIGINAL
+    ``mapped_trades`` list so callers can match by position. (The recomputer
+    re-sorts the ledger on replay regardless, so insertion order is unaffected.)
     """
     running: dict[str, int] = {}
     unmatched: set[int] = set()
@@ -246,7 +253,13 @@ def _detect_unmatched_sells(db: Session, mapped_trades: list[dict]) -> set[int]:
             running[ticker] = existing.shares if existing else 0
         return running[ticker]
 
-    for idx, mapped in enumerate(mapped_trades):
+    # Stable chronological order; ties keep original file order (ascending index).
+    chronological = sorted(
+        range(len(mapped_trades)),
+        key=lambda i: mapped_trades[i].get("opened_at") or "",
+    )
+    for idx in chronological:
+        mapped = mapped_trades[idx]
         ticker = mapped["ticker"]
         trade_type = mapped["trade_type"]
         quantity = mapped.get("quantity") or 0
