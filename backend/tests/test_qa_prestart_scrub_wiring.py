@@ -32,7 +32,14 @@ def test_scrub_script_exists_and_invokes_the_python_module():
     # `compose exec` (which needs a running container — the very thing the
     # tokens prevent). Assert the exact command shape rather than the absence of
     # the word "exec" (which legitimately appears in the explanatory header).
-    assert 'run --rm --no-deps "$BACKEND_SVC" python -m scripts.scrub_schwab_tokens' in text
+    # -T + </dev/null are load-bearing: the scrub runs from the deploy heredoc
+    # (ssh pipes the whole script to `bash -s`); an attached stdin makes
+    # `compose run` swallow the rest of the heredoc (up -d / seed / digest
+    # assert). Pin them so the stale-container fix can't silently regress.
+    assert (
+        'run --rm --no-deps -T "$BACKEND_SVC" '
+        "python -m scripts.scrub_schwab_tokens </dev/null"
+    ) in text
 
 
 @pytest.mark.unit

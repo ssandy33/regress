@@ -160,8 +160,11 @@ jobs:
             # is already pulled above. QA-only — prod legitimately holds tokens +
             # the key, and seed-qa's APP_ENV=production guard never reaches here.
             if [ "${{ inputs.environment }}" = "qa" ]; then
+              # </dev/null is load-bearing — without it the scrub's `compose run`
+              # reads this ssh heredoc as stdin and swallows the rest of the
+              # deploy (up -d, seed, digest assert). See the scrub script header.
               COMPOSE_FILE="${{ inputs.compose_file }}" PROJECT="$(basename "$(pwd)")" \
-                bash deploy/qa-scrub-schwab-tokens.sh
+                bash deploy/qa-scrub-schwab-tokens.sh </dev/null
             fi
             # --force-recreate (PR: deploy stale-container fix): plain `up -d`
             # can leave the OLD container running when only the pinned image
