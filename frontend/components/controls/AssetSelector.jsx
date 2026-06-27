@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useAssetSearch } from '../../hooks/useAssetSearch';
 import { categoryLabel } from '../../utils/formatters';
 
-export default function AssetSelector({ value, onChange, multi = false, placeholder }) {
+export default function AssetSelector({ value, onChange, multi = false, placeholder, id, name }) {
   const { query, setQuery, grouped, loading, recentAssets, addRecent } = useAssetSearch();
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef(null);
@@ -73,6 +73,8 @@ export default function AssetSelector({ value, onChange, multi = false, placehol
       {/* Search input */}
       <div className="relative">
         <input
+          id={id}
+          name={name}
           type="text"
           value={open ? query : (multi ? query : (value || query))}
           onChange={(e) => {
