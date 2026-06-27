@@ -58,10 +58,12 @@ export default function ChainFilters({
       <div className="flex-1 overflow-y-auto">
         {/* Asset Section */}
         <div className="p-4 space-y-4">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Asset</h3>
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Asset</h2>
           <div>
-            <label className={labelClass}>Ticker Symbol</label>
+            <label htmlFor="scanner-ticker" className={labelClass}>Ticker Symbol</label>
             <input
+              id="scanner-ticker"
+              name="scanner-ticker"
               type="text"
               value={ticker}
               onChange={(e) => setTicker(e.target.value.toUpperCase())}
@@ -74,10 +76,13 @@ export default function ChainFilters({
 
         {/* Strategy Section */}
         <div className="pt-4 p-4 space-y-4 border-t border-slate-200 dark:border-slate-700">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Strategy</h3>
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Strategy</h2>
           <div>
-            <label className={labelClass}>Strategy</label>
-            <div className="flex rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden">
+            {/* Not a native form control — the strategy picker is a button
+                toggle group, so this is a labelling <span>, not a <label>,
+                and the group is named via aria-labelledby. (#410) */}
+            <span id="scanner-strategy-label" className={labelClass}>Strategy</span>
+            <div role="group" aria-labelledby="scanner-strategy-label" className="flex rounded-lg border border-slate-300 dark:border-slate-600 overflow-hidden">
               <button
                 onClick={() => setStrategy('cash_secured_put')}
                 className={`flex-1 py-2 text-xs font-medium transition-colors ${
@@ -105,8 +110,10 @@ export default function ChainFilters({
           {strategy === 'covered_call' && (
             <>
               <div>
-                <label className={labelClass}>Cost Basis ($)</label>
+                <label htmlFor="scanner-cost-basis" className={labelClass}>Cost Basis ($)</label>
                 <input
+                  id="scanner-cost-basis"
+                  name="scanner-cost-basis"
                   type="number"
                   step="0.01"
                   value={costBasis}
@@ -116,8 +123,10 @@ export default function ChainFilters({
                 />
               </div>
               <div>
-                <label className={labelClass}>Shares Held</label>
+                <label htmlFor="scanner-shares-held" className={labelClass}>Shares Held</label>
                 <input
+                  id="scanner-shares-held"
+                  name="scanner-shares-held"
                   type="number"
                   step="100"
                   value={sharesHeld}
@@ -127,8 +136,10 @@ export default function ChainFilters({
                 />
               </div>
               <div>
-                <label className={labelClass}>Min Call Distance % (10% Rule)</label>
+                <label htmlFor="scanner-call-distance" className={labelClass}>Min Call Distance % (10% Rule)</label>
                 <input
+                  id="scanner-call-distance"
+                  name="scanner-call-distance"
                   type="number"
                   step="0.5"
                   value={callDistance}
@@ -142,8 +153,10 @@ export default function ChainFilters({
           {/* CSP Fields */}
           {strategy === 'cash_secured_put' && (
             <div>
-              <label className={labelClass}>Capital Available ($)</label>
+              <label htmlFor="scanner-capital" className={labelClass}>Capital Available ($)</label>
               <input
+                id="scanner-capital"
+                name="scanner-capital"
                 type="number"
                 step="100"
                 value={capitalAvailable}
@@ -157,32 +170,40 @@ export default function ChainFilters({
 
         {/* Filters Section */}
         <div className="pt-4 p-4 space-y-4 border-t border-slate-200 dark:border-slate-700">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Filters</h3>
+          <h2 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Filters</h2>
 
           {/* DTE Range */}
           <div>
-            <label className={labelClass}>DTE Range (days)</label>
+            <label htmlFor="scanner-dte-min" className={labelClass}>DTE Range (days)</label>
             <div className="flex gap-2 items-center">
               <input
+                id="scanner-dte-min"
+                name="scanner-dte-min"
                 type="number"
                 value={minDte}
                 onChange={(e) => setMinDte(parseInt(e.target.value) || 0)}
                 className={`${inputClass} w-20 text-center`}
+                aria-label="DTE Range minimum (days)"
               />
               <span className="text-xs text-slate-400">to</span>
               <input
+                id="scanner-dte-max"
+                name="scanner-dte-max"
                 type="number"
                 value={maxDte}
                 onChange={(e) => setMaxDte(parseInt(e.target.value) || 0)}
                 className={`${inputClass} w-20 text-center`}
+                aria-label="DTE Range maximum (days)"
               />
             </div>
           </div>
 
           {/* Monthly Return Target */}
           <div>
-            <label className={labelClass}>Monthly Return Target (%)</label>
+            <label htmlFor="scanner-return-target" className={labelClass}>Monthly Return Target (%)</label>
             <input
+              id="scanner-return-target"
+              name="scanner-return-target"
               type="number"
               step="0.1"
               value={returnTarget}
@@ -193,30 +214,38 @@ export default function ChainFilters({
 
           {/* Delta Range */}
           <div>
-            <label className={labelClass}>Delta Range</label>
+            <label htmlFor="scanner-delta-min" className={labelClass}>Delta Range</label>
             <div className="flex gap-2 items-center">
               <input
+                id="scanner-delta-min"
+                name="scanner-delta-min"
                 type="number"
                 step="0.01"
                 value={minDelta}
                 onChange={(e) => setMinDelta(parseFloat(e.target.value) || 0)}
                 className={`${inputClass} w-20 text-center`}
+                aria-label="Delta Range minimum"
               />
               <span className="text-xs text-slate-400">to</span>
               <input
+                id="scanner-delta-max"
+                name="scanner-delta-max"
                 type="number"
                 step="0.01"
                 value={maxDelta}
                 onChange={(e) => setMaxDelta(parseFloat(e.target.value) || 0)}
                 className={`${inputClass} w-20 text-center`}
+                aria-label="Delta Range maximum"
               />
             </div>
           </div>
 
           {/* Earnings Buffer */}
           <div>
-            <label className={labelClass}>Earnings Buffer (days)</label>
+            <label htmlFor="scanner-earnings-buffer" className={labelClass}>Earnings Buffer (days)</label>
             <input
+              id="scanner-earnings-buffer"
+              name="scanner-earnings-buffer"
               type="number"
               value={earningsBuffer}
               onChange={(e) => setEarningsBuffer(parseInt(e.target.value) || 0)}
