@@ -300,6 +300,8 @@ export default function SettingsPage() {
 
             <div className="flex gap-2">
               <input
+                id="fred-api-key"
+                name="fred-api-key"
                 type="password"
                 value={fredKey}
                 onChange={(e) => setFredKey(e.target.value)}
@@ -641,8 +643,10 @@ export default function SettingsPage() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-slate-700 dark:text-slate-300 mb-1">Default Date Range</label>
+                <label htmlFor="default-date-range" className="block text-sm text-slate-700 dark:text-slate-300 mb-1">Default Date Range</label>
                 <select
+                  id="default-date-range"
+                  name="default-date-range"
                   value={settings?.default_date_range_years || 5}
                   onChange={(e) => handleUpdateSetting('default_date_range_years', e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100"
