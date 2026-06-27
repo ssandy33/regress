@@ -66,7 +66,7 @@ export default function Sidebar({
           <>
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                <label htmlFor="asset-search" className="text-xs font-medium text-slate-500 dark:text-slate-400">
                   {mode === 'multi-factor' ? 'Dependent Variable' : 'Asset'}
                 </label>
                 <button
@@ -77,6 +77,8 @@ export default function Sidebar({
                 </button>
               </div>
               <AssetSelector
+                id="asset-search"
+                name="asset-search"
                 value={asset}
                 onChange={setAsset}
                 placeholder="Search assets..."
@@ -115,8 +117,10 @@ export default function Sidebar({
 
         {/* Earnings overlay (linear mode only) */}
         {mode === 'linear' && (
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label htmlFor="show-earnings" className="flex items-center gap-2 cursor-pointer">
             <input
+              id="show-earnings"
+              name="show-earnings"
               type="checkbox"
               checked={showEarnings}
               onChange={(e) => setShowEarnings(e.target.checked)}

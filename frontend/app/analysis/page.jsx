@@ -212,6 +212,10 @@ export default function AnalysisPage() {
         onRun={handleRun}
         onSave={() => setSaveOpen(true)}
       >
+        {/* Single page-level <h1> anchors the heading hierarchy for assistive
+            tech in every state (loading / error / empty / results). Visually
+            hidden because the page chrome carries the visible title. (#409) */}
+        <h1 className="sr-only">Regression Analysis</h1>
         {loading ? (
           <LoadingSkeleton />
         ) : error && !result ? (
