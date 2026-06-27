@@ -19,6 +19,10 @@ export default function OptionScannerPage() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900">
+      {/* Single page-level <h1> roots the heading hierarchy before any <h2>;
+          visually hidden because the sidebar/header carry the visible title.
+          Demoted sidebar section headers (<h2>) follow it in DOM order. (#410) */}
+      <h1 className="sr-only">Option Scanner</h1>
       <Header sessions={[]} onLoadSession={() => {}} />
 
       <div className="flex-1 flex overflow-hidden">
