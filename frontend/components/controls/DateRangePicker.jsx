@@ -36,7 +36,7 @@ export default function DateRangePicker({ startDate, endDate, onStartChange, onE
 
   return (
     <div>
-      <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
+      <label htmlFor="date-start" className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">
         Date Range
       </label>
 
@@ -61,6 +61,8 @@ export default function DateRangePicker({ startDate, endDate, onStartChange, onE
       <div className="flex gap-2">
         <div className="flex-1">
           <DatePicker
+            id="date-start"
+            name="date-start"
             selected={start}
             onChange={handleManualChange(onStartChange)}
             dateFormat="yyyy-MM-dd"
@@ -71,6 +73,8 @@ export default function DateRangePicker({ startDate, endDate, onStartChange, onE
         </div>
         <div className="flex-1">
           <DatePicker
+            id="date-end"
+            name="date-end"
             selected={end}
             onChange={handleManualChange(onEndChange)}
             dateFormat="yyyy-MM-dd"
