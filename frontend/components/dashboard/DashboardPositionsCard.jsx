@@ -303,7 +303,7 @@ function PlCell({ value, rawValue }) {
         data-testid="dashboard-position-pl"
         className={`tabular-nums ${plClass(value)}`}
       >
-        {value >= 0 ? '+' : ''}
+        {value > 0 ? '+' : ''}
         {formatCurrency(value)}
       </span>
       <span
@@ -314,7 +314,7 @@ function PlCell({ value, rawValue }) {
           '—'
         ) : (
           <>
-            {rawValue >= 0 ? '+' : ''}
+            {rawValue > 0 ? '+' : ''}
             {formatCurrency(rawValue)}
             <span className="ml-1 text-slate-400 dark:text-slate-500">raw</span>
           </>

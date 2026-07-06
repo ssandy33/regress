@@ -289,7 +289,15 @@ def _fetch_quotes_parallel(
         try:
             quote = client.get_quote(ticker)
         except (SchwabClientError, SchwabAuthError) as exc:
-            logger.warning("Dashboard quote fetch failed for %s: %s", ticker, exc)
+            logger.warning(
+                "quote.fetch",
+                extra={
+                    "event": "quote.fetch",
+                    "ticker": ticker,
+                    "outcome": "failed",
+                    "error_class": type(exc).__name__,
+                },
+            )
             return ticker, QuoteView(), True
         except Exception:
             # Defense-in-depth: any other exception (network timeouts that
@@ -297,7 +305,10 @@ def _fetch_quotes_parallel(
             # must not propagate out of the worker — that would raise from
             # ThreadPoolExecutor.map and 500 the whole dashboard. Log with
             # traceback so the cause is debuggable.
-            logger.exception("Unexpected error fetching quote for %s", ticker)
+            logger.exception(
+                "quote.fetch",
+                extra={"event": "quote.fetch", "ticker": ticker, "outcome": "failed"},
+            )
             return ticker, QuoteView(), True
         return ticker, _extract_quote_view(quote), False
 
@@ -934,9 +945,13 @@ def _build_kpis(
         unrealized_pl: float | None = (equity_unrealized_pl or 0.0) + option_unrealized_pl
     else:
         unrealized_pl = equity_unrealized_pl
+    # Percent stays equity-only (numerator = equity P&L, denominator = equity
+    # cost basis), consistent with ``notional_change_pct`` above: rolled-in
+    # option P&L has no comparable cost-basis denominator, so mixing it into the
+    # headline value is correct but into the percent is not.
     unrealized_pl_pct: float | None = None
-    if unrealized_pl is not None and cost_basis_total > 0:
-        unrealized_pl_pct = unrealized_pl / cost_basis_total
+    if equity_unrealized_pl is not None and cost_basis_total > 0:
+        unrealized_pl_pct = equity_unrealized_pl / cost_basis_total
 
     all_positions = list(open_positions) + list(closed_positions)
     premium_total, premium_trades = _sum_premium_for_positions(all_positions)
