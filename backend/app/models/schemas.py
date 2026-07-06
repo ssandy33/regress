@@ -786,6 +786,18 @@ class DashboardCacheStatus(BaseModel):
     stale: int
     very_stale: int
     total: int
+    # New in v1.9.0 (#417, PRD #415 R5) — the displayed-quote freshness signal
+    # the dashboard pill switches to. ``fresh`` / ``stale`` / ``very_stale`` above
+    # remain the research/data cache buckets (FRED / earnings, aged in days) used
+    # by the action engine + Settings; these four describe the live per-symbol
+    # quotes actually shown. ``displayed_total`` counts assessable rows,
+    # ``displayed_stale`` those past the market-hours-aware budget, and
+    # ``stalest_symbol`` / ``stalest_age_seconds`` name the oldest shown quote for
+    # the pill hover. All additive/defaulted so older payloads still validate.
+    displayed_total: int = 0
+    displayed_stale: int = 0
+    stalest_symbol: Optional[str] = None
+    stalest_age_seconds: Optional[int] = None
 
 
 class DashboardJournalStatus(BaseModel):
@@ -896,6 +908,16 @@ class DashboardPositionRow(BaseModel):
     day_change: Optional[float] = None
     day_change_pct: Optional[float] = None
     day_state: DASHBOARD_DAY_STATE = "no_prior_close"
+    # New in v1.9.0 (#417, PRD #415 R5) — per-symbol quote freshness. ``quote_age_
+    # seconds`` is the market-hours-aware age of the price shown in ``current_price``
+    # (measured against ``now`` during RTH, else the most recent session close, so
+    # weekends/after-hours don't false-positive). ``quote_stale`` is True once that
+    # age exceeds the intraday budget; ``quote_fetched_at`` is the quote's absolute
+    # ISO timestamp for the exact-time hover. All null/false when the quote carried
+    # no timestamp (freshness unassessable → never falsely flagged). Additive/defaulted.
+    quote_age_seconds: Optional[int] = None
+    quote_stale: bool = False
+    quote_fetched_at: Optional[str] = None
 
 
 class DashboardMoneyness(BaseModel):

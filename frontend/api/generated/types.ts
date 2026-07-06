@@ -1856,10 +1856,24 @@ export interface components {
         };
         /** DashboardCacheStatus */
         DashboardCacheStatus: {
+            /**
+             * Displayed Stale
+             * @default 0
+             */
+            displayed_stale: number;
+            /**
+             * Displayed Total
+             * @default 0
+             */
+            displayed_total: number;
             /** Fresh */
             fresh: number;
             /** Stale */
             stale: number;
+            /** Stalest Age Seconds */
+            stalest_age_seconds?: number | null;
+            /** Stalest Symbol */
+            stalest_symbol?: string | null;
             /** Total */
             total: number;
             /** Very Stale */
@@ -2175,6 +2189,15 @@ export interface components {
             open_legs_count: number;
             /** Pl Pct */
             pl_pct?: number | null;
+            /** Quote Age Seconds */
+            quote_age_seconds?: number | null;
+            /** Quote Fetched At */
+            quote_fetched_at?: string | null;
+            /**
+             * Quote Stale
+             * @default false
+             */
+            quote_stale: boolean;
             /** Shares */
             shares: number;
             /** Strategy */
