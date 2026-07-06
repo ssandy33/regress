@@ -1125,3 +1125,117 @@ def test_dashboard_expiration_cards_link_to_btc(client, monkeypatch):
         href = cards_by_id[action_id]["cta"]["href"]
         assert btc_route.match(href), f"{action_id} href not BTC route: {href!r}"
         assert "/journal?position=" not in href
+
+
+# -- Issue #421 (PRD #415 R3): per-position + account-level day change --------
+#
+# The rich-quote threading refactor stops discarding the closePrice / netChange
+# / netPercentChange fields Schwab already returns on the quote node, so the DAY
+# column and the account-level day-change tile populate from the same fetch.
+
+
+@pytest.mark.integration
+def test_dashboard_positions_carry_day_change(client, monkeypatch):
+    """A configured Schwab quote with netChange / netPercentChange populates the
+    per-position day_change / day_change_pct / day_state fields (#421 R3)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {
+            "lastPrice": 12.5,
+            "mark": 12.5,
+            "closePrice": 12.07,
+            "netChange": 0.43,
+            "netPercentChange": 3.56,
+        },
+    )
+
+    pid = _seed_position(client, ticker="NOK", broker_cost_basis=1207.0, shares=100)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=15.0,
+        expiration="2026-08-15",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    row = next(r for r in data["positions"] if r["ticker"] == "NOK")
+    assert row["day_state"] == "populated"
+    # 0.43 per-share × 100 shares = $43.00 equity day change.
+    assert row["day_change"] == pytest.approx(43.0)
+    # 3.56 (Schwab number) normalized to a fraction.
+    assert row["day_change_pct"] == pytest.approx(0.0356)
+
+
+@pytest.mark.integration
+def test_dashboard_payload_has_account_summary(client, monkeypatch):
+    """The payload carries an account_summary block whose day change sums the
+    per-position equity day changes; reconciliation fields stay unavailable on
+    the #421 spine (#421 R1/R2/R3 wiring)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {
+            "lastPrice": 12.5,
+            "closePrice": 12.07,
+            "netChange": 0.43,
+            "netPercentChange": 3.56,
+        },
+    )
+
+    pid = _seed_position(client, ticker="NOK", broker_cost_basis=1207.0, shares=100)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=15.0,
+        expiration="2026-08-15",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    summary = resp.json()["account_summary"]
+    assert summary is not None
+    assert summary["day_state"] == "populated"
+    assert summary["day_change"] == pytest.approx(43.0)
+    # Broker reconciliation is wired by a later worker — unavailable here.
+    assert summary["account_value"] is None
+    assert summary["cash"] is None
+    assert summary["reconciles"] is False
+
+
+@pytest.mark.integration
+def test_dashboard_no_prior_close_state(client, monkeypatch):
+    """A quote lacking closePrice / netChange yields the explicit no_prior_close
+    state rather than a silent zero (#421 R3 empty state)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 20.0},  # price only, no day fields
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=1900.0, shares=100)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=25.0,
+        expiration="2026-08-15",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    row = next(r for r in data["positions"] if r["ticker"] == "AAPL")
+    assert row["day_state"] == "no_prior_close"
+    assert row["day_change"] is None
+    assert row["day_change_pct"] is None
+    assert data["account_summary"]["day_state"] == "no_prior_close"

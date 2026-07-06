@@ -957,6 +957,93 @@
         "title": "CoveredCallView",
         "type": "object"
       },
+      "DashboardAccountSummary": {
+        "description": "Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).\n\nNew top-level ``account_summary`` key on the dashboard response. The\n``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the\naccount-level day change composed from per-position equity day changes.\n\nThe ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``\nreconciliation fields (R1/R2/R4) are populated by the account-totals worker\n(extends ``schwab_account_value``); the #421 spine emits them as ``None`` /\n``False`` (the \"Connect Schwab to reconcile\" unavailable state) until that\nworker lands. All fields are additive/defaulted so the payload validates\neither way.",
+        "properties": {
+          "account_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Value"
+          },
+          "cash": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash"
+          },
+          "day_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "day_state": {
+            "default": "no_prior_close",
+            "enum": [
+              "populated",
+              "no_prior_close"
+            ],
+            "title": "Day State",
+            "type": "string"
+          },
+          "equity_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity Mv"
+          },
+          "option_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Mv"
+          },
+          "reconciles": {
+            "default": false,
+            "title": "Reconciles",
+            "type": "boolean"
+          }
+        },
+        "title": "DashboardAccountSummary",
+        "type": "object"
+      },
       "DashboardActivity": {
         "properties": {
           "kind": {
@@ -1728,6 +1815,37 @@
             ],
             "title": "Current Price"
           },
+          "day_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "day_state": {
+            "default": "no_prior_close",
+            "enum": [
+              "populated",
+              "no_prior_close"
+            ],
+            "title": "Day State",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1842,6 +1960,16 @@
       },
       "DashboardResponse": {
         "properties": {
+          "account_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DashboardAccountSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "data_meta": {
             "$ref": "#/components/schemas/DashboardDataMeta"
           },
