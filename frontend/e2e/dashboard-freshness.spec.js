@@ -22,7 +22,7 @@ const BASE_STATUS = {
     displayed_total: 2,
     displayed_stale: 1,
     stalest_symbol: 'BB',
-    stalest_age_seconds: 10800, // 3h
+    stalest_age_seconds: 1800, // 30m — amber "stale", below the 60m very-stale budget
   },
   journal: { positions_count: 2 },
 };
@@ -89,10 +89,10 @@ const STALE_ROW = {
   day_change: null,
   day_change_pct: null,
   day_state: 'no_prior_close',
-  // R5 — stale (3 hours).
-  quote_age_seconds: 10800,
+  // R5 — stale (30 minutes) — amber "stale" bucket, below the 60m very-stale budget.
+  quote_age_seconds: 1800,
   quote_stale: true,
-  quote_fetched_at: '2026-07-08T15:00:00+00:00',
+  quote_fetched_at: '2026-07-08T17:30:00+00:00',
 };
 
 function makePayload(overrides = {}) {
@@ -100,7 +100,7 @@ function makePayload(overrides = {}) {
     generated_at: '2026-07-08T18:00:00+00:00',
     status: BASE_STATUS,
     kpis: BASE_KPIS,
-    positions: [STALE_ROW, FRESH_ROW],
+    positions: [FRESH_ROW, STALE_ROW],
     open_legs: [],
     recent_activity: [],
     data_meta: {
@@ -157,14 +157,14 @@ test.describe('Dashboard quote freshness @smoke @e2e', () => {
     await page.waitForLoadState('networkidle');
 
     const flags = page.getByTestId('dashboard-position-quote-age');
-    // Rows sort by notional desc → NOK (1250) first, BB (420) second.
+    // Rendered in payload order: NOK (fresh) first, BB (stale) second.
     const nok = flags.nth(0);
     await expect(nok).toHaveAttribute('data-stale', 'false');
     await expect(nok).toContainText('2m');
 
     const bb = flags.nth(1);
     await expect(bb).toHaveAttribute('data-stale', 'true');
-    await expect(bb).toContainText('3h');
+    await expect(bb).toContainText('30m');
     await expect(bb).toContainText('⚠');
   });
 
