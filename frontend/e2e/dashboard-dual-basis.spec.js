@@ -158,16 +158,22 @@ test.describe('Dashboard dual-basis P&L @e2e', () => {
     await expect(dollarRaw).toContainText('raw');
   });
 
-  test('raw-null row renders a muted em-dash on the secondary line', async ({
+  test('null-P/L row (CSP) collapses to a single muted em-dash', async ({
     page,
   }) => {
     await mockDashboard(page, PAYLOAD);
     await page.goto('/dashboard');
     await page.waitForLoadState('networkidle');
 
-    // The CSP row (2nd) has no broker basis → raw %P/L line is an em-dash.
-    const cspRaw = page.getByTestId('dashboard-position-pl-pct-raw').nth(1);
-    await expect(cspRaw).toContainText('—');
+    // The CSP row (2nd, 0 shares) has no P/L at all (adjusted AND raw null), so
+    // PctPlCell collapses it to a single em-dash — no separate adjusted/raw
+    // lines. Only the SOFI row (both bases present) renders a raw secondary
+    // line, so exactly one `-pl-pct-raw` element exists.
+    const cspPct = page.getByTestId('dashboard-position-pl-pct').nth(1);
+    await expect(cspPct).toContainText('—');
+    await expect(
+      page.getByTestId('dashboard-position-pl-pct-raw')
+    ).toHaveCount(1);
   });
 
   test('P0 review card fires on raw basis with a fired-on-raw tag', async ({
