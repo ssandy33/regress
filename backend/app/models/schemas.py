@@ -1038,28 +1038,6 @@ class DashboardNextAction(BaseModel):
     triggered_rules: list[DashboardRuleEvaluation] = []
 
 
-class DashboardAccountSummary(BaseModel):
-    """Broker-reconciliation strip (v1.9.0 #420 — R1/R2/R3-account).
-
-    ``account_value = equity_mv + option_mv + cash`` reconciled against the
-    broker's reported net-liquidation within a documented quote-timing
-    tolerance (``reconciles``). Every figure is Optional and defaults null so
-    the frontend renders the explicit "Connect Schwab to reconcile" empty state
-    when Schwab is not connected — never a false ``$0``. ``day_change`` fields
-    are populated by the R3 day-change slice; until then they read
-    ``no_prior_close``.
-    """
-
-    account_value: Optional[float] = None
-    equity_mv: Optional[float] = None
-    option_mv: Optional[float] = None
-    cash: Optional[float] = None
-    day_change: Optional[float] = None
-    day_change_pct: Optional[float] = None
-    day_state: Literal["populated", "no_prior_close"] = "no_prior_close"
-    reconciles: bool = False
-
-
 class DashboardActivity(BaseModel):
     kind: DASHBOARD_ACTIVITY_KIND
     timestamp: str
