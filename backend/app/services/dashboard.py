@@ -26,6 +26,7 @@ from app.services.market_client import get_market_client
 from app.services.dashboard_legs import (
     build_option_leg_index,
     derive_open_legs,
+    market_today,
     parse_iso_to_utc,
 )
 from app.services.rules_config import load_rules_config
@@ -701,7 +702,10 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         response_model on the route.
     """
     now = datetime.now(timezone.utc).isoformat()
-    today = today or date.today()
+    # DTE/expiration counts and YTD scoping run on the US market (Eastern)
+    # calendar, not the server's UTC clock (issue #418 — a UTC ``date.today()``
+    # rolls a day early after 20:00 ET and knocked DTE one day low).
+    today = today or market_today()
 
     # Status block
     schwab_status, schwab_configured = _build_schwab_status()
