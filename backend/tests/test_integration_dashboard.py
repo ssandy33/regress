@@ -166,8 +166,8 @@ def test_dashboard_populated(client, monkeypatch):
     # Pin "today" so DTE math is deterministic.
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     aapl_id = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
@@ -612,8 +612,8 @@ def test_dashboard_itm_short_dte_action(client, monkeypatch):
 
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
@@ -977,8 +977,8 @@ def test_dashboard_leg_deep_itm_call_reports_high(client, monkeypatch):
     )
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     pid = _seed_position(client, ticker="F", shares=100, broker_cost_basis=1500.0)
@@ -1030,8 +1030,8 @@ def test_dashboard_leg_delta_threads_from_chain(client, monkeypatch):
     )
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     # Spy on the real derive_open_legs to capture the un-stripped leg dicts.
@@ -1091,8 +1091,8 @@ def test_dashboard_expiration_cards_link_to_btc(client, monkeypatch):
 
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     aapl_id = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)

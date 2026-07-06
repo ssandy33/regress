@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Iterable, Literal
+from zoneinfo import ZoneInfo
 
 from app.services.greeks import calculate_greeks
 from app.services.rule_monitor import evaluate_leg_rules
@@ -62,6 +63,26 @@ _DECISION_TAG_TO_SUGGESTED_ACTION: dict[DecisionTag, SuggestedAction] = {
     "hold": "hold",
 }
 
+# The trader is US-based and every leg is a US-listed option, so "today" for
+# DTE is the US market (Eastern) calendar date, NOT the server's clock. Prod
+# containers run on UTC — a bare ``date.today()`` rolls over to tomorrow after
+# 20:00 ET (00:00 UTC), which knocked DTE one day low for evening captures
+# (issue #418: a 2026-07-17 expiry read ``12d`` on the evening of 2026-07-04
+# instead of ``13d``). Anchoring to America/New_York keeps DTE on the trader's
+# calendar regardless of where the server runs. Mirrors the market-tz anchor
+# already used in ``schwab_client.py`` for history windows.
+MARKET_TZ = ZoneInfo("America/New_York")
+
+
+def market_today() -> date:
+    """Return today's date on the US market (Eastern) calendar.
+
+    Use this instead of ``date.today()`` for any DTE / expiration-relative
+    day count so a UTC server clock cannot shift the count off the trader's
+    local calendar (issue #418).
+    """
+    return datetime.now(MARKET_TZ).date()
+
 
 def compute_dte(expiration_iso: str, today: date | None = None) -> int:
     """Return whole calendar days from `today` to the option's expiration.
@@ -70,8 +91,12 @@ def compute_dte(expiration_iso: str, today: date | None = None) -> int:
     parsed leniently — accepts `YYYY-MM-DD` or any ISO date prefix.
     Returns 9999 if parsing fails so the row sorts to the bottom and is not
     flagged for action.
+
+    ``today`` defaults to the US market (Eastern) date via :func:`market_today`
+    so the count matches the trader's calendar even when the server runs on UTC
+    (issue #418).
     """
-    today = today or date.today()
+    today = today or market_today()
     try:
         # Accept "2026-05-08" or "2026-05-08T..." (Schwab payloads sometimes
         # include time on expiration timestamps).
@@ -572,7 +597,7 @@ def compute_earnings_in_window(
         earnings_date = date.fromisoformat(str(earnings_iso)[:10])
     except (TypeError, ValueError):
         return False
-    today_d = today or date.today()
+    today_d = today or market_today()
     delta_days = (earnings_date - today_d).days
     return 0 <= delta_days <= dte
 
@@ -613,7 +638,7 @@ def derive_open_legs(
     Returns a list ordered by (dte ASC, ticker ASC) — callers that need
     other orderings should re-sort.
     """
-    today = today or date.today()
+    today = today or market_today()
     if earnings_lookup is None:
         # Defensive default: cache miss-only sentinel. Never trigger network.
         earnings_lookup = lambda _ticker: None  # noqa: E731 — small inline default
