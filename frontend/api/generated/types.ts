@@ -1915,6 +1915,11 @@ export interface components {
         };
         /** DashboardKpis */
         DashboardKpis: {
+            /**
+             * Includes Options
+             * @default false
+             */
+            includes_options: boolean;
             largest_loser?: components["schemas"]["DashboardKpiLargestLoser"] | null;
             largest_risk?: components["schemas"]["DashboardKpiLargestRisk"] | null;
             /** Notional Change Pct */
@@ -2203,7 +2208,7 @@ export interface components {
         };
         /** DashboardResponse */
         DashboardResponse: {
-            account_summary?: components["schemas"]["DashboardAccountSummary"] | null;
+            account_summary?: components["schemas"]["DashboardAccountSummary"];
             data_meta: components["schemas"]["DashboardDataMeta"];
             /** Generated At */
             generated_at: string;

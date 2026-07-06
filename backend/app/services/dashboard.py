@@ -11,15 +11,23 @@ Per issue #114: avoid N+1 client-side fetches by composing on the server.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Iterable
+from typing import Iterable, Optional
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
 
 from app.config import get_fred_api_key, settings
-from app.models.database import CacheEntry, Position, Session as SessionModel, Trade
+from app.models.database import (
+    AppSetting,
+    CacheEntry,
+    Position,
+    Session as SessionModel,
+    Trade,
+)
 from app.services import journal as journal_service
 from app.services.action_engine import compute_next_actions
 from app.services.alpha_vantage_client import get_cached_next_earnings_date
@@ -31,6 +39,7 @@ from app.services.dashboard_legs import (
     parse_iso_to_utc,
 )
 from app.services.rules_config import load_rules_config
+from app.services.schwab_account_value import get_account_value
 from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
 # ``SchwabClient`` is re-exported into this module's namespace as the stable
 # monkeypatch surface the dashboard integration tests target
@@ -62,6 +71,19 @@ ACTIVITY_PER_SIDE_LIMIT = 30
 # new default route. An in-process TTL cache is deferred — see follow-up issue
 # linked in PR #114 description.
 QUOTE_FANOUT_WORKERS = 8
+
+# Account-value reconciliation tolerance (#420 R1). The tool-composed
+# ``account_value`` (equity MV + option MV + cash) is reconciled to the broker's
+# reported net-liquidation within the GREATER of an absolute floor and a
+# percentage of the broker value — wide enough to absorb the known stale-quote
+# drift (~$17 in the 2026-07-04 evidence) so ``reconciles=false`` signals a real
+# discrepancy, not normal quote-timing noise (Risk #4).
+RECONCILE_ABS_TOLERANCE = 5.0
+RECONCILE_PCT_TOLERANCE = 0.001
+# QA-only synthetic account balances (stub pricing_mode). Seeded by seed_qa so
+# the Account Summary strip renders "populated" on QA where there is no live
+# Schwab feed (#420 QA-demoable data).
+_QA_ACCOUNT_BALANCES_KEY = "qa_account_balances"
 
 
 def _build_schwab_status() -> tuple[dict, bool]:
@@ -676,6 +698,38 @@ def _compute_largest_loser(closed_positions: list[dict]) -> dict | None:
     }
 
 
+def _compute_option_totals(
+    open_legs: list[dict],
+) -> tuple[float, float, bool]:
+    """Aggregate open option-leg market value + unrealized P&L (v1.9.0 #420 R4).
+
+    Returns ``(option_mv, option_unrealized_pl, includes_options)``:
+
+    * ``option_mv`` — Σ ``−cost_to_close`` across legs with a live mark. A short
+      leg is a **liability**, so its market value is the *negative* of the cost
+      to buy it back (Risk #5 of the parity plan). Legs without a live mark
+      (``cost_to_close is None``) contribute nothing.
+    * ``option_unrealized_pl`` — Σ ``pnl_dollars`` (already signed
+      ``premium − mid``), so a credit that has decayed shows a gain.
+    * ``includes_options`` — True iff at least one leg contributed a live
+      figure; False for an empty legs list or when every leg's mark is
+      unavailable (the totals are equity-only for that load).
+    """
+    option_mv = 0.0
+    option_unrealized_pl = 0.0
+    includes_options = False
+    for leg in open_legs:
+        cost_to_close = leg.get("cost_to_close")
+        if cost_to_close is not None:
+            option_mv += -float(cost_to_close)
+            includes_options = True
+        pnl_dollars = leg.get("pnl_dollars")
+        if pnl_dollars is not None:
+            option_unrealized_pl += float(pnl_dollars)
+            includes_options = True
+    return option_mv, option_unrealized_pl, includes_options
+
+
 def _build_kpis(
     position_rows: list[dict],
     open_legs: list[dict],
@@ -699,17 +753,30 @@ def _build_kpis(
         if strategy in breakdown:
             breakdown[strategy] += 1
 
-    notional_value = sum((r["notional"] or 0.0) for r in position_rows)
+    equity_notional = sum((r["notional"] or 0.0) for r in position_rows)
     cost_basis_total = sum(p["adjusted_cost_basis"] for p in open_positions)
+    # ``notional_change_pct`` compares equity market value to equity cost basis
+    # ("from cost" subtext); options carry no comparable cost basis here, so the
+    # percent stays equity-only even though the headline value rolls options in.
     notional_change_pct: float | None = None
-    if cost_basis_total > 0 and notional_value > 0:
-        notional_change_pct = (notional_value - cost_basis_total) / cost_basis_total
+    if cost_basis_total > 0 and equity_notional > 0:
+        notional_change_pct = (equity_notional - cost_basis_total) / cost_basis_total
 
     puts = sum(1 for leg in open_legs if leg["type"] == "put")
     calls = sum(1 for leg in open_legs if leg["type"] == "call")
 
+    # R4 (#420): roll open option-leg MV / P&L into the portfolio aggregates.
+    option_mv, option_unrealized_pl, includes_options = _compute_option_totals(
+        open_legs
+    )
+    notional_value = equity_notional + option_mv
+
     pl_values = [r["unrealized_pl"] for r in position_rows if r["unrealized_pl"] is not None]
-    unrealized_pl: float | None = sum(pl_values) if pl_values else None
+    equity_unrealized_pl: float | None = sum(pl_values) if pl_values else None
+    if includes_options:
+        unrealized_pl: float | None = (equity_unrealized_pl or 0.0) + option_unrealized_pl
+    else:
+        unrealized_pl = equity_unrealized_pl
     unrealized_pl_pct: float | None = None
     if unrealized_pl is not None and cost_basis_total > 0:
         unrealized_pl_pct = unrealized_pl / cost_basis_total
@@ -744,6 +811,7 @@ def _build_kpis(
         "open_legs_breakdown": {"puts": puts, "calls": calls},
         "unrealized_pl": unrealized_pl,
         "unrealized_pl_pct": unrealized_pl_pct,
+        "includes_options": includes_options,
         "largest_risk": _compute_largest_risk(position_rows),
         "largest_loser": _compute_largest_loser(closed_positions),
         "premium_collected_total": premium_total,
@@ -752,6 +820,165 @@ def _build_kpis(
         "realized_pl": realized_pl,
         "realized_pl_pct": realized_pl_pct,
     }
+
+
+def _reconciles(account_value: float, broker_net_liq: float) -> bool:
+    """Return True iff ``account_value`` is within tolerance of ``broker_net_liq``.
+
+    Tolerance is the greater of :data:`RECONCILE_ABS_TOLERANCE` and
+    :data:`RECONCILE_PCT_TOLERANCE` × |broker net-liq| (Risk #4).
+    """
+    tolerance = max(
+        RECONCILE_ABS_TOLERANCE, RECONCILE_PCT_TOLERANCE * abs(broker_net_liq)
+    )
+    return abs(account_value - broker_net_liq) <= tolerance
+
+
+def _empty_account_summary() -> dict:
+    """The "Connect Schwab to reconcile" empty state (all figures null).
+
+    Distinct from a reconciled ``$0`` — the frontend renders the connect hint
+    rather than a false zero-cash assertion.
+    """
+    return {
+        "account_value": None,
+        "equity_mv": None,
+        "option_mv": None,
+        "cash": None,
+        "day_change": None,
+        "day_change_pct": None,
+        # R3 day-change is a separate slice; until it lands the account-level
+        # day change reads "no prior close".
+        "day_state": "no_prior_close",
+        "reconciles": False,
+    }
+
+
+def _resolve_account_balances(
+    db: DBSession, schwab_configured: bool
+) -> Optional[dict]:
+    """Resolve broker cash + net-liquidation for the account-summary strip.
+
+    Returns ``{"cash": float, "broker_net_liq": Optional[float]}`` or ``None``
+    when no balance source is available (→ empty "Connect Schwab" state).
+
+    * **Live** (``schwab_configured``): reads the extended
+      :func:`schwab_account_value.get_account_value` (15-min cached; never
+      raises). Requires a parseable ``cash`` — a net-liq without cash is not
+      enough to render the cash tile honestly.
+    * **QA stub** (``pricing_mode == "stub"``): reads the synthetic
+      ``qa_account_balances`` ``app_settings`` row seeded by ``seed_qa``. A
+      null ``broker_net_liq`` means "reconcile against the tool's own
+      composed value" (QA has no independent broker figure).
+    """
+    if schwab_configured:
+        result = get_account_value(db)
+        if result.status not in ("ok", "stale") or result.cash is None:
+            return None
+        return {"cash": result.cash, "broker_net_liq": result.total_capital}
+
+    if settings.pricing_mode == "stub" and settings.app_env != "production":
+        try:
+            row = (
+                db.query(AppSetting)
+                .filter(AppSetting.key == _QA_ACCOUNT_BALANCES_KEY)
+                .first()
+            )
+        except SQLAlchemyError:
+            return None
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row.value)
+        except (ValueError, TypeError):
+            return None
+        cash = payload.get("cash")
+        if not isinstance(cash, (int, float)) or isinstance(cash, bool):
+            return None
+        broker_net_liq = payload.get("broker_net_liq")
+        if isinstance(broker_net_liq, bool) or not isinstance(
+            broker_net_liq, (int, float)
+        ):
+            broker_net_liq = None
+        return {"cash": float(cash), "broker_net_liq": broker_net_liq}
+
+    return None
+
+
+def _build_account_summary(
+    db: DBSession,
+    position_rows: list[dict],
+    open_legs: list[dict],
+    schwab_configured: bool,
+) -> dict:
+    """Compose the broker-reconciliation strip (#420 R1/R2/R4 + #421 R3).
+
+    Two independent slices land in one payload:
+
+    * **Reconciliation (#420)** — ``account_value = equity MV + option MV + cash``;
+      ``reconciles`` compares it to the broker's reported net-liquidation within
+      tolerance. These fields stay null (the "Connect Schwab" empty state) when no
+      broker balance is available.
+    * **Account-level day change (#421 R3)** — the sum of the per-position equity
+      day changes already stamped on ``position_rows``. Composed independently of
+      broker availability, so the day-change tile lights up whenever prior-close
+      data exists even while the reconciliation fields are unavailable.
+    """
+    summary = _empty_account_summary()
+
+    # -- Reconciliation fields (#420) — only when a balance source resolves.
+    balances = _resolve_account_balances(db, schwab_configured)
+    if balances is not None:
+        equity_mv = sum((r["notional"] or 0.0) for r in position_rows)
+        option_mv, _option_unrealized, _includes = _compute_option_totals(open_legs)
+        cash = balances["cash"]
+        account_value = equity_mv + option_mv + cash
+
+        # No independent broker net-liq (QA synthetic) → reconcile against the
+        # tool's own composed value so the happy-path "reconciles" state renders.
+        broker_net_liq = balances["broker_net_liq"]
+        if broker_net_liq is None:
+            broker_net_liq = account_value
+        reconciles = _reconciles(account_value, broker_net_liq)
+
+        summary.update(
+            {
+                "account_value": account_value,
+                "equity_mv": equity_mv,
+                "option_mv": option_mv,
+                "cash": cash,
+                "reconciles": reconciles,
+            }
+        )
+
+    # -- Account-level day change (#421 R3) — composed from the per-position
+    # equity day changes on ``position_rows``. The percent is that dollar change
+    # over the *prior* aggregate notional (current notional − day change),
+    # guarding a zero/negative denominator.
+    day_changes = [
+        r["day_change"] for r in position_rows if r.get("day_change") is not None
+    ]
+    any_populated = any(
+        r.get("day_state") == "populated" for r in position_rows
+    )
+    if not day_changes:
+        summary["day_state"] = "populated" if any_populated else "no_prior_close"
+    else:
+        total_day_change = sum(day_changes)
+        total_notional = sum((r.get("notional") or 0.0) for r in position_rows)
+        prior_notional = total_notional - total_day_change
+        day_change_pct: float | None = None
+        if prior_notional > 0:
+            day_change_pct = total_day_change / prior_notional
+        summary.update(
+            {
+                "day_change": total_day_change,
+                "day_change_pct": day_change_pct,
+                "day_state": "populated",
+            }
+        )
+
+    return summary
 
 
 def _build_recent_activity(db: DBSession) -> list[dict]:
@@ -815,59 +1042,6 @@ def _build_recent_activity(db: DBSession) -> list[dict]:
 
     events.sort(key=_sort_key)
     return events[:ACTIVITY_LIMIT]
-
-
-def _build_account_summary(position_rows: list[dict]) -> dict:
-    """Compose the account-summary block's day-change fields (#421, PRD #415 R3).
-
-    The account-level day change is the sum of the per-position equity day
-    changes already stamped on ``position_rows`` (``day_change``). The percent is
-    that dollar change over the *prior* aggregate notional (current notional −
-    day change), guarding a zero/negative denominator.
-
-    The reconciliation fields (``account_value`` / ``equity_mv`` / ``option_mv`` /
-    ``cash`` / ``reconciles`` — R1/R2/R4) are intentionally left at their
-    "unavailable" defaults here; they are populated by the account-totals worker
-    (extends ``schwab_account_value``). Emitting the block now gives the frontend
-    a stable shape and lights up the account day-change tile without waiting on
-    the broker-balance wiring.
-    """
-    day_changes = [
-        r["day_change"] for r in position_rows if r.get("day_change") is not None
-    ]
-    any_populated = any(
-        r.get("day_state") == "populated" for r in position_rows
-    )
-    if not day_changes:
-        # No equity day change available on any row → explicit empty state.
-        return {
-            "account_value": None,
-            "equity_mv": None,
-            "option_mv": None,
-            "cash": None,
-            "day_change": None,
-            "day_change_pct": None,
-            "day_state": "populated" if any_populated else "no_prior_close",
-            "reconciles": False,
-        }
-
-    total_day_change = sum(day_changes)
-    total_notional = sum((r.get("notional") or 0.0) for r in position_rows)
-    prior_notional = total_notional - total_day_change
-    day_change_pct: float | None = None
-    if prior_notional > 0:
-        day_change_pct = total_day_change / prior_notional
-
-    return {
-        "account_value": None,
-        "equity_mv": None,
-        "option_mv": None,
-        "cash": None,
-        "day_change": total_day_change,
-        "day_change_pct": day_change_pct,
-        "day_state": "populated",
-        "reconciles": False,
-    }
 
 
 def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
@@ -976,11 +1150,14 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
     )
     _attach_next_suggested_actions(position_rows, next_actions, open_legs)
 
-    # Account-summary strip — account-level day change composed from the rows
-    # above (#421, PRD #415 R3). Reconciliation fields (R1/R2/R4) stay at their
-    # unavailable defaults until the account-totals worker wires the broker
-    # balances.
-    account_summary = _build_account_summary(position_rows)
+    # Account-summary strip (#420 reconciliation + #421 R3 day change). Uses the
+    # token-row state (``schwab_configured``) rather than the per-load feed flag:
+    # the account balances come from a separate ``get_accounts()`` cache,
+    # independent of the quote fan-out outcome. The account-level day change is
+    # composed from ``position_rows`` inside the same call.
+    account_summary = _build_account_summary(
+        db, position_rows, open_legs, schwab_configured=schwab_configured
+    )
 
     # Activity feed
     recent_activity = _build_recent_activity(db)

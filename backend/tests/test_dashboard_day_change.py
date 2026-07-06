@@ -234,7 +234,9 @@ def test_account_day_change_sums_positions():
     # Give the rows a notional so the account % has a denominator.
     for row, notional in zip(rows, [1250.0, 600.0]):
         row["notional"] = notional
-    summary = _build_account_summary(rows)
+    summary = _build_account_summary(
+        db=None, position_rows=rows, open_legs=[], schwab_configured=False
+    )
     # NOK +43.00 + BB -20.00 = +23.00
     assert summary["day_change"] == pytest.approx(23.0)
     assert summary["day_state"] == "populated"
@@ -252,6 +254,8 @@ def test_account_day_change_no_prior_close_when_no_day_data():
     rows = _build_position_rows(
         [_position()], {}, open_legs=[], rich_quotes={"NOK": QuoteView(last=12.5)}
     )
-    summary = _build_account_summary(rows)
+    summary = _build_account_summary(
+        db=None, position_rows=rows, open_legs=[], schwab_configured=False
+    )
     assert summary["day_change"] is None
     assert summary["day_state"] == "no_prior_close"

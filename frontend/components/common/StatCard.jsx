@@ -12,10 +12,12 @@ export default function StatCard({
   tooltip,
   colorClass,
   dataTestid,
+  dataAttrs,
 }) {
   return (
     <div
       data-testid={dataTestid}
+      {...(dataAttrs || {})}
       className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 relative group"
     >
       <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">{label}</div>

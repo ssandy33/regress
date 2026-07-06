@@ -73,6 +73,16 @@ class AccountValueResult:
     accounts: Optional[list[dict]] = None
     cached_at: Optional[datetime] = None
     error_detail: Optional[str] = None
+    # New in v1.9.0 (#420) — brokerage-parity addends. Appended to preserve the
+    # V1 field-order contract (sizing-cap consumers W-E / W-H / W-I read the
+    # fields above by name and are unaffected). ``cash`` is Schwab's reported
+    # cash & cash-investments (``cashBalance`` + ``moneyMarketFund``), NOT
+    # inferred. ``option_market_value`` folds long + short option MV (short legs
+    # mark negative — a liability). All Optional: absent on a disconnected or
+    # older-cache result.
+    cash: Optional[float] = None
+    equity_market_value: Optional[float] = None
+    option_market_value: Optional[float] = None
 
 
 # Hot in-memory cache. Key is the ``sizing_cap_account`` selector value
@@ -121,6 +131,12 @@ def _deserialise(raw: str) -> Optional[AccountValueResult]:
             accounts=payload.get("accounts"),
             cached_at=cached_at,
             error_detail=payload.get("error_detail"),
+            # `.get` tolerates older persisted rows written before #420 —
+            # they read back as None, so the parity strip degrades to the
+            # "Connect Schwab to reconcile" empty state rather than raising.
+            cash=payload.get("cash"),
+            equity_market_value=payload.get("equity_market_value"),
+            option_market_value=payload.get("option_market_value"),
         )
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         logger.debug("Failed to decode schwab_account_value cache row: %s", exc)
@@ -166,15 +182,54 @@ def _write_db_cache(db: Session, cache_key: str, result: AccountValueResult) -> 
 # Schwab response shape — defensive extraction
 # ---------------------------------------------------------------------------
 
-# CHAIN-UNVERIFIED — V0 capture failed (issue #234, refresh token expired 65d).
-# Candidate-key chain is from the planner's spec, not verified against a live response.
-# Release-manager checklist must include a live-verify step before v1.0.7 is tagged.
+# Field keys VERIFIED live 2026-07-06 against the connected prod account
+# (`get_accounts()[0]['securitiesAccount']['currentBalances']`); the parity plan
+# (issue #415) §"Verified Schwab field contract" records the capture. The extra
+# candidates on `_LIQUIDATION_VALUE_KEYS` are defensive fallbacks retained from
+# the #234 chain — `liquidationValue` is the live-confirmed primary.
 _LIQUIDATION_VALUE_KEYS: tuple[str, ...] = (
     "liquidationValue",
     "netLiquidation",
     "currentLiquidationValue",
 )
+# R2 cash — `cashBalance` is the live-confirmed field ("Cash & Cash Investments").
+# `totalCash` does NOT exist in the response (do not reference it). `moneyMarketFund`
+# is the sweep addend (0.0 in the live capture).
+_CASH_KEYS: tuple[str, ...] = ("cashBalance",)
+_MONEY_MARKET_KEYS: tuple[str, ...] = ("moneyMarketFund",)
+# R4 addends — long equity MV, and long/short option MV (short marks negative).
+_EQUITY_MV_KEYS: tuple[str, ...] = ("longMarketValue",)
+_LONG_OPTION_MV_KEYS: tuple[str, ...] = ("longOptionMarketValue",)
+_SHORT_OPTION_MV_KEYS: tuple[str, ...] = ("shortOptionMarketValue",)
 _BALANCE_CONTAINERS: tuple[str, ...] = ("currentBalances", "aggregatedBalance")
+
+
+def _coerce_number(raw: Any) -> Optional[float]:
+    """Return ``raw`` as a float iff it is a real number (not a bool)."""
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return float(raw)
+    return None
+
+
+def _extract_balance_field(
+    securities_account: dict, candidate_keys: tuple[str, ...]
+) -> Optional[float]:
+    """Pull the first parseable number for ``candidate_keys`` from any balance
+    container on ``securities_account``.
+
+    Shared defensive extractor for every balance figure (liquidation value,
+    cash, equity/option MV). Returns ``None`` when no candidate key resolves to
+    a real number so callers can decide the field is unavailable.
+    """
+    for container_key in _BALANCE_CONTAINERS:
+        container = securities_account.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for value_key in candidate_keys:
+            value = _coerce_number(container.get(value_key))
+            if value is not None:
+                return value
+    return None
 
 
 def _extract_liquidation_value(securities_account: dict) -> Optional[float]:
@@ -185,18 +240,35 @@ def _extract_liquidation_value(securities_account: dict) -> Optional[float]:
     caller can mark the account as ``error`` (per the §6.3 account-zero
     failure mapping).
     """
-    # CHAIN-UNVERIFIED — V0 capture failed (issue #234, refresh token expired 65d).
-    # Candidate-key chain is from the planner's spec, not verified against a live response.
-    # Release-manager checklist must include a live-verify step before v1.0.7 is tagged.
-    for container_key in _BALANCE_CONTAINERS:
-        container = securities_account.get(container_key)
-        if not isinstance(container, dict):
-            continue
-        for value_key in _LIQUIDATION_VALUE_KEYS:
-            raw = container.get(value_key)
-            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-                return float(raw)
-    return None
+    return _extract_balance_field(securities_account, _LIQUIDATION_VALUE_KEYS)
+
+
+def _extract_cash(securities_account: dict) -> Optional[float]:
+    """Pull Schwab's cash & cash-investments from a securitiesAccount (R2).
+
+    ``cash = cashBalance + moneyMarketFund`` — sourced from the account
+    balance, never inferred from position math. Returns ``None`` when
+    ``cashBalance`` is absent (a missing sweep fund alone is treated as 0.0).
+    """
+    cash = _extract_balance_field(securities_account, _CASH_KEYS)
+    if cash is None:
+        return None
+    sweep = _extract_balance_field(securities_account, _MONEY_MARKET_KEYS) or 0.0
+    return cash + sweep
+
+
+def _extract_option_market_value(securities_account: dict) -> Optional[float]:
+    """Pull total option MV (long + short) from a securitiesAccount (R4).
+
+    Short option legs mark negative (a liability), so the sum can be
+    negative. Returns ``None`` only when neither long nor short option MV
+    is present; a present-but-zero leg contributes 0.0.
+    """
+    long_mv = _extract_balance_field(securities_account, _LONG_OPTION_MV_KEYS)
+    short_mv = _extract_balance_field(securities_account, _SHORT_OPTION_MV_KEYS)
+    if long_mv is None and short_mv is None:
+        return None
+    return (long_mv or 0.0) + (short_mv or 0.0)
 
 
 def _mask_account_number(account_number: Optional[str]) -> Optional[str]:
@@ -238,6 +310,14 @@ def _sanitise_accounts(raw_accounts: Iterable[Any]) -> list[dict]:
                 "account_id_masked": masked,
                 "account_type": account_type if isinstance(account_type, str) else None,
                 "net_liquidation": net_liq,
+                # New in #420 — brokerage-parity addends (may be None per account).
+                "cash": _extract_cash(securities_account),
+                "equity_market_value": _extract_balance_field(
+                    securities_account, _EQUITY_MV_KEYS
+                ),
+                "option_market_value": _extract_option_market_value(
+                    securities_account
+                ),
             }
         )
     return sanitised
@@ -288,6 +368,13 @@ def _select_account(
             account_type=None,
             accounts=sanitised,
             cached_at=now,
+            cash=_sum_optional(a.get("cash") for a in sanitised),
+            equity_market_value=_sum_optional(
+                a.get("equity_market_value") for a in sanitised
+            ),
+            option_market_value=_sum_optional(
+                a.get("option_market_value") for a in sanitised
+            ),
         )
 
     if sizing_cap_account in (None, "", "__default__"):
@@ -322,7 +409,19 @@ def _select_account(
         account_type=chosen["account_type"],
         accounts=sanitised,
         cached_at=now,
+        cash=chosen.get("cash"),
+        equity_market_value=chosen.get("equity_market_value"),
+        option_market_value=chosen.get("option_market_value"),
     )
+
+
+def _sum_optional(values: Iterable[Optional[float]]) -> Optional[float]:
+    """Sum an iterable of optional floats, returning ``None`` iff every value is
+    ``None`` (so a wholly-absent addend stays absent rather than reading 0.0)."""
+    present = [v for v in values if v is not None]
+    if not present:
+        return None
+    return sum(present)
 
 
 # ---------------------------------------------------------------------------

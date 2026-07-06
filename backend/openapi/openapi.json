@@ -1268,6 +1268,11 @@
       },
       "DashboardKpis": {
         "properties": {
+          "includes_options": {
+            "default": false,
+            "title": "Includes Options",
+            "type": "boolean"
+          },
           "largest_loser": {
             "anyOf": [
               {
@@ -1961,14 +1966,7 @@
       "DashboardResponse": {
         "properties": {
           "account_summary": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/DashboardAccountSummary"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "$ref": "#/components/schemas/DashboardAccountSummary"
           },
           "data_meta": {
             "$ref": "#/components/schemas/DashboardDataMeta"

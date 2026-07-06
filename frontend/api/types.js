@@ -87,4 +87,10 @@
  * @typedef {import('./generated/types').paths['/api/regression/compare']['post']['responses']['200']['content']['application/json']} CompareRegressionResponse
  */
 
+/**
+ * Response from `GET /api/dashboard` — the unified dashboard payload
+ * (extended in v1.9.0 #420 with `account_summary` + `kpis.includes_options`).
+ * @typedef {import('./generated/types').paths['/api/dashboard']['get']['responses']['200']['content']['application/json']} DashboardResponse
+ */
+
 export {};

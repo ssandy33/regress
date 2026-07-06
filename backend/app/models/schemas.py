@@ -854,6 +854,12 @@ class DashboardKpis(BaseModel):
     premium_collected_trades: int = 0
     realized_pl: float = 0.0
     realized_pl_pct: Optional[float] = None
+    # New in v1.9.0 (#420, R4) — ``notional_value`` and ``unrealized_pl`` now
+    # roll in open option-leg market value / P&L when leg economics are live.
+    # ``includes_options`` drives the "incl. options" tile subtext + the
+    # ``data-includes-options`` attribute. Defaults False so older payloads /
+    # tests that omit it still validate.
+    includes_options: bool = False
 
 
 class DashboardPositionRow(BaseModel):
@@ -1010,6 +1016,28 @@ class DashboardNextAction(BaseModel):
     triggered_rules: list[DashboardRuleEvaluation] = []
 
 
+class DashboardAccountSummary(BaseModel):
+    """Broker-reconciliation strip (v1.9.0 #420 — R1/R2/R3-account).
+
+    ``account_value = equity_mv + option_mv + cash`` reconciled against the
+    broker's reported net-liquidation within a documented quote-timing
+    tolerance (``reconciles``). Every figure is Optional and defaults null so
+    the frontend renders the explicit "Connect Schwab to reconcile" empty state
+    when Schwab is not connected — never a false ``$0``. ``day_change`` fields
+    are populated by the R3 day-change slice; until then they read
+    ``no_prior_close``.
+    """
+
+    account_value: Optional[float] = None
+    equity_mv: Optional[float] = None
+    option_mv: Optional[float] = None
+    cash: Optional[float] = None
+    day_change: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    day_state: Literal["populated", "no_prior_close"] = "no_prior_close"
+    reconciles: bool = False
+
+
 class DashboardActivity(BaseModel):
     kind: DASHBOARD_ACTIVITY_KIND
     timestamp: str
@@ -1064,9 +1092,12 @@ class DashboardResponse(BaseModel):
     # New in V0.5.4 — server-side ranked action engine output. See
     # decision-dashboard-v05.md §2.2 / §14.7.
     next_actions: list[DashboardNextAction] = []
-    # New in v1.9.0 (#421, PRD #415 R1/R2/R3) — broker-reconciliation strip.
-    # Optional so older payloads / tests that omit the block still validate.
-    account_summary: Optional[DashboardAccountSummary] = None
+    # New in v1.9.0 (#420 + #421, PRD #415 R1/R2/R3) — broker-reconciliation
+    # strip. default_factory so existing response constructions / tests that
+    # omit it still validate (all DashboardAccountSummary fields default).
+    account_summary: DashboardAccountSummary = Field(
+        default_factory=DashboardAccountSummary
+    )
 
 
 # --- Recovery Plan (V0.5.8, issue #182) ---

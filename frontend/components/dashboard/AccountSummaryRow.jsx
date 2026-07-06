@@ -1,21 +1,29 @@
+import StatCard from '../common/StatCard';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
 
 /**
- * AccountSummaryRow — broker-reconciliation strip (v1.9.0, PRD #415 R1/R2/R3).
+ * AccountSummaryRow — broker-reconciliation strip (v1.9.0, #420 + #421, PRD #415
+ * R1/R2/R3/R4).
  *
- * Three tiles: Account value (hero, emphasized), Cash, and account-level Day
- * change. The Day-change tile (R3, #421) is fully populated from
- * ``summary.day_change`` / ``day_change_pct`` / ``day_state``. The Account value
- * and Cash tiles (R1/R2/R4) render their "Connect Schwab to reconcile"
- * unavailable state until the account-totals worker wires the broker balances —
- * ``summary.account_value`` / ``cash`` are ``null`` on the #421 spine.
+ * Three tiles reconciling the dashboard to the connected Schwab account:
+ *   - Account value (hero, emphasized) — Σ equity MV + option MV + cash (R1),
+ *     with the breakdown as subtext and a `data-reconciles` flag. Renders the
+ *     "Connect Schwab to reconcile" unavailable state until the broker balances
+ *     resolve (#420).
+ *   - Cash & sweep — sourced from the broker balance, never inferred (R2).
+ *   - Day change — account-level signed $ / % (R3, #421), composed from the
+ *     per-position equity day changes. Populated independently of the broker
+ *     reconciliation: the tile lights up whenever `day_state === 'populated'`
+ *     even while the account value / cash tiles are unavailable.
  *
- * Tokens mirror ``common/StatCard`` (xs label, 2xl value, xs subtext). A local
- * ``Tile`` is used instead of ``StatCard`` so the frozen ``data-reconciles`` /
- * ``data-day-state`` attributes sit on the same node as the ``data-testid``.
+ * States (design spec §States):
+ *   - loading → 3 skeleton tiles.
+ *   - unavailable (broker not connected → `summary.cash == null`) → account /
+ *     cash tiles show `—` with a "Connect Schwab to reconcile" hint. Distinct
+ *     from a false `$0`.
+ *   - populated → figures + reconciliation flag.
  *
- * States: loading (3 skeleton tiles) | populated | unavailable (broker not
- * connected → ``—`` + a muted "Connect Schwab to reconcile" hint).
+ * Grid: `grid-cols-2 lg:grid-cols-4`; Account value spans 2 cols (hero).
  */
 
 function plColor(value) {
@@ -30,32 +38,15 @@ function signedCurrency(value) {
   return `${value > 0 ? '+' : ''}${formatCurrency(value)}`;
 }
 
-function signedPercent(value) {
-  if (value == null) return null;
-  return `${value > 0 ? '+' : ''}${formatPercent(value, 2)}`;
-}
-
-/**
- * Tile — StatCard-equivalent markup that also forwards arbitrary ``data-*``
- * attributes + the testid on the tile node. ``extraProps`` carries the frozen
- * ``data-reconciles`` / ``data-day-state`` attributes.
- */
-function Tile({ label, value, subtext, colorClass, dataTestid, className = '', extraProps = {} }) {
+function SkeletonTile({ span }) {
   return (
     <div
-      data-testid={dataTestid}
-      className={`bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 ${className}`}
-      {...extraProps}
+      className={`bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 ${
+        span || ''
+      }`}
     >
-      <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">{label}</div>
-      <div
-        className={`text-2xl font-semibold ${colorClass || 'text-slate-900 dark:text-white'}`}
-      >
-        {value}
-      </div>
-      {subtext && (
-        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{subtext}</div>
-      )}
+      <div className="h-3 w-20 bg-slate-200 dark:bg-slate-700 rounded animate-pulse mb-2" />
+      <div className="h-7 w-28 bg-slate-200 dark:bg-slate-700 rounded animate-pulse" />
     </div>
   );
 }
@@ -68,71 +59,70 @@ export default function AccountSummaryRow({ summary, loading }) {
         className="grid grid-cols-2 lg:grid-cols-4 gap-4"
         aria-busy="true"
       >
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className={`${
-              i === 0 ? 'col-span-2' : ''
-            } h-24 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700`}
-          />
-        ))}
+        <SkeletonTile span="col-span-2 lg:col-span-2" />
+        <SkeletonTile />
+        <SkeletonTile />
       </div>
     );
   }
 
   if (!summary) return null;
 
-  const reconciles = summary.reconciles === true;
-  const accountValue = summary.account_value;
-  const cash = summary.cash;
-  const dayChange = summary.day_change;
-  const dayChangePct = summary.day_change_pct;
-  const dayState = summary.day_state ?? 'no_prior_close';
-  const brokerUnavailable = accountValue == null && cash == null;
+  // "Unavailable" (broker not connected): cash is null → render the connect
+  // hint, NOT a false $0 that would assert a reconciled zero-cash account.
+  const connected = summary.cash != null;
 
-  // Account value — hero tile. Reconciliation breakdown as subtext when the
-  // broker balances are available; otherwise the connect hint.
-  const valueSubtext = brokerUnavailable
-    ? 'Connect Schwab to reconcile'
-    : [
-        summary.equity_mv != null ? `Equity ${formatCurrency(summary.equity_mv)}` : null,
-        summary.option_mv != null ? `Options ${signedCurrency(summary.option_mv)}` : null,
-        summary.cash != null ? `Cash ${formatCurrency(summary.cash)}` : null,
-      ]
-        .filter(Boolean)
-        .join(' + ') || undefined;
+  const accountValue = connected ? formatCurrency(summary.account_value) : '—';
+  const breakdown = connected
+    ? `Equity ${formatCurrency(summary.equity_mv)} + Options ${signedCurrency(
+        summary.option_mv
+      )} + Cash ${formatCurrency(summary.cash)}`
+    : 'Connect Schwab to reconcile';
 
-  // Day change — the R3 tile this issue lands.
-  const dayPopulated = dayState === 'populated';
-  const dayValue = dayPopulated ? signedCurrency(dayChange) : '—';
-  const dayColor = dayPopulated ? plColor(dayChange ?? dayChangePct) : undefined;
-  const daySubtext = dayPopulated ? signedPercent(dayChangePct) || undefined : 'no prior close';
+  const cashValue = connected ? formatCurrency(summary.cash) : '—';
+
+  // Day change (#421 R3) — populated independently of broker reconciliation.
+  const dayState = summary.day_state || 'no_prior_close';
+  const dayPopulated = dayState === 'populated' && summary.day_change != null;
+  const dayValue = dayPopulated
+    ? `${signedCurrency(summary.day_change)} / ${
+        summary.day_change_pct != null
+          ? `${summary.day_change_pct > 0 ? '+' : ''}${formatPercent(summary.day_change_pct)}`
+          : '—'
+      }`
+    : '—';
+  const daySubtext = dayPopulated ? undefined : 'no prior close';
 
   return (
     <div
       data-testid="dashboard-account-summary"
       className="grid grid-cols-2 lg:grid-cols-4 gap-4"
     >
-      <Tile
-        label="Account value"
-        value={accountValue == null ? '—' : formatCurrency(accountValue)}
-        subtext={valueSubtext}
-        dataTestid="kpi-account-value"
-        className="col-span-2 lg:col-span-2 ring-1 ring-blue-500/40"
-        extraProps={{ 'data-reconciles': reconciles ? 'true' : 'false' }}
-      />
-      <Tile
+      {/* Account value hero — emphasis (blue ring + span) applied by the parent
+          wrapper so the shared StatCard recipe stays intact (design spec). */}
+      <div className="col-span-2 lg:col-span-2 ring-1 ring-blue-500/40 rounded-lg">
+        <StatCard
+          label="Account value"
+          value={accountValue}
+          subtext={breakdown}
+          tooltip={connected ? breakdown : undefined}
+          dataTestid="kpi-account-value"
+          dataAttrs={{ 'data-reconciles': summary.reconciles ? 'true' : 'false' }}
+        />
+      </div>
+      <StatCard
         label="Cash & sweep"
-        value={cash == null ? '—' : formatCurrency(cash)}
+        value={cashValue}
+        subtext={connected ? undefined : 'from broker balance'}
         dataTestid="kpi-cash"
       />
-      <Tile
+      <StatCard
         label="Day change"
         value={dayValue}
         subtext={daySubtext}
-        colorClass={dayColor}
+        colorClass={dayPopulated ? plColor(summary.day_change) : undefined}
         dataTestid="kpi-day-change"
-        extraProps={{ 'data-day-state': dayState }}
+        dataAttrs={{ 'data-day-state': dayState }}
       />
     </div>
   );
