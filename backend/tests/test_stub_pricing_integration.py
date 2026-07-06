@@ -163,3 +163,47 @@ def test_stub_client_snapshots_data_and_retains_no_session(stub_db):
     stub_db.close()
     assert client.get_quote("SEEDA")["lastPrice"] is not None
     assert client.get_option_chain("SEEDA")["callExpDateMap"]
+
+
+# -- Issue #421 (PRD #415 R3): day change on the QA stub feed -----------------
+
+
+@pytest.mark.integration
+def test_stub_quote_emits_day_change_fields(stub_db):
+    """The QA stub client returns the Schwab-shaped day-change fields for the
+    seeded archetypes so QA can render the DAY column without a live feed."""
+    from app.services.market_client import StubSchwabClient
+
+    client = StubSchwabClient(stub_db)
+    quote = client.get_quote("SEEDA")  # up-day archetype
+    assert quote["closePrice"] == pytest.approx(108.0)
+    assert quote["netChange"] == pytest.approx(2.0)
+    assert quote["netPercentChange"] == pytest.approx(1.85)
+    # quoteTime is emitted as Schwab-shaped epoch millis (from the ISO stub).
+    assert isinstance(quote["quoteTime"], int)
+
+
+@pytest.mark.integration
+def test_stub_dashboard_populates_day_change(stub_db):
+    """The stub-seeded dashboard payload renders per-position + account-level day
+    change, and a symbol without a prior close shows no_prior_close (#421 R3)."""
+    payload = build_dashboard_payload(stub_db)
+    rows = {r["ticker"]: r for r in payload["positions"]}
+
+    # SEEDA — up day, 100 shares × +$2.00 = +$200.00 equity day change.
+    assert rows["SEEDA"]["day_state"] == "populated"
+    assert rows["SEEDA"]["day_change"] == pytest.approx(200.0)
+    assert rows["SEEDA"]["day_change_pct"] == pytest.approx(0.0185)
+
+    # SEEDG — down day, 100 shares × -$2.00 = -$200.00.
+    assert rows["SEEDG"]["day_state"] == "populated"
+    assert rows["SEEDG"]["day_change"] == pytest.approx(-200.0)
+
+    # SEEDB — no day fields seeded → explicit no_prior_close empty state.
+    assert rows["SEEDB"]["day_state"] == "no_prior_close"
+    assert rows["SEEDB"]["day_change"] is None
+
+    # Account-level day change is populated and composed from the rows.
+    summary = payload["account_summary"]
+    assert summary["day_state"] == "populated"
+    assert summary["day_change"] is not None

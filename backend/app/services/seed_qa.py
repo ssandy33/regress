@@ -133,6 +133,14 @@ class Archetype:
     trades: list[SeedTrade] = field(default_factory=list)
     quote_price: float | None = None
     marks: list[StubMark] = field(default_factory=list)
+    # New in v1.9.0 (#421 R3 / #417 R5) — synthetic day-change + freshness fields
+    # for the QuoteStub row. Omitting ``close_price`` / ``net_change`` models the
+    # "no prior close" DAY-column state. ``net_pct`` is a Schwab-shaped number
+    # (e.g. 1.85 for +1.85%); ``quote_time`` is ISO (emitted as epoch millis).
+    close_price: float | None = None
+    net_change: float | None = None
+    net_pct: float | None = None
+    quote_time: str | None = None
 
 
 @dataclass
@@ -198,6 +206,11 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
     # so the timing axis yields Watch (the depth axis stays Low at δ≈0.55).
     near = _iso_date_in(10, now=now)
     past = _iso_date_in(-30, now=now)  # closed-leg expiration in the past
+    # #421 R3 / #417 R5 — now()-relative quote timestamps (parameterized, not
+    # pinned ISO literals) so freshness stays in its intended band as the seed
+    # ages. Fresh = 2m ago (no stale flag); stale = 3h ago (amber freshness pill).
+    fresh_quote_time = (now - timedelta(minutes=2)).replace(microsecond=0).isoformat()
+    stale_quote_time = (now - timedelta(hours=3)).replace(microsecond=0).isoformat()
 
     return [
         # 1 — Deep-ITM short call, >14 DTE, δ≈0.90 → High (depth axis).
@@ -212,6 +225,12 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
                 SeedTrade("sell_call", strike=80.0, expiration=far, premium=12.0),
             ],
             quote_price=110.0,  # price ≫ strike → deep ITM
+            # #421 R3 — up day (close 108 < last 110): DAY renders green. Fresh
+            # quote → no stale flag (#417 R5).
+            close_price=108.0,
+            net_change=2.0,
+            net_pct=1.85,
+            quote_time=fresh_quote_time,
             marks=[
                 StubMark(80.0, far, "call", mid=31.5, delta=0.90),
             ],
@@ -320,6 +339,11 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
                 ),
             ],
             quote_price=78.0,
+            # #421 R3 — down day (close 80 > last 78): DAY renders red.
+            close_price=80.0,
+            net_change=-2.0,
+            net_pct=-2.5,
+            quote_time=fresh_quote_time,
             marks=[],
         ),
         # 8 — Imported equity (#382): bought-lot shares + dividend income + a CC
@@ -364,6 +388,13 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
                 ),
             ],
             quote_price=13.5,  # below the 15 strike → OTM, unrealized P&L renders
+            # #421 R3 — up day (close 13.0 < last 13.5). #417 R5 — STALE quote
+            # (3h ago) so the QA freshness pill goes amber and this row shows the
+            # stale flag (the NOK/BB stale-quote case from the design evidence).
+            close_price=13.0,
+            net_change=0.5,
+            net_pct=3.85,
+            quote_time=stale_quote_time,
             marks=[
                 StubMark(15.0, far, "call", mid=0.40, delta=0.30),
             ],
@@ -475,7 +506,16 @@ def _insert_archetype(db: DBSession, archetype: Archetype, *, now: datetime) -> 
 
     stub_count = 0
     if archetype.quote_price is not None:
-        db.add(QuoteStub(ticker=archetype.ticker, last_price=archetype.quote_price))
+        db.add(
+            QuoteStub(
+                ticker=archetype.ticker,
+                last_price=archetype.quote_price,
+                close_price=archetype.close_price,
+                net_change=archetype.net_change,
+                net_pct=archetype.net_pct,
+                quote_time=archetype.quote_time,
+            )
+        )
         stub_count += 1
     for mark in archetype.marks:
         db.add(

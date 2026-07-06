@@ -1794,6 +1794,46 @@ export interface components {
             per_leg_breakdown?: components["schemas"]["CoveredCallLegBreakdown"][];
             position: components["schemas"]["CoveredCallPositionSummary"];
         };
+        /**
+         * DashboardAccountSummary
+         * @description Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).
+         *
+         *     New top-level ``account_summary`` key on the dashboard response. The
+         *     ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
+         *     account-level day change composed from per-position equity day changes.
+         *
+         *     The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
+         *     reconciliation fields (R1/R2/R4) are populated by the account-totals worker
+         *     (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
+         *     ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
+         *     worker lands. All fields are additive/defaulted so the payload validates
+         *     either way.
+         */
+        DashboardAccountSummary: {
+            /** Account Value */
+            account_value?: number | null;
+            /** Cash */
+            cash?: number | null;
+            /** Day Change */
+            day_change?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /**
+             * Day State
+             * @default no_prior_close
+             * @enum {string}
+             */
+            day_state: "populated" | "no_prior_close";
+            /** Equity Mv */
+            equity_mv?: number | null;
+            /** Option Mv */
+            option_mv?: number | null;
+            /**
+             * Reconciles
+             * @default false
+             */
+            reconciles: boolean;
+        };
         /** DashboardActivity */
         DashboardActivity: {
             /**
@@ -2107,6 +2147,16 @@ export interface components {
             broker_cost_basis_per_share?: number | null;
             /** Current Price */
             current_price?: number | null;
+            /** Day Change */
+            day_change?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /**
+             * Day State
+             * @default no_prior_close
+             * @enum {string}
+             */
+            day_state: "populated" | "no_prior_close";
             /** Id */
             id: string;
             /**
@@ -2153,6 +2203,7 @@ export interface components {
         };
         /** DashboardResponse */
         DashboardResponse: {
+            account_summary?: components["schemas"]["DashboardAccountSummary"] | null;
             data_meta: components["schemas"]["DashboardDataMeta"];
             /** Generated At */
             generated_at: string;

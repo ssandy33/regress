@@ -756,6 +756,12 @@ DASHBOARD_RULE_ID = Literal[
 ]
 # Card valence — `priority` ranks urgency, `tone` carries valence (§4.3 Q6).
 DASHBOARD_ACTION_TONE = Literal["opportunity", "warning"]
+# New in v1.9.0 (#421, PRD #415 R3) — per-position and account-level day-change
+# state. ``populated`` = a signed $/% day change is available (Schwab supplied a
+# prior close / netChange for the symbol); ``no_prior_close`` = the explicit
+# empty state rendered as muted italic "no prior close" when the symbol has no
+# prior close, rather than a bare em-dash.
+DASHBOARD_DAY_STATE = Literal["populated", "no_prior_close"]
 
 
 class DashboardSchwabStatus(BaseModel):
@@ -873,6 +879,17 @@ class DashboardPositionRow(BaseModel):
     # when shares == 0 (cash-secured rows render "cash-secured", not a divide).
     broker_cost_basis_per_share: Optional[float] = None
     adjusted_cost_basis_per_share: Optional[float] = None
+    # New in v1.9.0 (#421, PRD #415 R3) — per-position day change. ``day_change``
+    # is the position's equity dollar move today (Schwab per-share ``netChange``
+    # × shares; None for 0-share cash-secured rows with no equity exposure).
+    # ``day_change_pct`` is the underlying's fractional day move (Schwab
+    # ``netPercentChange`` / 100, e.g. 0.0356 for +3.56%). ``day_state`` is
+    # "no_prior_close" when the symbol's quote carried no prior close / netChange
+    # (rendered as the explicit muted empty state, not a bare em-dash). All
+    # additive/defaulted so older payloads and tests that omit them still validate.
+    day_change: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    day_state: DASHBOARD_DAY_STATE = "no_prior_close"
 
 
 class DashboardMoneyness(BaseModel):
@@ -1011,6 +1028,31 @@ class DashboardDataMeta(BaseModel):
     sources_unavailable: list[str] = []
 
 
+class DashboardAccountSummary(BaseModel):
+    """Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).
+
+    New top-level ``account_summary`` key on the dashboard response. The
+    ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
+    account-level day change composed from per-position equity day changes.
+
+    The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
+    reconciliation fields (R1/R2/R4) are populated by the account-totals worker
+    (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
+    ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
+    worker lands. All fields are additive/defaulted so the payload validates
+    either way.
+    """
+
+    account_value: Optional[float] = None
+    equity_mv: Optional[float] = None
+    option_mv: Optional[float] = None
+    cash: Optional[float] = None
+    day_change: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    day_state: DASHBOARD_DAY_STATE = "no_prior_close"
+    reconciles: bool = False
+
+
 class DashboardResponse(BaseModel):
     generated_at: str
     status: DashboardStatus
@@ -1022,6 +1064,9 @@ class DashboardResponse(BaseModel):
     # New in V0.5.4 — server-side ranked action engine output. See
     # decision-dashboard-v05.md §2.2 / §14.7.
     next_actions: list[DashboardNextAction] = []
+    # New in v1.9.0 (#421, PRD #415 R1/R2/R3) — broker-reconciliation strip.
+    # Optional so older payloads / tests that omit the block still validate.
+    account_summary: Optional[DashboardAccountSummary] = None
 
 
 # --- Recovery Plan (V0.5.8, issue #182) ---

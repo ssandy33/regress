@@ -10,10 +10,11 @@ import { formatCurrency, formatPercent } from '../../utils/formatters';
  * ``positions[].wheel_status``, ``positions[].next_suggested_action``,
  * ``positions[].pl_pct``, ``positions[].broker_cost_basis``.
  *
- * Day column rule (spec §14.6): ``positions[].day_change`` is NOT in the
- * V0.5 backend payload. We render the column header and ``—`` in every cell
- * on desktop so the layout stays stable when V0.7 ships the data. The column
- * is hidden entirely on mobile (< 1024px), where the table is already wide.
+ * Day column rule (v1.9.0 #421, PRD #415 R3): the DAY cell is populated from
+ * ``positions[].day_change`` / ``day_change_pct`` / ``day_state`` (Schwab's own
+ * per-symbol day change). ``day_state === 'no_prior_close'`` renders an explicit
+ * muted "no prior close" state rather than a bare ``—``. The column is hidden
+ * entirely on mobile (< 1024px), where the table is already wide.
  *
  * Responsive strategy: single table, single set of rows. Columns that hide
  * on mobile (``P/L $`` and ``Day``) use ``hidden lg:table-cell`` so the
@@ -240,6 +241,41 @@ function PctPlCell({ value }) {
   );
 }
 
+/**
+ * DayCell — per-position day change (v1.9.0 #421, PRD #415 R3).
+ *
+ * ``populated`` → signed day-change $ (line 1) + % (line 2, muted), colored
+ * green/red via ``plClass``. 0-share cash-secured rows have no equity dollar
+ * exposure (``day_change == null``) so line 1 renders ``—`` while the underlying
+ * % move still shows. ``no_prior_close`` → muted italic "no prior close" (the
+ * explicit empty state, NOT a bare em-dash), left un-colored.
+ */
+function DayCell({ dayChange, dayChangePct, dayState }) {
+  if (dayState !== 'populated') {
+    return (
+      <span className="italic text-slate-500 dark:text-slate-400">
+        no prior close
+      </span>
+    );
+  }
+  // Color from the dollar move when present, else the percent move.
+  const colorValue = dayChange != null ? dayChange : dayChangePct;
+  const dollarText =
+    dayChange == null
+      ? '—'
+      : `${dayChange > 0 ? '+' : ''}${formatCurrency(dayChange)}`;
+  const pctText =
+    dayChangePct == null
+      ? null
+      : `${dayChangePct > 0 ? '+' : ''}${formatPercent(dayChangePct, 2)}`;
+  return (
+    <div className={`flex flex-col items-end tabular-nums ${plClass(colorValue)}`}>
+      <span>{dollarText}</span>
+      {pctText && <span className="text-xs">{pctText}</span>}
+    </div>
+  );
+}
+
 function PositionRow({ position }) {
   return (
     <tr
@@ -275,15 +311,20 @@ function PositionRow({ position }) {
           : `${position.unrealized_pl >= 0 ? '+' : ''}${formatCurrency(position.unrealized_pl)}`}
       </td>
       {/*
-        Day column — spec §14.6 ships the structural column visible-but-`—`
-        on desktop so layout doesn't shift when V0.7 adds backing data.
+        Day column (v1.9.0 #421, R3) — populated from the payload's day-change
+        fields; renders the explicit "no prior close" state when unavailable.
         Hidden on mobile.
       */}
       <td
-        className="hidden lg:table-cell py-2 px-3 text-right text-slate-500 dark:text-slate-400"
+        className="hidden lg:table-cell py-2 px-3 text-right"
         data-testid="dashboard-position-day"
+        data-day-state={position.day_state ?? 'no_prior_close'}
       >
-        —
+        <DayCell
+          dayChange={position.day_change}
+          dayChangePct={position.day_change_pct}
+          dayState={position.day_state ?? 'no_prior_close'}
+        />
       </td>
       <td className="py-2 px-3 text-center">
         <StatusPill status={position.wheel_status} />
