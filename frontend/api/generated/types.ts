@@ -1794,6 +1794,43 @@ export interface components {
             per_leg_breakdown?: components["schemas"]["CoveredCallLegBreakdown"][];
             position: components["schemas"]["CoveredCallPositionSummary"];
         };
+        /**
+         * DashboardAccountSummary
+         * @description Broker-reconciliation strip (v1.9.0 #420 — R1/R2/R3-account).
+         *
+         *     ``account_value = equity_mv + option_mv + cash`` reconciled against the
+         *     broker's reported net-liquidation within a documented quote-timing
+         *     tolerance (``reconciles``). Every figure is Optional and defaults null so
+         *     the frontend renders the explicit "Connect Schwab to reconcile" empty state
+         *     when Schwab is not connected — never a false ``$0``. ``day_change`` fields
+         *     are populated by the R3 day-change slice; until then they read
+         *     ``no_prior_close``.
+         */
+        DashboardAccountSummary: {
+            /** Account Value */
+            account_value?: number | null;
+            /** Cash */
+            cash?: number | null;
+            /** Day Change */
+            day_change?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /**
+             * Day State
+             * @default no_prior_close
+             * @enum {string}
+             */
+            day_state: "populated" | "no_prior_close";
+            /** Equity Mv */
+            equity_mv?: number | null;
+            /** Option Mv */
+            option_mv?: number | null;
+            /**
+             * Reconciles
+             * @default false
+             */
+            reconciles: boolean;
+        };
         /** DashboardActivity */
         DashboardActivity: {
             /**
@@ -1875,6 +1912,11 @@ export interface components {
         };
         /** DashboardKpis */
         DashboardKpis: {
+            /**
+             * Includes Options
+             * @default false
+             */
+            includes_options: boolean;
             largest_loser?: components["schemas"]["DashboardKpiLargestLoser"] | null;
             largest_risk?: components["schemas"]["DashboardKpiLargestRisk"] | null;
             /** Notional Change Pct */
@@ -2153,6 +2195,7 @@ export interface components {
         };
         /** DashboardResponse */
         DashboardResponse: {
+            account_summary?: components["schemas"]["DashboardAccountSummary"];
             data_meta: components["schemas"]["DashboardDataMeta"];
             /** Generated At */
             generated_at: string;

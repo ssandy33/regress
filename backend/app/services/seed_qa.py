@@ -40,6 +40,7 @@ premium-bearing trades to make ``adjusted_cost_basis`` differ from broker basis.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -66,6 +67,14 @@ logger = logging.getLogger(__name__)
 # archetypes remain identifiable after seeding. Frozen contract — the tests
 # reference this literal.
 SEED_TAG_PREFIX: str = "__seed__:"
+
+# Synthetic broker cash for the QA Account Summary strip (#420). QA has no live
+# ``get_accounts()`` feed, so ``dashboard._resolve_account_balances`` reads this
+# ``app_settings`` row instead. ``broker_net_liq: null`` tells the dashboard to
+# reconcile against its own composed value → the "reconciles=true" happy path
+# renders. Mirrors the design mock's Cash & sweep tile ($1,365.26).
+_QA_ACCOUNT_BALANCES_KEY: str = "qa_account_balances"
+_QA_ACCOUNT_CASH: float = 1365.26
 
 # The expected number of archetypes a healthy seed run inserts. The deploy
 # auto-seed gate (ADR #359 D3) fails the deploy if the post-seed count differs.
@@ -495,6 +504,37 @@ def _insert_archetype(db: DBSession, archetype: Archetype, *, now: datetime) -> 
     return stub_count
 
 
+def _seed_account_balances(db: DBSession) -> None:
+    """Upsert the synthetic ``qa_account_balances`` row for the parity strip.
+
+    Idempotent — ``_full_reset`` preserves ``app_settings``, so re-seeding
+    overwrites the existing row rather than duplicating it. Failure is logged
+    and swallowed: the account strip degrading to its empty state must never
+    abort a seed run.
+    """
+    payload = json.dumps({"cash": _QA_ACCOUNT_CASH, "broker_net_liq": None})
+    try:
+        row = (
+            db.query(AppSetting)
+            .filter(AppSetting.key == _QA_ACCOUNT_BALANCES_KEY)
+            .first()
+        )
+        if row is None:
+            db.add(AppSetting(key=_QA_ACCOUNT_BALANCES_KEY, value=payload))
+        else:
+            row.value = payload
+        db.commit()
+    except Exception:  # noqa: BLE001 — best-effort QA convenience row.
+        db.rollback()
+        logger.warning(
+            "seed_qa.account_balances_failed",
+            extra={
+                "event": "seed_qa.account_balances_failed",
+                "outcome": "degraded",
+            },
+        )
+
+
 def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
     """Seed QA with the eight synthetic archetypes + stub-pricing rows.
 
@@ -579,6 +619,9 @@ def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
             result.marks_seeded += stub_count - 1
         else:
             result.marks_seeded += stub_count
+
+    # Synthetic broker balances for the Account Summary strip (#420).
+    _seed_account_balances(db)
 
     logger.info(
         "seed_qa.complete",

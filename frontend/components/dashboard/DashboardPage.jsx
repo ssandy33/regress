@@ -1,6 +1,7 @@
 import Header from '../layout/Header';
 import { useDashboard } from '../../hooks/useDashboard';
 import StatusStrip from './StatusStrip';
+import AccountSummaryRow from './AccountSummaryRow';
 import DataReadinessBanner from './DataReadinessBanner';
 import NextActionsSection from './NextActionsSection';
 import KpiRow from './KpiRow';
@@ -71,6 +72,11 @@ export default function DashboardPage() {
               <OnboardingPanel />
             ) : (
               <>
+                <AccountSummaryRow
+                  summary={data?.account_summary}
+                  loading={loading}
+                />
+
                 <NextActionsSection
                   actions={data?.next_actions}
                   loading={loading}

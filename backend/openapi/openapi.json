@@ -957,6 +957,93 @@
         "title": "CoveredCallView",
         "type": "object"
       },
+      "DashboardAccountSummary": {
+        "description": "Broker-reconciliation strip (v1.9.0 #420 — R1/R2/R3-account).\n\n``account_value = equity_mv + option_mv + cash`` reconciled against the\nbroker's reported net-liquidation within a documented quote-timing\ntolerance (``reconciles``). Every figure is Optional and defaults null so\nthe frontend renders the explicit \"Connect Schwab to reconcile\" empty state\nwhen Schwab is not connected — never a false ``$0``. ``day_change`` fields\nare populated by the R3 day-change slice; until then they read\n``no_prior_close``.",
+        "properties": {
+          "account_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Value"
+          },
+          "cash": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash"
+          },
+          "day_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "day_state": {
+            "default": "no_prior_close",
+            "enum": [
+              "populated",
+              "no_prior_close"
+            ],
+            "title": "Day State",
+            "type": "string"
+          },
+          "equity_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity Mv"
+          },
+          "option_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Mv"
+          },
+          "reconciles": {
+            "default": false,
+            "title": "Reconciles",
+            "type": "boolean"
+          }
+        },
+        "title": "DashboardAccountSummary",
+        "type": "object"
+      },
       "DashboardActivity": {
         "properties": {
           "kind": {
@@ -1181,6 +1268,11 @@
       },
       "DashboardKpis": {
         "properties": {
+          "includes_options": {
+            "default": false,
+            "title": "Includes Options",
+            "type": "boolean"
+          },
           "largest_loser": {
             "anyOf": [
               {
@@ -1842,6 +1934,9 @@
       },
       "DashboardResponse": {
         "properties": {
+          "account_summary": {
+            "$ref": "#/components/schemas/DashboardAccountSummary"
+          },
           "data_meta": {
             "$ref": "#/components/schemas/DashboardDataMeta"
           },
