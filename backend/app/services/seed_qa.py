@@ -218,6 +218,16 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
     # #421 R3 / #417 R5 — now()-relative quote timestamps (parameterized, not
     # pinned ISO literals) so freshness stays in its intended band as the seed
     # ages. Fresh = 2m ago (no stale flag); stale = 3h ago (amber freshness pill).
+    #
+    # #417 market-hours note: staleness is measured against a market-hours
+    # reference (``now`` during regular trading hours, else the most recent
+    # session close), so the 3h-stale archetype (SEEDH) renders its amber
+    # "Quotes stale" pill + "3h ⚠" flag during the normal weekday-RTH QA demo
+    # window. Outside RTH the same quote correctly reads fresh once it is within
+    # the last session's budget — that suppression IS the #417 fix (the 2026-07-04
+    # false-positive was itself a market-closed day). Re-run ``seed-qa`` during
+    # trading hours to see the stale state; as the seed ages past a session
+    # boundary the stale archetype stays stale on any day.
     fresh_quote_time = (now - timedelta(minutes=2)).replace(microsecond=0).isoformat()
     stale_quote_time = (now - timedelta(hours=3)).replace(microsecond=0).isoformat()
 

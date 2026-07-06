@@ -1,4 +1,5 @@
 import StatusPill from '../common/StatusPill';
+import { formatQuoteAge } from '../../utils/formatters';
 
 /**
  * StatusStrip — four health pills always rendered above the KPI row.
@@ -7,6 +8,15 @@ import StatusPill from '../common/StatusPill';
  * Hash-based deep-linking is forward-looking — Settings doesn't yet scroll-to
  * a section based on the hash; that's a follow-up.
  */
+
+// Very-stale budget (seconds) that flips the freshness pill red. MUST match
+// ``QUOTE_VERY_STALE_BUDGET_SECONDS`` in backend/app/services/dashboard.py — the
+// backend already flags per-symbol staleness at the 15m intraday budget
+// (``displayed_stale``); this threshold only escalates the pill to ``very_stale``
+// once the oldest shown quote crosses an hour (#417 R5).
+const VERY_STALE_BUDGET_SECONDS = 60 * 60;
+// Intraday freshness budget, shown in the pill hover so the user knows the bar.
+const FRESH_BUDGET_LABEL = '15m';
 function schwabPill(schwab) {
   if (!schwab?.configured) {
     return { state: 'error', label: 'Schwab not connected' };
@@ -36,19 +46,32 @@ function fredPill(fred) {
 }
 
 function cachePill(cache) {
-  // Issue #147 / spec §2.1: ``cache.total === 0`` no longer renders a pill on
-  // the dashboard — the "Cache empty" surface moves to Settings → Data Sources.
-  // Returning ``null`` here is the signal to skip the pill entirely.
-  if (!cache || cache.total === 0) {
+  // Honest freshness (#417 / PRD #415 R5): the dashboard pill is driven by the
+  // OLDEST displayed live quote, NOT the research/data cache buckets (which age
+  // in days and are a different concern — they stay in Settings → Data Sources).
+  // With no assessable quotes shown there is nothing to report → skip the pill.
+  const displayedTotal = cache?.displayed_total ?? 0;
+  if (!cache || displayedTotal === 0) {
     return null;
   }
-  if (cache.very_stale > 0) {
-    return { state: 'error', label: `Cache very stale (${cache.very_stale})` };
+  const displayedStale = cache.displayed_stale ?? 0;
+  const stalestAge = cache.stalest_age_seconds;
+  const stalestSymbol = cache.stalest_symbol;
+
+  if (displayedStale > 0) {
+    const veryStale =
+      stalestAge != null && stalestAge >= VERY_STALE_BUDGET_SECONDS;
+    const hover = stalestSymbol
+      ? `Stalest quote: ${stalestSymbol} · ${formatQuoteAge(stalestAge)} ago (budget ${FRESH_BUDGET_LABEL})`
+      : undefined;
+    return {
+      state: veryStale ? 'error' : 'warn',
+      label: `Quotes ${veryStale ? 'very stale' : 'stale'} (${displayedStale})`,
+      freshnessState: veryStale ? 'very_stale' : 'stale',
+      title: hover,
+    };
   }
-  if (cache.stale > 0) {
-    return { state: 'warn', label: `Cache stale (${cache.stale})` };
-  }
-  return { state: 'ok', label: 'Cache fresh' };
+  return { state: 'ok', label: 'Quotes fresh', freshnessState: 'fresh' };
 }
 
 function journalPill(journal) {
@@ -70,7 +93,14 @@ export default function StatusStrip({ status }) {
       <StatusPill {...schwab} href="/settings#schwab" dataTestid="status-pill-schwab" />
       <StatusPill {...fred} href="/settings#fred" dataTestid="status-pill-fred" />
       {cache && (
-        <StatusPill {...cache} href="/settings#cache" dataTestid="status-pill-cache" />
+        <StatusPill
+          state={cache.state}
+          label={cache.label}
+          title={cache.title}
+          href="/settings#cache"
+          dataTestid="status-pill-cache"
+          dataAttrs={{ 'data-freshness-state': cache.freshnessState }}
+        />
       )}
       <StatusPill {...journal} href="/journal" dataTestid="status-pill-journal" />
     </div>

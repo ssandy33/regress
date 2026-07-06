@@ -1,7 +1,12 @@
 import Link from 'next/link';
 import Card from '../common/Card';
 import EmptyState from '../common/EmptyState';
-import { formatCurrency, formatPercent } from '../../utils/formatters';
+import {
+  formatCurrency,
+  formatPercent,
+  formatQuoteAge,
+  formatRelativeTime,
+} from '../../utils/formatters';
 
 /**
  * DashboardPositionsCard — triage table (issue #151).
@@ -276,6 +281,39 @@ function DayCell({ dayChange, dayChangePct, dayState }) {
   );
 }
 
+/**
+ * QuoteAgeFlag — per-symbol quote-freshness flag under the Current price (#417 R5).
+ *
+ * Renders a muted compact age ("2m") when fresh and an amber "3h ⚠" when the
+ * backend flags the quote stale (``quote_stale``). The exact quote timestamp is
+ * on hover. Renders nothing when freshness is unassessable (``quote_age_seconds``
+ * null — the quote carried no timestamp), so the cell never shows a bare flag it
+ * can't justify.
+ */
+function QuoteAgeFlag({ position }) {
+  const age = position.quote_age_seconds;
+  if (age == null) return null;
+  const stale = position.quote_stale === true;
+  const fetchedAt = position.quote_fetched_at;
+  const title = fetchedAt
+    ? `Quote as of ${formatRelativeTime(fetchedAt)} · ${formatQuoteAge(age)} ago`
+    : `${formatQuoteAge(age)} ago`;
+  const cls = stale
+    ? 'text-yellow-600 dark:text-yellow-400'
+    : 'text-slate-400 dark:text-slate-500';
+  return (
+    <span
+      data-testid="dashboard-position-quote-age"
+      data-stale={stale ? 'true' : 'false'}
+      title={title}
+      className={`block text-xs tabular-nums ${cls}`}
+    >
+      {formatQuoteAge(age)}
+      {stale && <span aria-hidden="true"> ⚠</span>}
+    </span>
+  );
+}
+
 function PositionRow({ position }) {
   return (
     <tr
@@ -296,8 +334,15 @@ function PositionRow({ position }) {
       <td className="py-2 px-3 text-right">
         <CostBasisCell position={position} />
       </td>
-      <td className="py-2 px-3 text-right tabular-nums text-slate-700 dark:text-slate-200">
-        {position.current_price == null ? '—' : formatCurrency(position.current_price)}
+      <td className="py-2 px-3 text-right">
+        <div className="flex flex-col items-end">
+          <span className="tabular-nums text-slate-700 dark:text-slate-200">
+            {position.current_price == null
+              ? '—'
+              : formatCurrency(position.current_price)}
+          </span>
+          <QuoteAgeFlag position={position} />
+        </div>
       </td>
       <td className="py-2 px-3 text-right">
         <PctPlCell value={position.pl_pct} />

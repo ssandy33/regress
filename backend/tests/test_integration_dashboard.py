@@ -1239,3 +1239,88 @@ def test_dashboard_no_prior_close_state(client, monkeypatch):
     assert row["day_change"] is None
     assert row["day_change_pct"] is None
     assert data["account_summary"]["day_state"] == "no_prior_close"
+
+
+# ---------------------------------------------------------------------------
+# Issue #417 — honest quote freshness (PRD #415 R5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_dashboard_cache_status_quote_driven(client, monkeypatch):
+    """The status.cache block carries the displayed-quote freshness signal, and
+    the freshness pill is driven by the OLDEST displayed quote — not the
+    research/data cache buckets (the #417 bug).
+
+    Two positions: one with a minute-old quote (fresh under any market-hours
+    reference) and one with a 3-day-old quote (stale under any reference). The
+    3-day offset makes the assertion independent of when the suite runs (RTH,
+    weekend, or after-hours), per CLAUDE.md's no-pinned-now guidance.
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    now = datetime.now(timezone.utc)
+    fresh_ms = int((now - timedelta(minutes=1)).timestamp() * 1000)
+    stale_ms = int((now - timedelta(days=3)).timestamp() * 1000)
+    quote_responses = {
+        "NOK": {"lastPrice": 12.5, "quoteTime": fresh_ms},
+        "BB": {"lastPrice": 4.2, "quoteTime": stale_ms},
+    }
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: quote_responses[ticker],
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {},
+    )
+
+    _seed_position(client, ticker="NOK", shares=100, broker_cost_basis=1200.0)
+    _seed_position(client, ticker="BB", shares=100, broker_cost_basis=500.0)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    cache = data["status"]["cache"]
+    # New quote-driven fields present alongside the legacy research buckets.
+    assert cache["displayed_total"] == 2
+    assert cache["displayed_stale"] == 1
+    assert cache["stalest_symbol"] == "BB"
+    assert cache["stalest_age_seconds"] >= 2 * 24 * 3600  # ~3 days
+
+    rows = {r["ticker"]: r for r in data["positions"]}
+    assert rows["BB"]["quote_stale"] is True
+    assert rows["BB"]["quote_age_seconds"] is not None
+    assert rows["BB"]["quote_fetched_at"] is not None
+    assert rows["NOK"]["quote_stale"] is False
+
+
+@pytest.mark.integration
+def test_dashboard_freshness_null_when_quote_lacks_timestamp(client, monkeypatch):
+    """A quote with no ``quoteTime`` is unassessable — the row gets null age +
+    not-stale, and it is excluded from the displayed-quote count (never a false
+    stale flag)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 9.0},  # no quoteTime
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {},
+    )
+
+    _seed_position(client, ticker="F", shares=100, broker_cost_basis=1500.0)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    row = next(r for r in data["positions"] if r["ticker"] == "F")
+    assert row["quote_age_seconds"] is None
+    assert row["quote_stale"] is False
+    assert data["status"]["cache"]["displayed_total"] == 0
+    assert data["status"]["cache"]["displayed_stale"] == 0

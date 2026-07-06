@@ -1123,6 +1123,16 @@
       },
       "DashboardCacheStatus": {
         "properties": {
+          "displayed_stale": {
+            "default": 0,
+            "title": "Displayed Stale",
+            "type": "integer"
+          },
+          "displayed_total": {
+            "default": 0,
+            "title": "Displayed Total",
+            "type": "integer"
+          },
           "fresh": {
             "title": "Fresh",
             "type": "integer"
@@ -1130,6 +1140,28 @@
           "stale": {
             "title": "Stale",
             "type": "integer"
+          },
+          "stalest_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stalest Age Seconds"
+          },
+          "stalest_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stalest Symbol"
           },
           "total": {
             "title": "Total",
@@ -1885,6 +1917,33 @@
               }
             ],
             "title": "Pl Pct"
+          },
+          "quote_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Age Seconds"
+          },
+          "quote_fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Fetched At"
+          },
+          "quote_stale": {
+            "default": false,
+            "title": "Quote Stale",
+            "type": "boolean"
           },
           "shares": {
             "title": "Shares",

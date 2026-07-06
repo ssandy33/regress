@@ -14,7 +14,7 @@ import concurrent.futures
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable, Optional
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -33,6 +33,7 @@ from app.services.action_engine import compute_next_actions
 from app.services.alpha_vantage_client import get_cached_next_earnings_date
 from app.services.market_client import get_market_client
 from app.services.dashboard_legs import (
+    MARKET_TZ,
     build_option_leg_index,
     derive_open_legs,
     market_today,
@@ -84,6 +85,27 @@ RECONCILE_PCT_TOLERANCE = 0.001
 # the Account Summary strip renders "populated" on QA where there is no live
 # Schwab feed (#420 QA-demoable data).
 _QA_ACCOUNT_BALANCES_KEY = "qa_account_balances"
+
+# Quote-freshness budgets (#417, PRD #415 R5). A displayed quote is "stale" once
+# its market-hours-aware age exceeds the intraday budget, and "very stale" past
+# the wider budget (which flips the pill red). Age is measured against a
+# market-hours reference — ``now`` during regular trading hours, otherwise the
+# most recent session close — so a quote captured near Friday's close is NOT
+# flagged stale all weekend (Risk #2: the 2026-07-04 evidence was itself a
+# market-closed day, and a naive ``now − quoteTime`` budget would false-positive
+# every quote). The very-stale budget is mirrored on the frontend
+# (``VERY_STALE_BUDGET_SECONDS`` in ``StatusStrip.jsx``) to pick the pill's
+# ``very_stale`` state from ``stalest_age_seconds``; keep the two in sync.
+QUOTE_FRESH_BUDGET_SECONDS = 15 * 60  # 900 — over this a displayed quote is stale
+QUOTE_VERY_STALE_BUDGET_SECONDS = 60 * 60  # 3600 — over this the pill goes red
+
+# Regular US equity trading hours on the Eastern (market) calendar. Used ONLY by
+# the quote-freshness reference below — DTE / expiration counts use
+# ``market_today`` (issue #418). Holidays are intentionally NOT modeled (we carry
+# no market calendar): a quote captured during a holiday session simply ages
+# against the prior close, which is the conservative never-false-fresh direction.
+_MARKET_OPEN_ET = time(9, 30)
+_MARKET_CLOSE_ET = time(16, 0)
 
 
 def _build_schwab_status() -> tuple[dict, bool]:
@@ -411,11 +433,113 @@ def _compute_day_change(
     return day_change, day_change_pct, "populated"
 
 
+def _most_recent_session_close(et_now: datetime) -> datetime:
+    """Return the most recent regular-session close (16:00 ET) at or before ``et_now``.
+
+    ``et_now`` is an Eastern-tz aware datetime. Walks back to today's 16:00 when
+    the market has already closed today (weekday), otherwise to the previous
+    weekday's close, skipping Sat/Sun. The returned value is tz-aware UTC so it
+    subtracts cleanly against UTC quote timestamps.
+    """
+    close_today = et_now.replace(
+        hour=_MARKET_CLOSE_ET.hour, minute=0, second=0, microsecond=0
+    )
+    if et_now.weekday() < 5 and et_now >= close_today:
+        return close_today.astimezone(timezone.utc)
+    day = et_now - timedelta(days=1)
+    while day.weekday() >= 5:  # rewind over Sat (5) / Sun (6)
+        day = day - timedelta(days=1)
+    close = day.replace(
+        hour=_MARKET_CLOSE_ET.hour, minute=0, second=0, microsecond=0
+    )
+    return close.astimezone(timezone.utc)
+
+
+def _market_reference_now(now: datetime) -> datetime:
+    """Return the instant quote-freshness age is measured against (#417 Risk #2).
+
+    During regular trading hours (Mon–Fri 09:30–16:00 ET) this is ``now`` — an
+    intraday quote is expected to keep updating, so its age accrues in real time.
+    Outside RTH (nights / weekends / holidays-as-weekends) it is the most recent
+    session close, so a quote captured near the last close does NOT read "stale"
+    merely because the market is shut. A quote that genuinely went stale *during*
+    the last session still ages against that session's close and is flagged.
+    """
+    et_now = now.astimezone(MARKET_TZ)
+    if et_now.weekday() < 5 and _MARKET_OPEN_ET <= et_now.time() <= _MARKET_CLOSE_ET:
+        return now
+    return _most_recent_session_close(et_now)
+
+
+def _compute_quote_freshness(
+    quote_view: QuoteView | None, reference_now: datetime
+) -> tuple[int | None, bool, str | None]:
+    """Compute (quote_age_seconds, quote_stale, quote_fetched_at) for a row (#417 R5).
+
+    - ``quote_age_seconds`` — the market-hours-aware age (``reference_now`` minus
+      the quote's ``quoteTime``), floored at 0. This is the value the inline
+      per-symbol age flag renders and the pill's stalest-age hover reports.
+    - ``quote_stale`` — True once that age exceeds :data:`QUOTE_FRESH_BUDGET_SECONDS`.
+    - ``quote_fetched_at`` — the quote's absolute wall-clock ISO timestamp (for
+      the exact-time hover; may differ from the age when the market is closed).
+
+    All three are ``None`` / ``False`` when the quote carried no ``quoteTime``:
+    freshness cannot be assessed, so the symbol is never falsely flagged stale.
+    """
+    quote_time_ms = quote_view.quote_time_ms if quote_view is not None else None
+    if quote_time_ms is None:
+        return None, False, None
+    quote_dt = datetime.fromtimestamp(quote_time_ms / 1000.0, tz=timezone.utc)
+    age_seconds = max(0, int((reference_now - quote_dt).total_seconds()))
+    quote_stale = age_seconds > QUOTE_FRESH_BUDGET_SECONDS
+    return age_seconds, quote_stale, quote_dt.isoformat()
+
+
+def _build_quote_freshness_signal(position_rows: list[dict]) -> dict:
+    """Aggregate the displayed-quote freshness signal for the status pill (#417 R5).
+
+    Produces the four additive ``status.cache`` fields the honest freshness pill
+    is driven by:
+
+    - ``displayed_total`` — count of shown positions whose quote freshness could
+      be assessed (``quote_age_seconds`` not null).
+    - ``displayed_stale`` — of those, how many exceed the intraday budget.
+    - ``stalest_symbol`` / ``stalest_age_seconds`` — the oldest displayed quote
+      (ties broken A→Z by ticker) for the pill's hover detail.
+
+    This is a *different* signal from the research/data cache buckets
+    (:func:`_bucket_cache_freshness`, aged in days for FRED / earnings) — the
+    dashboard pill switches to this quote signal; the day-based buckets stay in
+    the payload for the action engine + Settings.
+    """
+    assessable = [
+        r for r in position_rows if r.get("quote_age_seconds") is not None
+    ]
+    displayed_total = len(assessable)
+    displayed_stale = sum(1 for r in assessable if r.get("quote_stale"))
+    stalest_symbol: str | None = None
+    stalest_age_seconds: int | None = None
+    if assessable:
+        # Oldest first; ties resolved alphabetically for a deterministic pick.
+        worst = min(
+            assessable, key=lambda r: (-r["quote_age_seconds"], r["ticker"])
+        )
+        stalest_symbol = worst["ticker"]
+        stalest_age_seconds = worst["quote_age_seconds"]
+    return {
+        "displayed_total": displayed_total,
+        "displayed_stale": displayed_stale,
+        "stalest_symbol": stalest_symbol,
+        "stalest_age_seconds": stalest_age_seconds,
+    }
+
+
 def _build_position_rows(
     open_positions: list[dict],
     quotes_by_ticker: dict[str, float | None],
     open_legs: list[dict],
     rich_quotes: dict[str, QuoteView] | None = None,
+    now: datetime | None = None,
 ) -> list[dict]:
     """Convert journal positions into dashboard row shape, sorted by notional.
 
@@ -428,8 +552,14 @@ def _build_position_rows(
     ``rich_quotes`` is optional/defaulted so callers (and older tests) that only
     have the float price map still work — day-change simply degrades to the
     ``"no_prior_close"`` state for every row in that case.
+
+    The per-symbol quote-freshness fields (``quote_age_seconds`` / ``quote_stale``
+    / ``quote_fetched_at``, #417 R5) are stamped from ``rich_quotes`` against a
+    market-hours-aware reference derived from ``now`` (defaults to the current UTC
+    instant). Rows whose quote carried no timestamp get null age + not-stale.
     """
     rich_quotes = rich_quotes or {}
+    reference_now = _market_reference_now(now or datetime.now(timezone.utc))
     leg_count_by_position: dict[str, int] = {}
     has_open_put_by_ticker: dict[str, bool] = {}
     has_open_call_by_ticker: dict[str, bool] = {}
@@ -465,6 +595,9 @@ def _build_position_rows(
         day_change, day_change_pct, day_state = _compute_day_change(
             rich_quotes.get(ticker), shares
         )
+        quote_age_seconds, quote_stale, quote_fetched_at = _compute_quote_freshness(
+            rich_quotes.get(ticker), reference_now
+        )
         rows.append(
             {
                 "id": position["id"],
@@ -497,6 +630,12 @@ def _build_position_rows(
                 "day_change": day_change,
                 "day_change_pct": day_change_pct,
                 "day_state": day_state,
+                # v1.9.0 (#417, PRD #415 R5) — per-symbol quote freshness. The age
+                # is market-hours-aware (see _compute_quote_freshness); the pill
+                # aggregate is derived from these row fields.
+                "quote_age_seconds": quote_age_seconds,
+                "quote_stale": quote_stale,
+                "quote_fetched_at": quote_fetched_at,
             }
         )
     # Sort by notional desc (None last), then ticker asc.
@@ -1055,7 +1194,8 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         Dict matching DashboardResponse — FastAPI serializes via the
         response_model on the route.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
     # DTE/expiration counts and YTD scoping run on the US market (Eastern)
     # calendar, not the server's UTC clock (issue #418 — a UTC ``date.today()``
     # rolls a day early after 20:00 ET and knocked DTE one day low).
@@ -1123,8 +1263,14 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
 
     # Position rows + KPIs piggyback on the same data — no extra DB hits.
     position_rows = _build_position_rows(
-        open_positions, quotes_by_ticker, open_legs, rich_quotes=rich_quotes
+        open_positions, quotes_by_ticker, open_legs, rich_quotes=rich_quotes,
+        now=now_dt,
     )
+    # Honest freshness (#417 R5): the dashboard pill switches from the research
+    # cache buckets to the displayed-quote signal. Merge the quote-freshness
+    # fields onto the same ``cache_status`` object the status block carries; the
+    # day-based buckets stay untouched for the action engine + Settings.
+    cache_status.update(_build_quote_freshness_signal(position_rows))
     kpis = _build_kpis(
         position_rows,
         open_legs,
