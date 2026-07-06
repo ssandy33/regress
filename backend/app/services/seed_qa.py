@@ -78,7 +78,7 @@ _QA_ACCOUNT_CASH: float = 1365.26
 
 # The expected number of archetypes a healthy seed run inserts. The deploy
 # auto-seed gate (ADR #359 D3) fails the deploy if the post-seed count differs.
-EXPECTED_ARCHETYPE_COUNT: int = 8
+EXPECTED_ARCHETYPE_COUNT: int = 9
 
 
 class SeedGuardError(Exception):
@@ -186,7 +186,7 @@ def _iso_date_in(days: int, *, now: datetime) -> str:
 
 
 def build_archetypes(now: datetime | None = None) -> list[Archetype]:
-    """Construct the eight synthetic archetypes with DTE-relative expirations.
+    """Construct the nine synthetic archetypes with DTE-relative expirations.
 
     ``now`` is injectable for deterministic tests; production callers omit it
     and get ``datetime.now(timezone.utc)``. Returns a fresh list each call (the
@@ -208,6 +208,9 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
     8. Imported equity + dividend + CC against the bought lot → #382 equity
        import feature: two ``buy_stock`` lots, a ``dividend`` income row, and a
        short call covering the imported shares (#390 proof).
+    9. Dual-basis raw-loser (premium-softened equity underwater on raw basis but
+       not on the adjusted basis) → #422 R6 dual-basis P&L cells + a P0 review
+       card that fires on the RAW drawdown the adjusted basis hid (ADR #416).
     """
     now = now or datetime.now(timezone.utc)
     far = _iso_date_in(30, now=now)  # > 14 DTE
@@ -417,6 +420,47 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
             marks=[
                 StubMark(15.0, far, "call", mid=0.40, delta=0.30),
             ],
+        ),
+        # 9 — Dual-basis raw-loser (#422 R6 / ADR #416 Option B). A premium-
+        # softened equity holding underwater on RAW broker basis but not on the
+        # adjusted basis: raw −18.0% (past the −15% review threshold) vs adjusted
+        # −11.8% (under it). Proves the R6 guarantee — the P0 "Review SEEDI" card
+        # fires on the RAW drawdown that the adjusted basis silently hid — and the
+        # dual-basis P&L cells (adjusted headline + raw "raw"-tagged secondary).
+        # broker basis 5000; a closed sell_call (premium $3.50/sh × 100 = $350)
+        # reduces the adjusted basis to 4650. At $41 × 100 = $4100:
+        #   raw   $4100 − $5000 = −$900  (−18.0% of 5000)  → fires
+        #   adj   $4100 − $4650 = −$550  (−11.8% of 4650)  → under threshold
+        Archetype(
+            key="dual_basis_raw_loser",
+            ticker="SEEDI",
+            shares=100,
+            broker_cost_basis=5000.0,
+            strategy="wheel",
+            intended_state=(
+                "#422 R6 dual-basis P&L + raw-fired P0 review "
+                "(raw −18.0% past −15%, adjusted −11.8% under)"
+            ),
+            trades=[
+                # Closed premium-bearing leg reduces adjusted basis below broker,
+                # opening the raw/adjusted divergence R6 surfaces.
+                SeedTrade(
+                    "sell_call",
+                    strike=55.0,
+                    expiration=past,
+                    premium=3.5,
+                    closed_at=past + "T00:00:00+00:00",
+                    close_reason="full_expiration",
+                ),
+            ],
+            quote_price=41.0,  # underwater on both bases; raw deeper
+            # #421 R3 — down day (close 43 > last 41): DAY renders red. Fresh
+            # quote → no stale flag (#417 R5).
+            close_price=43.0,
+            net_change=-2.0,
+            net_pct=-4.65,
+            quote_time=fresh_quote_time,
+            marks=[],
         ),
     ]
 

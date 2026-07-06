@@ -53,16 +53,16 @@ def test_assert_seed_allowed_permits_non_production(env):
 
 @pytest.mark.unit
 @pytest.mark.ac("349-AC9")
-def test_build_archetypes_yields_eight_with_unique_keys():
-    """The frozen archetype list is exactly eight with distinct keys.
+def test_build_archetypes_yields_nine_with_unique_keys():
+    """The frozen archetype list is exactly nine with distinct keys.
 
     Was seven through v1.7; #382 added the ``imported_equity_cc`` equity-import
-    archetype, bringing the total to eight.
+    archetype (eight); #422 added the ``dual_basis_raw_loser`` R6 archetype (nine).
     """
     archetypes = build_archetypes(_FIXED_NOW)
-    assert len(archetypes) == 8
+    assert len(archetypes) == 9
     keys = [a.key for a in archetypes]
-    assert len(set(keys)) == 8
+    assert len(set(keys)) == 9
 
 
 @pytest.mark.unit
@@ -214,7 +214,7 @@ def test_expected_archetype_count_matches_built_list():
     The QA deploy fails if the post-seed count != this constant, so it must stay
     in lockstep with the archetype list (drift would falsely fail every deploy).
     """
-    assert EXPECTED_ARCHETYPE_COUNT == 8
+    assert EXPECTED_ARCHETYPE_COUNT == 9
     assert EXPECTED_ARCHETYPE_COUNT == len(build_archetypes(_FIXED_NOW))
 
 

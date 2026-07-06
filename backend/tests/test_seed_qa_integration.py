@@ -85,8 +85,9 @@ def _seed_count(db) -> int:
 def test_seed_inserts_all_archetypes(db_session):
     """AC: all archetypes present — every archetype seeded after a seed run.
 
-    Was seven through v1.7; #382 added an eighth (``imported_equity_cc``). The
-    count is anchored to ``EXPECTED_ARCHETYPE_COUNT`` so it tracks the list.
+    Was seven through v1.7; #382 added an eighth (``imported_equity_cc``); #422
+    added a ninth (``dual_basis_raw_loser``). The count is anchored to
+    ``EXPECTED_ARCHETYPE_COUNT`` so it tracks the list.
     """
     with patch("app.services.seed_qa.settings") as mock_settings:
         mock_settings.app_env = "qa"

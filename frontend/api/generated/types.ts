@@ -2015,6 +2015,8 @@ export interface components {
              * @enum {string}
              */
             tone: "opportunity" | "warning";
+            /** Trigger Basis */
+            trigger_basis?: "raw" | null;
             /**
              * Triggered Rules
              * @default []
@@ -2198,6 +2200,10 @@ export interface components {
              * @default false
              */
             quote_stale: boolean;
+            /** Raw Pl Pct */
+            raw_pl_pct?: number | null;
+            /** Raw Unrealized Pl */
+            raw_unrealized_pl?: number | null;
             /** Shares */
             shares: number;
             /** Strategy */

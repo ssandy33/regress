@@ -1502,6 +1502,18 @@
             "title": "Tone",
             "type": "string"
           },
+          "trigger_basis": {
+            "anyOf": [
+              {
+                "const": "raw",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Basis"
+          },
           "triggered_rules": {
             "default": [],
             "items": {
@@ -1944,6 +1956,28 @@
             "default": false,
             "title": "Quote Stale",
             "type": "boolean"
+          },
+          "raw_pl_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Pl Pct"
+          },
+          "raw_unrealized_pl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Unrealized Pl"
           },
           "shares": {
             "title": "Shares",

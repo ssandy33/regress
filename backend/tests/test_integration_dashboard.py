@@ -1324,3 +1324,87 @@ def test_dashboard_freshness_null_when_quote_lacks_timestamp(client, monkeypatch
     assert row["quote_stale"] is False
     assert data["status"]["cache"]["displayed_total"] == 0
     assert data["status"]["cache"]["displayed_stale"] == 0
+
+
+# -- R6 dual-basis P&L + raw-basis review trigger (issue #422) ----------------
+
+
+def _seed_dual_basis_sofi(client, monkeypatch):
+    """Seed the SOFI-shaped divergence: broker $5,000, adjusted $4,650 (a closed
+    $3.50 sell_call softens the basis), marked at $41 → raw −$900 (−18%) vs
+    adjusted −$550 (−11.8%). Returns the position id.
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 41.0},
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {},
+    )
+    today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
+    monkeypatch.setattr("app.services.dashboard.market_today", lambda: today)
+
+    sofi_id = _seed_position(
+        client, ticker="SOFI", broker_cost_basis=5000.0, shares=100
+    )
+    # A closed premium-bearing leg (3.5 × 100 = $350) reduces the adjusted basis
+    # below broker so raw and adjusted P&L diverge — without leaving an open leg.
+    _seed_trade(
+        client,
+        sofi_id,
+        trade_type="sell_call",
+        strike=55.0,
+        expiration="2026-04-01",
+        premium=3.5,
+        fees=0.0,
+        closed_at="2026-04-02T00:00:00Z",
+        close_reason="full_expiration",
+    )
+    return sofi_id
+
+
+@pytest.mark.integration
+def test_dashboard_position_carries_raw_pl(client, monkeypatch):
+    """The payload row carries raw broker-basis P&L alongside the adjusted headline."""
+    _seed_dual_basis_sofi(client, monkeypatch)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    row = next(r for r in data["positions"] if r["ticker"] == "SOFI")
+
+    # Adjusted headline (basis 4,650 → −$550) stays the primary figures.
+    assert row["unrealized_pl"] == pytest.approx(-550.0, abs=1.0)
+    # Raw broker-basis secondary (basis 5,000 → −$900 / −18%).
+    assert row["raw_unrealized_pl"] == pytest.approx(-900.0, abs=1.0)
+    assert row["raw_pl_pct"] == pytest.approx(-0.18, abs=0.001)
+    # The raw drawdown is deeper than the softer adjusted headline.
+    assert row["raw_unrealized_pl"] < row["unrealized_pl"]
+
+
+@pytest.mark.integration
+def test_review_card_reads_raw_figure(client, monkeypatch):
+    """The P0 review card fires on the RAW drawdown the adjusted basis hid.
+
+    Adjusted −11.8% is under the default −15% review threshold; raw −18.0% is
+    past it. The card must fire, label its firing basis raw, and report the raw
+    figure (ADR #416 — the whole point of R6).
+    """
+    _seed_dual_basis_sofi(client, monkeypatch)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    loser = next(
+        (a for a in data["next_actions"] if a["action_id"] == "position.large_loser"),
+        None,
+    )
+    assert loser is not None, "raw −18% drawdown must fire the review card"
+    assert loser["subject"]["ticker"] == "SOFI"
+    assert loser["trigger_basis"] == "raw"
+    # Subject + reason report the RAW figure, not the softer adjusted −$550.
+    assert "-$900" in loser["subject"]["amount"]
+    assert "raw broker basis" in loser["reason"]

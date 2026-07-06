@@ -762,6 +762,12 @@ DASHBOARD_ACTION_TONE = Literal["opportunity", "warning"]
 # empty state rendered as muted italic "no prior close" when the symbol has no
 # prior close, rather than a bare em-dash.
 DASHBOARD_DAY_STATE = Literal["populated", "no_prior_close"]
+# New in v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — the cost basis a
+# risk/review trigger evaluated against. "raw" flags a largest-loser card that
+# fired on the RAW broker-basis drawdown (per ADR #416, raw drives the trigger so
+# premium-softening cannot suppress a real mark-to-market hole). None on every
+# other card and when the trigger read the adjusted figure (the raw-null fallback).
+DASHBOARD_TRIGGER_BASIS = Literal["raw"]
 
 
 class DashboardSchwabStatus(BaseModel):
@@ -918,6 +924,15 @@ class DashboardPositionRow(BaseModel):
     quote_age_seconds: Optional[int] = None
     quote_stale: bool = False
     quote_fetched_at: Optional[str] = None
+    # New in v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — raw broker-basis
+    # P&L, rendered as the muted secondary line beneath the adjusted headline in
+    # each P&L cell. ``unrealized_pl`` / ``pl_pct`` (above) stay the ADJUSTED
+    # headline figures the KPI tiles aggregate; these are the raw broker-basis
+    # equivalents. ``raw_unrealized_pl`` = current_price*shares − broker_cost_basis;
+    # ``raw_pl_pct`` = that over broker_cost_basis. Both null for CSP/0-share rows
+    # with no broker basis (line 2 renders a muted em-dash). Additive/defaulted.
+    raw_pl_pct: Optional[float] = None
+    raw_unrealized_pl: Optional[float] = None
 
 
 class DashboardMoneyness(BaseModel):
@@ -1036,6 +1051,11 @@ class DashboardNextAction(BaseModel):
     # carried by the two leg.* cards (empty for every other card type).
     tone: DASHBOARD_ACTION_TONE = "warning"
     triggered_rules: list[DashboardRuleEvaluation] = []
+    # New in v1.9.0 (#422, PRD #415 R6 / ADR #416) — the basis a risk/review
+    # trigger fired on. "raw" flags the largest-loser card that tripped on the raw
+    # broker-basis drawdown, so the frontend renders a "fired on raw basis" tag +
+    # ``data-trigger-basis``. None on every other card (byte-identical default).
+    trigger_basis: Optional[DASHBOARD_TRIGGER_BASIS] = None
 
 
 class DashboardActivity(BaseModel):
