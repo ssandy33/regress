@@ -80,6 +80,8 @@ def _position(
     unrealized_pl: float | None = None,
     pl_pct: float | None = None,
     broker_cost_basis: float | None = None,
+    raw_unrealized_pl: float | None = None,
+    raw_pl_pct: float | None = None,
 ) -> dict:
     return {
         "id": position_id,
@@ -88,6 +90,10 @@ def _position(
         "unrealized_pl": unrealized_pl,
         "pl_pct": pl_pct,
         "broker_cost_basis": broker_cost_basis,
+        # #422 R6 — raw broker-basis drawdown (the figure the trigger evaluates
+        # per ADR #416); default None so existing tests fall back to adjusted.
+        "raw_unrealized_pl": raw_unrealized_pl,
+        "raw_pl_pct": raw_pl_pct,
     }
 
 
@@ -1337,3 +1343,164 @@ class TestShortDteAggregateRoutesToBtc:
             a for a in actions if a["action_id"] == "expiration.short_dte"
         )
         assert card["cta"]["href"] == "/positions/p-2/legs/l-2/btc"
+
+
+class TestLargeLoserRawBasis:
+    """R6 (#422 / ADR #416 Option B) — the largest-loser trigger evaluates the
+    RAW broker-basis drawdown, not the premium-softened adjusted figure.
+
+    The core guarantee: a premium-collected position whose adjusted drawdown sits
+    *under* the review threshold but whose RAW drawdown is *over* it must still
+    fire the P0 review card. Raw is the honest mark-to-market signal; adjusted is
+    the accounting headline that can silently pull a real hole back above the line.
+    """
+
+    @pytest.mark.unit
+    def test_large_loser_fires_on_raw_drawdown(self):
+        # The SOFI-shaped case: adjusted −12.8% (under the default −15% rule) but
+        # raw −18.0% (past it). Under the OLD adjusted-driven logic this position
+        # would NOT flag; R6 fires it on the raw drawdown.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position(
+                    "p-sofi",
+                    "SOFI",
+                    unrealized_pl=-550.0,
+                    pl_pct=-0.128,  # adjusted — under -15%, would NOT fire alone
+                    raw_unrealized_pl=-900.0,
+                    raw_pl_pct=-0.18,  # raw — past -15%, fires
+                ),
+            ],
+            open_legs=[],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "position.large_loser" in ids
+
+    @pytest.mark.unit
+    def test_adjusted_only_under_threshold_would_not_fire_without_raw(self):
+        # Control: the SAME adjusted figures with NO raw basis do NOT fire —
+        # proving it is the raw drawdown, not the adjusted, doing the work above.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position(
+                    "p-sofi",
+                    "SOFI",
+                    unrealized_pl=-550.0,
+                    pl_pct=-0.128,
+                ),
+            ],
+            open_legs=[],
+        )
+        ids = {a["action_id"] for a in actions}
+        assert "position.large_loser" not in ids
+
+    @pytest.mark.unit
+    def test_trigger_basis_labeled_raw(self):
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position(
+                    "p-sofi",
+                    "SOFI",
+                    unrealized_pl=-550.0,
+                    pl_pct=-0.128,
+                    raw_unrealized_pl=-900.0,
+                    raw_pl_pct=-0.18,
+                ),
+            ],
+            open_legs=[],
+        )
+        card = next(a for a in actions if a["action_id"] == "position.large_loser")
+        assert card["trigger_basis"] == "raw"
+
+    @pytest.mark.unit
+    def test_review_card_subject_and_reason_read_raw_figure(self):
+        # The card's subject amount + reason report the RAW drawdown (the number
+        # that tripped the rule), with the adjusted figure spelled out for context.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position(
+                    "p-sofi",
+                    "SOFI",
+                    unrealized_pl=-550.0,
+                    pl_pct=-0.128,
+                    raw_unrealized_pl=-900.0,
+                    raw_pl_pct=-0.18,
+                ),
+            ],
+            open_legs=[],
+        )
+        card = next(a for a in actions if a["action_id"] == "position.large_loser")
+        # Subject dollar is the raw −$900 figure, not the adjusted −$550.
+        assert "-$900" in card["subject"]["amount"]
+        assert "-18.0%" in card["subject"]["amount"]
+        # Reason names the raw basis + the adjusted figure for context.
+        assert "raw broker basis" in card["reason"]
+        assert "-18.0%" in card["reason"]
+        assert "-12.8% adjusted" in card["reason"]
+
+    @pytest.mark.unit
+    def test_large_loser_falls_back_to_adjusted_when_raw_null(self):
+        # Risk #7: a row with no raw basis (CSP/0-share) falls back to the
+        # adjusted figure so a MISSING broker basis can't suppress a card. The
+        # adjusted −20% is past the default −15% rule → still fires, basis unlabeled.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                _position(
+                    "p-adj",
+                    "TSLA",
+                    unrealized_pl=-2000.0,
+                    pl_pct=-0.20,
+                    raw_unrealized_pl=None,
+                    raw_pl_pct=None,
+                ),
+            ],
+            open_legs=[],
+        )
+        card = next(a for a in actions if a["action_id"] == "position.large_loser")
+        assert card["trigger_basis"] is None
+        # Falls back to the adjusted −$2,000 figure.
+        assert "-$2,000" in card["subject"]["amount"]
+        assert "raw broker basis" not in card["reason"]
+
+    @pytest.mark.unit
+    def test_worst_loser_ranked_by_raw_not_adjusted(self):
+        # Two losers both over threshold on raw. The one that is worst on RAW wins
+        # even though its ADJUSTED loss is smaller — ranking follows the eval basis.
+        actions = compute_next_actions(
+            status=_status(),
+            kpis=_kpis(open_legs=1),
+            positions=[
+                # Adjusted −$1,000 but raw −$1,100.
+                _position(
+                    "p-a",
+                    "AAA",
+                    unrealized_pl=-1000.0,
+                    pl_pct=-0.20,
+                    raw_unrealized_pl=-1100.0,
+                    raw_pl_pct=-0.22,
+                ),
+                # Adjusted −$1,200 (worse adjusted) but raw −$1,050 (better raw).
+                _position(
+                    "p-b",
+                    "BBB",
+                    unrealized_pl=-1200.0,
+                    pl_pct=-0.24,
+                    raw_unrealized_pl=-1050.0,
+                    raw_pl_pct=-0.21,
+                ),
+            ],
+            open_legs=[],
+        )
+        card = next(a for a in actions if a["action_id"] == "position.large_loser")
+        # AAA is worst on RAW (−$1,100 < −$1,050) → surfaced.
+        assert card["subject"]["ticker"] == "AAA"

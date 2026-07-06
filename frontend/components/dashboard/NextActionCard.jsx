@@ -95,6 +95,14 @@ function CardBody({ action, visuals }) {
           {action.reason}
         </div>
       )}
+      {action.trigger_basis === 'raw' && (
+        <div
+          data-testid="next-actions-card-basis-tag"
+          className="mt-1 text-xs text-slate-500 dark:text-slate-400"
+        >
+          fired on raw basis
+        </div>
+      )}
       <div className="mt-3 text-sm font-medium text-blue-600 dark:text-blue-400">
         {action.cta?.label}
         <span aria-hidden="true"> →</span>
@@ -116,6 +124,10 @@ export default function NextActionCard({ action, onInlineCta }) {
    // ``data-testid``. The family slug is exposed separately on
    // ``data-action-id`` for filtering.
   const testId = `next-actions-card-${action.id}`;
+  // R6 (#422 / ADR #416) — optional passthrough mirroring the `action.tone`
+  // pattern. Only the raw-fired largest-loser card carries it; omitted (attr
+  // absent) on every other card so they stay byte-identical.
+  const triggerBasis = action.trigger_basis || undefined;
 
   if (action.cta?.kind === 'inline') {
     return (
@@ -125,6 +137,7 @@ export default function NextActionCard({ action, onInlineCta }) {
         data-testid={testId}
         data-priority={action.priority}
         data-action-id={action.action_id}
+        data-trigger-basis={triggerBasis}
         className={`${baseClasses} w-full`}
       >
         <CardBody action={action} visuals={visuals} />
@@ -138,6 +151,7 @@ export default function NextActionCard({ action, onInlineCta }) {
       data-testid={testId}
       data-priority={action.priority}
       data-action-id={action.action_id}
+      data-trigger-basis={triggerBasis}
       className={baseClasses}
     >
       <CardBody action={action} visuals={visuals} />

@@ -578,15 +578,28 @@ def _build_position_rows(
         adjusted_cost_basis = position["adjusted_cost_basis"]
         ticker = position["ticker"]
         current_price = quotes_by_ticker.get(ticker)
+        broker_cost_basis = position.get("broker_cost_basis")
         notional: float | None = None
         unrealized_pl: float | None = None
         pl_pct: float | None = None
+        # v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — raw broker-basis P&L,
+        # the muted secondary line beneath the adjusted headline. Mirrors the
+        # adjusted math but against the raw broker basis; null when the row has no
+        # broker basis (CSP/0-share) so the cell renders a muted em-dash.
+        raw_unrealized_pl: float | None = None
+        raw_pl_pct: float | None = None
         if shares > 0 and current_price is not None:
             notional = current_price * shares
             cost_per_share = adjusted_cost_basis / shares if shares else 0.0
             unrealized_pl = (current_price - cost_per_share) * shares
             if adjusted_cost_basis > 0:
                 pl_pct = (current_price * shares - adjusted_cost_basis) / adjusted_cost_basis
+            if broker_cost_basis is not None:
+                raw_unrealized_pl = current_price * shares - broker_cost_basis
+                if broker_cost_basis > 0:
+                    raw_pl_pct = (
+                        current_price * shares - broker_cost_basis
+                    ) / broker_cost_basis
         wheel_status = _derive_wheel_status(
             position["strategy"],
             has_open_call=has_open_call_by_ticker.get(ticker, False),
@@ -614,7 +627,12 @@ def _build_position_rows(
                 "pl_pct": pl_pct,
                 # Broker basis is surfaced so the Positions card can render
                 # the dual-line "broker / adjusted" cost-basis cell (#151).
-                "broker_cost_basis": position.get("broker_cost_basis"),
+                "broker_cost_basis": broker_cost_basis,
+                # v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — raw broker-basis
+                # P&L (secondary line). ``unrealized_pl`` / ``pl_pct`` above stay
+                # the adjusted headline; these are the raw equivalents.
+                "raw_unrealized_pl": raw_unrealized_pl,
+                "raw_pl_pct": raw_pl_pct,
                 # Per-share basis (#320) — the card renders these so the
                 # cost-basis cell aligns with the per-share Current column.
                 # Already computed (and shares==0 → null guarded) by the

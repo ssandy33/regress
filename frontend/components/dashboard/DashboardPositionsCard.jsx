@@ -233,16 +233,94 @@ function NextActionCell({ position }) {
   );
 }
 
-function PctPlCell({ value }) {
+/**
+ * PctPlCell — dual-basis %P/L (v1.9.0 #422, PRD #415 R6 / ADR #416 Option B).
+ *
+ * Line 1 (headline): adjusted ``pl_pct`` — colored green/red via ``plClass``,
+ * signed, ``tabular-nums``. Line 2 (secondary): raw broker-basis ``raw_pl_pct``
+ * — muted, signed, with a "raw" tag. When adjusted is null the whole cell is a
+ * bare em-dash (existing behavior); when only raw is null line 2 renders a muted
+ * em-dash. Mirrors ``CostBasisCell`` two-line treatment, inverted for P&L.
+ */
+function PctPlCell({ value, rawValue }) {
   if (value == null) {
-    return <span className="text-slate-500 dark:text-slate-400">—</span>;
+    return (
+      <span
+        data-testid="dashboard-position-pl-pct"
+        className="text-slate-500 dark:text-slate-400"
+      >
+        —
+      </span>
+    );
   }
-  const sign = value > 0 ? '+' : '';
   return (
-    <span className={`tabular-nums ${plClass(value)}`}>
-      {sign}
-      {formatPercent(value, 2)}
-    </span>
+    <div className="flex flex-col items-end">
+      <span
+        data-testid="dashboard-position-pl-pct"
+        className={`tabular-nums ${plClass(value)}`}
+      >
+        {value > 0 ? '+' : ''}
+        {formatPercent(value, 2)}
+      </span>
+      <span
+        data-testid="dashboard-position-pl-pct-raw"
+        className="text-xs tabular-nums text-slate-500 dark:text-slate-400"
+      >
+        {rawValue == null ? (
+          '—'
+        ) : (
+          <>
+            {rawValue > 0 ? '+' : ''}
+            {formatPercent(rawValue, 2)}
+            <span className="ml-1 text-slate-400 dark:text-slate-500">raw</span>
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * PlCell — dual-basis P/L $ (v1.9.0 #422, PRD #415 R6 / ADR #416 Option B).
+ *
+ * Same two-line adjusted-headline / raw-secondary treatment as ``PctPlCell`` for
+ * the dollar column (``hidden lg:table-cell`` — desktop only).
+ */
+function PlCell({ value, rawValue }) {
+  if (value == null) {
+    return (
+      <span
+        data-testid="dashboard-position-pl"
+        className="text-slate-500 dark:text-slate-400"
+      >
+        —
+      </span>
+    );
+  }
+  return (
+    <div className="flex flex-col items-end">
+      <span
+        data-testid="dashboard-position-pl"
+        className={`tabular-nums ${plClass(value)}`}
+      >
+        {value >= 0 ? '+' : ''}
+        {formatCurrency(value)}
+      </span>
+      <span
+        data-testid="dashboard-position-pl-raw"
+        className="text-xs tabular-nums text-slate-500 dark:text-slate-400"
+      >
+        {rawValue == null ? (
+          '—'
+        ) : (
+          <>
+            {rawValue >= 0 ? '+' : ''}
+            {formatCurrency(rawValue)}
+            <span className="ml-1 text-slate-400 dark:text-slate-500">raw</span>
+          </>
+        )}
+      </span>
+    </div>
   );
 }
 
@@ -345,15 +423,15 @@ function PositionRow({ position }) {
         </div>
       </td>
       <td className="py-2 px-3 text-right">
-        <PctPlCell value={position.pl_pct} />
+        <PctPlCell value={position.pl_pct} rawValue={position.raw_pl_pct} />
       </td>
-      {/* P/L $ — hidden on mobile (spec §2.6 mobile column table) */}
-      <td
-        className={`hidden lg:table-cell py-2 px-3 text-right tabular-nums ${plClass(position.unrealized_pl)}`}
-      >
-        {position.unrealized_pl == null
-          ? '—'
-          : `${position.unrealized_pl >= 0 ? '+' : ''}${formatCurrency(position.unrealized_pl)}`}
+      {/* P/L $ — hidden on mobile (spec §2.6 mobile column table). Dual-basis
+          adjusted headline + raw secondary (#422 R6). */}
+      <td className="hidden lg:table-cell py-2 px-3 text-right">
+        <PlCell
+          value={position.unrealized_pl}
+          rawValue={position.raw_unrealized_pl}
+        />
       </td>
       {/*
         Day column (v1.9.0 #421, R3) — populated from the payload's day-change
