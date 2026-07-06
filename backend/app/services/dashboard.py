@@ -11,24 +11,36 @@ Per issue #114: avoid N+1 client-side fetches by composing on the server.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import logging
-from datetime import date, datetime, timezone
-from typing import Iterable
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Iterable, Optional
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as DBSession
 
 from app.config import get_fred_api_key, settings
-from app.models.database import CacheEntry, Position, Session as SessionModel, Trade
+from app.models.database import (
+    AppSetting,
+    CacheEntry,
+    Position,
+    Session as SessionModel,
+    Trade,
+)
 from app.services import journal as journal_service
 from app.services.action_engine import compute_next_actions
 from app.services.alpha_vantage_client import get_cached_next_earnings_date
 from app.services.market_client import get_market_client
 from app.services.dashboard_legs import (
+    MARKET_TZ,
     build_option_leg_index,
     derive_open_legs,
+    market_today,
     parse_iso_to_utc,
 )
 from app.services.rules_config import load_rules_config
+from app.services.schwab_account_value import get_account_value
 from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
 # ``SchwabClient`` is re-exported into this module's namespace as the stable
 # monkeypatch surface the dashboard integration tests target
@@ -60,6 +72,40 @@ ACTIVITY_PER_SIDE_LIMIT = 30
 # new default route. An in-process TTL cache is deferred — see follow-up issue
 # linked in PR #114 description.
 QUOTE_FANOUT_WORKERS = 8
+
+# Account-value reconciliation tolerance (#420 R1). The tool-composed
+# ``account_value`` (equity MV + option MV + cash) is reconciled to the broker's
+# reported net-liquidation within the GREATER of an absolute floor and a
+# percentage of the broker value — wide enough to absorb the known stale-quote
+# drift (~$17 in the 2026-07-04 evidence) so ``reconciles=false`` signals a real
+# discrepancy, not normal quote-timing noise (Risk #4).
+RECONCILE_ABS_TOLERANCE = 5.0
+RECONCILE_PCT_TOLERANCE = 0.001
+# QA-only synthetic account balances (stub pricing_mode). Seeded by seed_qa so
+# the Account Summary strip renders "populated" on QA where there is no live
+# Schwab feed (#420 QA-demoable data).
+_QA_ACCOUNT_BALANCES_KEY = "qa_account_balances"
+
+# Quote-freshness budgets (#417, PRD #415 R5). A displayed quote is "stale" once
+# its market-hours-aware age exceeds the intraday budget, and "very stale" past
+# the wider budget (which flips the pill red). Age is measured against a
+# market-hours reference — ``now`` during regular trading hours, otherwise the
+# most recent session close — so a quote captured near Friday's close is NOT
+# flagged stale all weekend (Risk #2: the 2026-07-04 evidence was itself a
+# market-closed day, and a naive ``now − quoteTime`` budget would false-positive
+# every quote). The very-stale budget is mirrored on the frontend
+# (``VERY_STALE_BUDGET_SECONDS`` in ``StatusStrip.jsx``) to pick the pill's
+# ``very_stale`` state from ``stalest_age_seconds``; keep the two in sync.
+QUOTE_FRESH_BUDGET_SECONDS = 15 * 60  # 900 — over this a displayed quote is stale
+QUOTE_VERY_STALE_BUDGET_SECONDS = 60 * 60  # 3600 — over this the pill goes red
+
+# Regular US equity trading hours on the Eastern (market) calendar. Used ONLY by
+# the quote-freshness reference below — DTE / expiration counts use
+# ``market_today`` (issue #418). Holidays are intentionally NOT modeled (we carry
+# no market calendar): a quote captured during a holiday session simply ages
+# against the prior close, which is the conservative never-false-fresh direction.
+_MARKET_OPEN_ET = time(9, 30)
+_MARKET_CLOSE_ET = time(16, 0)
 
 
 def _build_schwab_status() -> tuple[dict, bool]:
@@ -121,18 +167,103 @@ def _bucket_cache_freshness(db: DBSession) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class QuoteView:
+    """Rich per-symbol projection of a Schwab ``quote`` node (v1.9.0, #421).
+
+    ``_fetch_quotes_parallel`` today collapses each quote to a bare ``lastPrice``
+    float and discards the rest; the day-change (R3, #421) and freshness (R5,
+    #417) work needs the prior-close / net-change / timestamp fields off the
+    same fetch. This view carries them so **zero extra Schwab round-trips** are
+    needed — we just stop throwing the fields away.
+
+    Fields (verified live 2026-07-06 against the Schwab marketdata/v1 quote node):
+    - ``last`` — ``lastPrice`` (falls back to ``mark`` when null), the value the
+      legacy ``dict[str, float]`` price map is derived from.
+    - ``mark`` — ``mark`` (option-leg pricing basis).
+    - ``close`` — ``closePrice`` (prior close; R3 fallback / no-prior-close gate).
+    - ``net_change`` — ``netChange`` (Schwab's own per-share day change $; used
+      directly, not computed from close).
+    - ``net_pct`` — ``netPercentChange`` (day change % as a number, e.g. 3.56).
+    - ``quote_time_ms`` — ``quoteTime`` (epoch **millis**; consumed by #417
+      freshness — NOT ``quoteTimeInLong``, which does not exist in the response).
+
+    All fields default to ``None`` so a failed / no-data ticker yields an empty
+    view without special-casing.
+    """
+
+    last: float | None = None
+    mark: float | None = None
+    close: float | None = None
+    net_change: float | None = None
+    net_pct: float | None = None
+    quote_time_ms: int | None = None
+
+
+def _coerce_float(value: object) -> float | None:
+    """Best-effort float coercion for a raw quote field; None on failure."""
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_int(value: object) -> int | None:
+    """Best-effort int coercion for a raw quote field; None on failure."""
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_quote_view(quote: object) -> QuoteView:
+    """Project a raw Schwab ``quote`` dict into a :class:`QuoteView`.
+
+    Preserves the legacy ``lastPrice`` → ``mark`` fallback for ``last`` so the
+    derived price map is byte-identical to the pre-#421 behavior. All other
+    fields degrade to ``None`` when absent, so a malformed payload can never
+    raise out of the worker.
+    """
+    if not isinstance(quote, dict):
+        return QuoteView()
+    last = _coerce_float(quote.get("lastPrice"))
+    mark = _coerce_float(quote.get("mark"))
+    if last is None:
+        last = mark
+    return QuoteView(
+        last=last,
+        mark=mark,
+        close=_coerce_float(quote.get("closePrice")),
+        net_change=_coerce_float(quote.get("netChange")),
+        net_pct=_coerce_float(quote.get("netPercentChange")),
+        quote_time_ms=_coerce_int(quote.get("quoteTime")),
+    )
+
+
 def _fetch_quotes_parallel(
     tickers: Iterable[str],
     schwab_configured: bool,
     db: DBSession,
-) -> tuple[dict[str, float | None], bool]:
+) -> tuple[dict[str, float | None], dict[str, QuoteView], bool]:
     """Fetch live quotes for `tickers` concurrently. Returns
-    (price_by_ticker, schwab_failed_flag).
+    (price_by_ticker, quote_view_by_ticker, schwab_failed_flag).
+
+    The ``price_by_ticker`` ``dict[str, float | None]`` is unchanged in shape and
+    semantics — ``build_option_leg_index`` and every ``current_price`` / spot
+    consumer keeps working exactly as before. The parallel ``quote_view_by_ticker``
+    ``dict[str, QuoteView]`` carries the richer fields (prior close, net change,
+    quote timestamp) the day-change (R3, #421) and freshness (R5, #417) work
+    consumes. The price map is *derived from* the rich map
+    (``prices[t] = view.last``) so the two can never drift (plan Risk #3).
 
     Any per-ticker failure — known Schwab errors (auth/client) *or*
     unexpected ones (httpx timeouts that escape tenacity, malformed quote
-    payloads, etc.) — yields a None price for that ticker; the caller
-    surfaces the partial outage via data_meta.sources_unavailable. We
+    payloads, etc.) — yields a None price + empty ``QuoteView`` for that ticker;
+    the caller surfaces the partial outage via data_meta.sources_unavailable. We
     deliberately catch broad Exception inside the worker so one bad ticker
     cannot 500 the entire dashboard. KeyboardInterrupt / SystemExit still
     propagate.
@@ -141,45 +272,55 @@ def _fetch_quotes_parallel(
     use a thread pool rather than refactoring it to async. See PR #114.
     """
     unique = sorted({t for t in tickers if t})
-    prices: dict[str, float | None] = {t: None for t in unique}
+    views: dict[str, QuoteView] = {t: QuoteView() for t in unique}
     if not unique or not schwab_configured:
         # If Schwab isn't configured, we don't surface that as a "failure" —
         # it's a known unavailable source. The status strip already reports it.
-        # But we still return the dict so callers don't crash.
-        return prices, False
+        # But we still return the dicts so callers don't crash.
+        prices: dict[str, float | None] = {t: None for t in unique}
+        return prices, views, False
 
     schwab_failed = False
     # Live Schwab client (prod default) or deterministic stub client on the QA
     # pricing_mode=="stub" path (issue #349). Behavior-neutral on prod.
     client = get_market_client(db)
 
-    def _fetch(ticker: str) -> tuple[str, float | None, bool]:
+    def _fetch(ticker: str) -> tuple[str, QuoteView, bool]:
         try:
             quote = client.get_quote(ticker)
         except (SchwabClientError, SchwabAuthError) as exc:
-            logger.warning("Dashboard quote fetch failed for %s: %s", ticker, exc)
-            return ticker, None, True
+            logger.warning(
+                "quote.fetch",
+                extra={
+                    "event": "quote.fetch",
+                    "ticker": ticker,
+                    "outcome": "failed",
+                    "error_class": type(exc).__name__,
+                },
+            )
+            return ticker, QuoteView(), True
         except Exception:
             # Defense-in-depth: any other exception (network timeouts that
             # escape tenacity, malformed payloads causing KeyError, etc.)
             # must not propagate out of the worker — that would raise from
             # ThreadPoolExecutor.map and 500 the whole dashboard. Log with
             # traceback so the cause is debuggable.
-            logger.exception("Unexpected error fetching quote for %s", ticker)
-            return ticker, None, True
-        # Schwab `quote` payloads have lastPrice or fall back to `mark`.
-        price = quote.get("lastPrice") if isinstance(quote, dict) else None
-        if price is None and isinstance(quote, dict):
-            price = quote.get("mark")
-        return ticker, (float(price) if price is not None else None), False
+            logger.exception(
+                "quote.fetch",
+                extra={"event": "quote.fetch", "ticker": ticker, "outcome": "failed"},
+            )
+            return ticker, QuoteView(), True
+        return ticker, _extract_quote_view(quote), False
 
     workers = min(QUOTE_FANOUT_WORKERS, len(unique))
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        for ticker, price, failed in pool.map(_fetch, unique):
-            prices[ticker] = price
+        for ticker, view, failed in pool.map(_fetch, unique):
+            views[ticker] = view
             if failed:
                 schwab_failed = True
-    return prices, schwab_failed
+    # Derive the legacy float price map from the rich map so they cannot drift.
+    prices = {t: v.last for t, v in views.items()}
+    return prices, views, schwab_failed
 
 
 def _fetch_option_chains_parallel(
@@ -277,17 +418,159 @@ def _derive_wheel_status(strategy: str, has_open_call: bool, has_open_put: bool)
     return "Holding"
 
 
+def _compute_day_change(
+    quote_view: QuoteView | None, shares: int
+) -> tuple[float | None, float | None, str]:
+    """Compute (day_change $, day_change_pct fraction, day_state) for a row.
+
+    Uses Schwab's own per-share ``netChange`` / ``netPercentChange`` directly
+    (verified live 2026-07-06) — the day change is NOT recomputed from close, so
+    it reads correctly across a market-closed period (weekend / after-hours),
+    where Schwab still reports the last session's change (#421 AC #4).
+
+    - ``day_change`` $ = ``net_change`` × ``shares`` for share-holding rows;
+      ``None`` for 0-share cash-secured rows (no equity dollar exposure today).
+    - ``day_change_pct`` = ``net_pct`` / 100 (a fraction consistent with the rest
+      of the payload, e.g. 0.0356 renders as +3.56%).
+    - ``day_state`` = ``"populated"`` when the quote carried a day change,
+      ``"no_prior_close"`` otherwise (the explicit muted empty state, #421 AC #3).
+    """
+    net_change = quote_view.net_change if quote_view is not None else None
+    net_pct = quote_view.net_pct if quote_view is not None else None
+    if net_change is None and net_pct is None:
+        return None, None, "no_prior_close"
+    day_change = net_change * shares if (net_change is not None and shares > 0) else None
+    day_change_pct = net_pct / 100.0 if net_pct is not None else None
+    return day_change, day_change_pct, "populated"
+
+
+def _most_recent_session_close(et_now: datetime) -> datetime:
+    """Return the most recent regular-session close (16:00 ET) at or before ``et_now``.
+
+    ``et_now`` is an Eastern-tz aware datetime. Walks back to today's 16:00 when
+    the market has already closed today (weekday), otherwise to the previous
+    weekday's close, skipping Sat/Sun. The returned value is tz-aware UTC so it
+    subtracts cleanly against UTC quote timestamps.
+    """
+    close_today = et_now.replace(
+        hour=_MARKET_CLOSE_ET.hour, minute=0, second=0, microsecond=0
+    )
+    if et_now.weekday() < 5 and et_now >= close_today:
+        return close_today.astimezone(timezone.utc)
+    day = et_now - timedelta(days=1)
+    while day.weekday() >= 5:  # rewind over Sat (5) / Sun (6)
+        day = day - timedelta(days=1)
+    close = day.replace(
+        hour=_MARKET_CLOSE_ET.hour, minute=0, second=0, microsecond=0
+    )
+    return close.astimezone(timezone.utc)
+
+
+def _market_reference_now(now: datetime) -> datetime:
+    """Return the instant quote-freshness age is measured against (#417 Risk #2).
+
+    During regular trading hours (Mon–Fri 09:30–16:00 ET) this is ``now`` — an
+    intraday quote is expected to keep updating, so its age accrues in real time.
+    Outside RTH (nights / weekends / holidays-as-weekends) it is the most recent
+    session close, so a quote captured near the last close does NOT read "stale"
+    merely because the market is shut. A quote that genuinely went stale *during*
+    the last session still ages against that session's close and is flagged.
+    """
+    et_now = now.astimezone(MARKET_TZ)
+    if et_now.weekday() < 5 and _MARKET_OPEN_ET <= et_now.time() <= _MARKET_CLOSE_ET:
+        return now
+    return _most_recent_session_close(et_now)
+
+
+def _compute_quote_freshness(
+    quote_view: QuoteView | None, reference_now: datetime
+) -> tuple[int | None, bool, str | None]:
+    """Compute (quote_age_seconds, quote_stale, quote_fetched_at) for a row (#417 R5).
+
+    - ``quote_age_seconds`` — the market-hours-aware age (``reference_now`` minus
+      the quote's ``quoteTime``), floored at 0. This is the value the inline
+      per-symbol age flag renders and the pill's stalest-age hover reports.
+    - ``quote_stale`` — True once that age exceeds :data:`QUOTE_FRESH_BUDGET_SECONDS`.
+    - ``quote_fetched_at`` — the quote's absolute wall-clock ISO timestamp (for
+      the exact-time hover; may differ from the age when the market is closed).
+
+    All three are ``None`` / ``False`` when the quote carried no ``quoteTime``:
+    freshness cannot be assessed, so the symbol is never falsely flagged stale.
+    """
+    quote_time_ms = quote_view.quote_time_ms if quote_view is not None else None
+    if quote_time_ms is None:
+        return None, False, None
+    quote_dt = datetime.fromtimestamp(quote_time_ms / 1000.0, tz=timezone.utc)
+    age_seconds = max(0, int((reference_now - quote_dt).total_seconds()))
+    quote_stale = age_seconds > QUOTE_FRESH_BUDGET_SECONDS
+    return age_seconds, quote_stale, quote_dt.isoformat()
+
+
+def _build_quote_freshness_signal(position_rows: list[dict]) -> dict:
+    """Aggregate the displayed-quote freshness signal for the status pill (#417 R5).
+
+    Produces the four additive ``status.cache`` fields the honest freshness pill
+    is driven by:
+
+    - ``displayed_total`` — count of shown positions whose quote freshness could
+      be assessed (``quote_age_seconds`` not null).
+    - ``displayed_stale`` — of those, how many exceed the intraday budget.
+    - ``stalest_symbol`` / ``stalest_age_seconds`` — the oldest displayed quote
+      (ties broken A→Z by ticker) for the pill's hover detail.
+
+    This is a *different* signal from the research/data cache buckets
+    (:func:`_bucket_cache_freshness`, aged in days for FRED / earnings) — the
+    dashboard pill switches to this quote signal; the day-based buckets stay in
+    the payload for the action engine + Settings.
+    """
+    assessable = [
+        r for r in position_rows if r.get("quote_age_seconds") is not None
+    ]
+    displayed_total = len(assessable)
+    displayed_stale = sum(1 for r in assessable if r.get("quote_stale"))
+    stalest_symbol: str | None = None
+    stalest_age_seconds: int | None = None
+    if assessable:
+        # Oldest first; ties resolved alphabetically for a deterministic pick.
+        worst = min(
+            assessable, key=lambda r: (-r["quote_age_seconds"], r["ticker"])
+        )
+        stalest_symbol = worst["ticker"]
+        stalest_age_seconds = worst["quote_age_seconds"]
+    return {
+        "displayed_total": displayed_total,
+        "displayed_stale": displayed_stale,
+        "stalest_symbol": stalest_symbol,
+        "stalest_age_seconds": stalest_age_seconds,
+    }
+
+
 def _build_position_rows(
     open_positions: list[dict],
     quotes_by_ticker: dict[str, float | None],
     open_legs: list[dict],
+    rich_quotes: dict[str, QuoteView] | None = None,
+    now: datetime | None = None,
 ) -> list[dict]:
     """Convert journal positions into dashboard row shape, sorted by notional.
 
     Each row also carries the V0.5 signal fields ``wheel_status`` and
-    ``pl_pct``. The ``next_suggested_action`` field is populated later by
+    ``pl_pct``, plus the v1.9.0 day-change fields ``day_change`` /
+    ``day_change_pct`` / ``day_state`` (#421) derived from ``rich_quotes``. The
+    ``next_suggested_action`` field is populated later by
     :func:`_attach_next_suggested_actions` after the action engine runs.
+
+    ``rich_quotes`` is optional/defaulted so callers (and older tests) that only
+    have the float price map still work — day-change simply degrades to the
+    ``"no_prior_close"`` state for every row in that case.
+
+    The per-symbol quote-freshness fields (``quote_age_seconds`` / ``quote_stale``
+    / ``quote_fetched_at``, #417 R5) are stamped from ``rich_quotes`` against a
+    market-hours-aware reference derived from ``now`` (defaults to the current UTC
+    instant). Rows whose quote carried no timestamp get null age + not-stale.
     """
+    rich_quotes = rich_quotes or {}
+    reference_now = _market_reference_now(now or datetime.now(timezone.utc))
     leg_count_by_position: dict[str, int] = {}
     has_open_put_by_ticker: dict[str, bool] = {}
     has_open_call_by_ticker: dict[str, bool] = {}
@@ -306,19 +589,38 @@ def _build_position_rows(
         adjusted_cost_basis = position["adjusted_cost_basis"]
         ticker = position["ticker"]
         current_price = quotes_by_ticker.get(ticker)
+        broker_cost_basis = position.get("broker_cost_basis")
         notional: float | None = None
         unrealized_pl: float | None = None
         pl_pct: float | None = None
+        # v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — raw broker-basis P&L,
+        # the muted secondary line beneath the adjusted headline. Mirrors the
+        # adjusted math but against the raw broker basis; null when the row has no
+        # broker basis (CSP/0-share) so the cell renders a muted em-dash.
+        raw_unrealized_pl: float | None = None
+        raw_pl_pct: float | None = None
         if shares > 0 and current_price is not None:
             notional = current_price * shares
             cost_per_share = adjusted_cost_basis / shares if shares else 0.0
             unrealized_pl = (current_price - cost_per_share) * shares
             if adjusted_cost_basis > 0:
                 pl_pct = (current_price * shares - adjusted_cost_basis) / adjusted_cost_basis
+            if broker_cost_basis is not None:
+                raw_unrealized_pl = current_price * shares - broker_cost_basis
+                if broker_cost_basis > 0:
+                    raw_pl_pct = (
+                        current_price * shares - broker_cost_basis
+                    ) / broker_cost_basis
         wheel_status = _derive_wheel_status(
             position["strategy"],
             has_open_call=has_open_call_by_ticker.get(ticker, False),
             has_open_put=has_open_put_by_ticker.get(ticker, False),
+        )
+        day_change, day_change_pct, day_state = _compute_day_change(
+            rich_quotes.get(ticker), shares
+        )
+        quote_age_seconds, quote_stale, quote_fetched_at = _compute_quote_freshness(
+            rich_quotes.get(ticker), reference_now
         )
         rows.append(
             {
@@ -336,7 +638,12 @@ def _build_position_rows(
                 "pl_pct": pl_pct,
                 # Broker basis is surfaced so the Positions card can render
                 # the dual-line "broker / adjusted" cost-basis cell (#151).
-                "broker_cost_basis": position.get("broker_cost_basis"),
+                "broker_cost_basis": broker_cost_basis,
+                # v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — raw broker-basis
+                # P&L (secondary line). ``unrealized_pl`` / ``pl_pct`` above stay
+                # the adjusted headline; these are the raw equivalents.
+                "raw_unrealized_pl": raw_unrealized_pl,
+                "raw_pl_pct": raw_pl_pct,
                 # Per-share basis (#320) — the card renders these so the
                 # cost-basis cell aligns with the per-share Current column.
                 # Already computed (and shares==0 → null guarded) by the
@@ -347,6 +654,17 @@ def _build_position_rows(
                 "adjusted_cost_basis_per_share": position.get(
                     "adjusted_cost_basis_per_share"
                 ),
+                # v1.9.0 (#421, PRD #415 R3) — per-position day change from the
+                # rich quote view (Schwab netChange / netPercentChange).
+                "day_change": day_change,
+                "day_change_pct": day_change_pct,
+                "day_state": day_state,
+                # v1.9.0 (#417, PRD #415 R5) — per-symbol quote freshness. The age
+                # is market-hours-aware (see _compute_quote_freshness); the pill
+                # aggregate is derived from these row fields.
+                "quote_age_seconds": quote_age_seconds,
+                "quote_stale": quote_stale,
+                "quote_fetched_at": quote_fetched_at,
             }
         )
     # Sort by notional desc (None last), then ticker asc.
@@ -548,6 +866,38 @@ def _compute_largest_loser(closed_positions: list[dict]) -> dict | None:
     }
 
 
+def _compute_option_totals(
+    open_legs: list[dict],
+) -> tuple[float, float, bool]:
+    """Aggregate open option-leg market value + unrealized P&L (v1.9.0 #420 R4).
+
+    Returns ``(option_mv, option_unrealized_pl, includes_options)``:
+
+    * ``option_mv`` — Σ ``−cost_to_close`` across legs with a live mark. A short
+      leg is a **liability**, so its market value is the *negative* of the cost
+      to buy it back (Risk #5 of the parity plan). Legs without a live mark
+      (``cost_to_close is None``) contribute nothing.
+    * ``option_unrealized_pl`` — Σ ``pnl_dollars`` (already signed
+      ``premium − mid``), so a credit that has decayed shows a gain.
+    * ``includes_options`` — True iff at least one leg contributed a live
+      figure; False for an empty legs list or when every leg's mark is
+      unavailable (the totals are equity-only for that load).
+    """
+    option_mv = 0.0
+    option_unrealized_pl = 0.0
+    includes_options = False
+    for leg in open_legs:
+        cost_to_close = leg.get("cost_to_close")
+        if cost_to_close is not None:
+            option_mv += -float(cost_to_close)
+            includes_options = True
+        pnl_dollars = leg.get("pnl_dollars")
+        if pnl_dollars is not None:
+            option_unrealized_pl += float(pnl_dollars)
+            includes_options = True
+    return option_mv, option_unrealized_pl, includes_options
+
+
 def _build_kpis(
     position_rows: list[dict],
     open_legs: list[dict],
@@ -571,20 +921,37 @@ def _build_kpis(
         if strategy in breakdown:
             breakdown[strategy] += 1
 
-    notional_value = sum((r["notional"] or 0.0) for r in position_rows)
+    equity_notional = sum((r["notional"] or 0.0) for r in position_rows)
     cost_basis_total = sum(p["adjusted_cost_basis"] for p in open_positions)
+    # ``notional_change_pct`` compares equity market value to equity cost basis
+    # ("from cost" subtext); options carry no comparable cost basis here, so the
+    # percent stays equity-only even though the headline value rolls options in.
     notional_change_pct: float | None = None
-    if cost_basis_total > 0 and notional_value > 0:
-        notional_change_pct = (notional_value - cost_basis_total) / cost_basis_total
+    if cost_basis_total > 0 and equity_notional > 0:
+        notional_change_pct = (equity_notional - cost_basis_total) / cost_basis_total
 
     puts = sum(1 for leg in open_legs if leg["type"] == "put")
     calls = sum(1 for leg in open_legs if leg["type"] == "call")
 
+    # R4 (#420): roll open option-leg MV / P&L into the portfolio aggregates.
+    option_mv, option_unrealized_pl, includes_options = _compute_option_totals(
+        open_legs
+    )
+    notional_value = equity_notional + option_mv
+
     pl_values = [r["unrealized_pl"] for r in position_rows if r["unrealized_pl"] is not None]
-    unrealized_pl: float | None = sum(pl_values) if pl_values else None
+    equity_unrealized_pl: float | None = sum(pl_values) if pl_values else None
+    if includes_options:
+        unrealized_pl: float | None = (equity_unrealized_pl or 0.0) + option_unrealized_pl
+    else:
+        unrealized_pl = equity_unrealized_pl
+    # Percent stays equity-only (numerator = equity P&L, denominator = equity
+    # cost basis), consistent with ``notional_change_pct`` above: rolled-in
+    # option P&L has no comparable cost-basis denominator, so mixing it into the
+    # headline value is correct but into the percent is not.
     unrealized_pl_pct: float | None = None
-    if unrealized_pl is not None and cost_basis_total > 0:
-        unrealized_pl_pct = unrealized_pl / cost_basis_total
+    if equity_unrealized_pl is not None and cost_basis_total > 0:
+        unrealized_pl_pct = equity_unrealized_pl / cost_basis_total
 
     all_positions = list(open_positions) + list(closed_positions)
     premium_total, premium_trades = _sum_premium_for_positions(all_positions)
@@ -616,6 +983,7 @@ def _build_kpis(
         "open_legs_breakdown": {"puts": puts, "calls": calls},
         "unrealized_pl": unrealized_pl,
         "unrealized_pl_pct": unrealized_pl_pct,
+        "includes_options": includes_options,
         "largest_risk": _compute_largest_risk(position_rows),
         "largest_loser": _compute_largest_loser(closed_positions),
         "premium_collected_total": premium_total,
@@ -624,6 +992,165 @@ def _build_kpis(
         "realized_pl": realized_pl,
         "realized_pl_pct": realized_pl_pct,
     }
+
+
+def _reconciles(account_value: float, broker_net_liq: float) -> bool:
+    """Return True iff ``account_value`` is within tolerance of ``broker_net_liq``.
+
+    Tolerance is the greater of :data:`RECONCILE_ABS_TOLERANCE` and
+    :data:`RECONCILE_PCT_TOLERANCE` × |broker net-liq| (Risk #4).
+    """
+    tolerance = max(
+        RECONCILE_ABS_TOLERANCE, RECONCILE_PCT_TOLERANCE * abs(broker_net_liq)
+    )
+    return abs(account_value - broker_net_liq) <= tolerance
+
+
+def _empty_account_summary() -> dict:
+    """The "Connect Schwab to reconcile" empty state (all figures null).
+
+    Distinct from a reconciled ``$0`` — the frontend renders the connect hint
+    rather than a false zero-cash assertion.
+    """
+    return {
+        "account_value": None,
+        "equity_mv": None,
+        "option_mv": None,
+        "cash": None,
+        "day_change": None,
+        "day_change_pct": None,
+        # R3 day-change is a separate slice; until it lands the account-level
+        # day change reads "no prior close".
+        "day_state": "no_prior_close",
+        "reconciles": False,
+    }
+
+
+def _resolve_account_balances(
+    db: DBSession, schwab_configured: bool
+) -> Optional[dict]:
+    """Resolve broker cash + net-liquidation for the account-summary strip.
+
+    Returns ``{"cash": float, "broker_net_liq": Optional[float]}`` or ``None``
+    when no balance source is available (→ empty "Connect Schwab" state).
+
+    * **Live** (``schwab_configured``): reads the extended
+      :func:`schwab_account_value.get_account_value` (15-min cached; never
+      raises). Requires a parseable ``cash`` — a net-liq without cash is not
+      enough to render the cash tile honestly.
+    * **QA stub** (``pricing_mode == "stub"``): reads the synthetic
+      ``qa_account_balances`` ``app_settings`` row seeded by ``seed_qa``. A
+      null ``broker_net_liq`` means "reconcile against the tool's own
+      composed value" (QA has no independent broker figure).
+    """
+    if schwab_configured:
+        result = get_account_value(db)
+        if result.status not in ("ok", "stale") or result.cash is None:
+            return None
+        return {"cash": result.cash, "broker_net_liq": result.total_capital}
+
+    if settings.pricing_mode == "stub" and settings.app_env != "production":
+        try:
+            row = (
+                db.query(AppSetting)
+                .filter(AppSetting.key == _QA_ACCOUNT_BALANCES_KEY)
+                .first()
+            )
+        except SQLAlchemyError:
+            return None
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row.value)
+        except (ValueError, TypeError):
+            return None
+        cash = payload.get("cash")
+        if not isinstance(cash, (int, float)) or isinstance(cash, bool):
+            return None
+        broker_net_liq = payload.get("broker_net_liq")
+        if isinstance(broker_net_liq, bool) or not isinstance(
+            broker_net_liq, (int, float)
+        ):
+            broker_net_liq = None
+        return {"cash": float(cash), "broker_net_liq": broker_net_liq}
+
+    return None
+
+
+def _build_account_summary(
+    db: DBSession,
+    position_rows: list[dict],
+    open_legs: list[dict],
+    schwab_configured: bool,
+) -> dict:
+    """Compose the broker-reconciliation strip (#420 R1/R2/R4 + #421 R3).
+
+    Two independent slices land in one payload:
+
+    * **Reconciliation (#420)** — ``account_value = equity MV + option MV + cash``;
+      ``reconciles`` compares it to the broker's reported net-liquidation within
+      tolerance. These fields stay null (the "Connect Schwab" empty state) when no
+      broker balance is available.
+    * **Account-level day change (#421 R3)** — the sum of the per-position equity
+      day changes already stamped on ``position_rows``. Composed independently of
+      broker availability, so the day-change tile lights up whenever prior-close
+      data exists even while the reconciliation fields are unavailable.
+    """
+    summary = _empty_account_summary()
+
+    # -- Reconciliation fields (#420) — only when a balance source resolves.
+    balances = _resolve_account_balances(db, schwab_configured)
+    if balances is not None:
+        equity_mv = sum((r["notional"] or 0.0) for r in position_rows)
+        option_mv, _option_unrealized, _includes = _compute_option_totals(open_legs)
+        cash = balances["cash"]
+        account_value = equity_mv + option_mv + cash
+
+        # No independent broker net-liq (QA synthetic) → reconcile against the
+        # tool's own composed value so the happy-path "reconciles" state renders.
+        broker_net_liq = balances["broker_net_liq"]
+        if broker_net_liq is None:
+            broker_net_liq = account_value
+        reconciles = _reconciles(account_value, broker_net_liq)
+
+        summary.update(
+            {
+                "account_value": account_value,
+                "equity_mv": equity_mv,
+                "option_mv": option_mv,
+                "cash": cash,
+                "reconciles": reconciles,
+            }
+        )
+
+    # -- Account-level day change (#421 R3) — composed from the per-position
+    # equity day changes on ``position_rows``. The percent is that dollar change
+    # over the *prior* aggregate notional (current notional − day change),
+    # guarding a zero/negative denominator.
+    day_changes = [
+        r["day_change"] for r in position_rows if r.get("day_change") is not None
+    ]
+    any_populated = any(
+        r.get("day_state") == "populated" for r in position_rows
+    )
+    if not day_changes:
+        summary["day_state"] = "populated" if any_populated else "no_prior_close"
+    else:
+        total_day_change = sum(day_changes)
+        total_notional = sum((r.get("notional") or 0.0) for r in position_rows)
+        prior_notional = total_notional - total_day_change
+        day_change_pct: float | None = None
+        if prior_notional > 0:
+            day_change_pct = total_day_change / prior_notional
+        summary.update(
+            {
+                "day_change": total_day_change,
+                "day_change_pct": day_change_pct,
+                "day_state": "populated",
+            }
+        )
+
+    return summary
 
 
 def _build_recent_activity(db: DBSession) -> list[dict]:
@@ -700,8 +1227,12 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         Dict matching DashboardResponse — FastAPI serializes via the
         response_model on the route.
     """
-    now = datetime.now(timezone.utc).isoformat()
-    today = today or date.today()
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
+    # DTE/expiration counts and YTD scoping run on the US market (Eastern)
+    # calendar, not the server's UTC clock (issue #418 — a UTC ``date.today()``
+    # rolls a day early after 20:00 ET and knocked DTE one day low).
+    today = today or market_today()
 
     # Status block
     schwab_status, schwab_configured = _build_schwab_status()
@@ -723,9 +1254,12 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
     # both derive_open_legs (profit-target threshold) and the action engine.
     rules = load_rules_config(db)
 
-    # Quotes (parallelized; deduped by ticker)
+    # Quotes (parallelized; deduped by ticker). ``quotes_by_ticker`` is the
+    # legacy ``dict[str, float]`` price map every existing consumer uses;
+    # ``rich_quotes`` carries the day-change / prior-close / timestamp fields
+    # (#421 R3, #417 R5) off the same fetch — no extra round-trips.
     tickers = [p["ticker"] for p in open_positions]
-    quotes_by_ticker, schwab_failed = _fetch_quotes_parallel(
+    quotes_by_ticker, rich_quotes, schwab_failed = _fetch_quotes_parallel(
         tickers, schwab_configured=feed_available, db=db
     )
 
@@ -761,7 +1295,15 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
     )
 
     # Position rows + KPIs piggyback on the same data — no extra DB hits.
-    position_rows = _build_position_rows(open_positions, quotes_by_ticker, open_legs)
+    position_rows = _build_position_rows(
+        open_positions, quotes_by_ticker, open_legs, rich_quotes=rich_quotes,
+        now=now_dt,
+    )
+    # Honest freshness (#417 R5): the dashboard pill switches from the research
+    # cache buckets to the displayed-quote signal. Merge the quote-freshness
+    # fields onto the same ``cache_status`` object the status block carries; the
+    # day-based buckets stay untouched for the action engine + Settings.
+    cache_status.update(_build_quote_freshness_signal(position_rows))
     kpis = _build_kpis(
         position_rows,
         open_legs,
@@ -786,6 +1328,15 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
         rules=rules,
     )
     _attach_next_suggested_actions(position_rows, next_actions, open_legs)
+
+    # Account-summary strip (#420 reconciliation + #421 R3 day change). Uses the
+    # token-row state (``schwab_configured``) rather than the per-load feed flag:
+    # the account balances come from a separate ``get_accounts()`` cache,
+    # independent of the quote fan-out outcome. The account-level day change is
+    # composed from ``position_rows`` inside the same call.
+    account_summary = _build_account_summary(
+        db, position_rows, open_legs, schwab_configured=schwab_configured
+    )
 
     # Activity feed
     recent_activity = _build_recent_activity(db)
@@ -829,4 +1380,5 @@ def build_dashboard_payload(db: DBSession, today: date | None = None) -> dict:
             "sources_unavailable": sources_unavailable,
         },
         "next_actions": next_actions,
+        "account_summary": account_summary,
     }

@@ -265,6 +265,17 @@ class QuoteStub(Base):
 
     ticker = Column(String, primary_key=True)  # underlying symbol
     last_price = Column(Float, nullable=False)  # synthetic last price
+    # New in v1.9.0 (#421 R3 / #417 R5) — day-change + freshness fields so the
+    # QA stub feed can exercise the DAY column and the freshness pill without a
+    # live Schwab quote. All nullable: an archetype that omits ``close_price`` /
+    # ``net_change`` models the "no prior close" (R3) degrade path. ``quote_time``
+    # is an ISO string; the stub client emits it as Schwab-shaped epoch millis.
+    # No Alembic — ``create_all`` grows the table idempotently on next startup;
+    # rollback is a manual ``ALTER TABLE quote_stubs DROP COLUMN`` / ``DROP TABLE``.
+    close_price = Column(Float, nullable=True)  # synthetic prior close
+    net_change = Column(Float, nullable=True)  # per-share day change $
+    net_pct = Column(Float, nullable=True)  # day change % (number, e.g. 3.56)
+    quote_time = Column(String, nullable=True)  # ISO quote timestamp
 
 
 class OptionMarkStub(Base):

@@ -1794,6 +1794,46 @@ export interface components {
             per_leg_breakdown?: components["schemas"]["CoveredCallLegBreakdown"][];
             position: components["schemas"]["CoveredCallPositionSummary"];
         };
+        /**
+         * DashboardAccountSummary
+         * @description Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).
+         *
+         *     New top-level ``account_summary`` key on the dashboard response. The
+         *     ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
+         *     account-level day change composed from per-position equity day changes.
+         *
+         *     The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
+         *     reconciliation fields (R1/R2/R4) are populated by the account-totals worker
+         *     (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
+         *     ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
+         *     worker lands. All fields are additive/defaulted so the payload validates
+         *     either way.
+         */
+        DashboardAccountSummary: {
+            /** Account Value */
+            account_value?: number | null;
+            /** Cash */
+            cash?: number | null;
+            /** Day Change */
+            day_change?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /**
+             * Day State
+             * @default no_prior_close
+             * @enum {string}
+             */
+            day_state: "populated" | "no_prior_close";
+            /** Equity Mv */
+            equity_mv?: number | null;
+            /** Option Mv */
+            option_mv?: number | null;
+            /**
+             * Reconciles
+             * @default false
+             */
+            reconciles: boolean;
+        };
         /** DashboardActivity */
         DashboardActivity: {
             /**
@@ -1816,10 +1856,24 @@ export interface components {
         };
         /** DashboardCacheStatus */
         DashboardCacheStatus: {
+            /**
+             * Displayed Stale
+             * @default 0
+             */
+            displayed_stale: number;
+            /**
+             * Displayed Total
+             * @default 0
+             */
+            displayed_total: number;
             /** Fresh */
             fresh: number;
             /** Stale */
             stale: number;
+            /** Stalest Age Seconds */
+            stalest_age_seconds?: number | null;
+            /** Stalest Symbol */
+            stalest_symbol?: string | null;
             /** Total */
             total: number;
             /** Very Stale */
@@ -1875,6 +1929,11 @@ export interface components {
         };
         /** DashboardKpis */
         DashboardKpis: {
+            /**
+             * Includes Options
+             * @default false
+             */
+            includes_options: boolean;
             largest_loser?: components["schemas"]["DashboardKpiLargestLoser"] | null;
             largest_risk?: components["schemas"]["DashboardKpiLargestRisk"] | null;
             /** Notional Change Pct */
@@ -1956,6 +2015,8 @@ export interface components {
              * @enum {string}
              */
             tone: "opportunity" | "warning";
+            /** Trigger Basis */
+            trigger_basis?: "raw" | null;
             /**
              * Triggered Rules
              * @default []
@@ -2107,6 +2168,16 @@ export interface components {
             broker_cost_basis_per_share?: number | null;
             /** Current Price */
             current_price?: number | null;
+            /** Day Change */
+            day_change?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /**
+             * Day State
+             * @default no_prior_close
+             * @enum {string}
+             */
+            day_state: "populated" | "no_prior_close";
             /** Id */
             id: string;
             /**
@@ -2120,6 +2191,19 @@ export interface components {
             open_legs_count: number;
             /** Pl Pct */
             pl_pct?: number | null;
+            /** Quote Age Seconds */
+            quote_age_seconds?: number | null;
+            /** Quote Fetched At */
+            quote_fetched_at?: string | null;
+            /**
+             * Quote Stale
+             * @default false
+             */
+            quote_stale: boolean;
+            /** Raw Pl Pct */
+            raw_pl_pct?: number | null;
+            /** Raw Unrealized Pl */
+            raw_unrealized_pl?: number | null;
             /** Shares */
             shares: number;
             /** Strategy */
@@ -2153,6 +2237,7 @@ export interface components {
         };
         /** DashboardResponse */
         DashboardResponse: {
+            account_summary?: components["schemas"]["DashboardAccountSummary"];
             data_meta: components["schemas"]["DashboardDataMeta"];
             /** Generated At */
             generated_at: string;

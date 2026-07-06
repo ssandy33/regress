@@ -957,6 +957,93 @@
         "title": "CoveredCallView",
         "type": "object"
       },
+      "DashboardAccountSummary": {
+        "description": "Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).\n\nNew top-level ``account_summary`` key on the dashboard response. The\n``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the\naccount-level day change composed from per-position equity day changes.\n\nThe ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``\nreconciliation fields (R1/R2/R4) are populated by the account-totals worker\n(extends ``schwab_account_value``); the #421 spine emits them as ``None`` /\n``False`` (the \"Connect Schwab to reconcile\" unavailable state) until that\nworker lands. All fields are additive/defaulted so the payload validates\neither way.",
+        "properties": {
+          "account_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Value"
+          },
+          "cash": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash"
+          },
+          "day_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "day_state": {
+            "default": "no_prior_close",
+            "enum": [
+              "populated",
+              "no_prior_close"
+            ],
+            "title": "Day State",
+            "type": "string"
+          },
+          "equity_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity Mv"
+          },
+          "option_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Mv"
+          },
+          "reconciles": {
+            "default": false,
+            "title": "Reconciles",
+            "type": "boolean"
+          }
+        },
+        "title": "DashboardAccountSummary",
+        "type": "object"
+      },
       "DashboardActivity": {
         "properties": {
           "kind": {
@@ -1036,6 +1123,16 @@
       },
       "DashboardCacheStatus": {
         "properties": {
+          "displayed_stale": {
+            "default": 0,
+            "title": "Displayed Stale",
+            "type": "integer"
+          },
+          "displayed_total": {
+            "default": 0,
+            "title": "Displayed Total",
+            "type": "integer"
+          },
           "fresh": {
             "title": "Fresh",
             "type": "integer"
@@ -1043,6 +1140,28 @@
           "stale": {
             "title": "Stale",
             "type": "integer"
+          },
+          "stalest_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stalest Age Seconds"
+          },
+          "stalest_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stalest Symbol"
           },
           "total": {
             "title": "Total",
@@ -1181,6 +1300,11 @@
       },
       "DashboardKpis": {
         "properties": {
+          "includes_options": {
+            "default": false,
+            "title": "Includes Options",
+            "type": "boolean"
+          },
           "largest_loser": {
             "anyOf": [
               {
@@ -1377,6 +1501,18 @@
             ],
             "title": "Tone",
             "type": "string"
+          },
+          "trigger_basis": {
+            "anyOf": [
+              {
+                "const": "raw",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Basis"
           },
           "triggered_rules": {
             "default": [],
@@ -1728,6 +1864,37 @@
             ],
             "title": "Current Price"
           },
+          "day_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "day_state": {
+            "default": "no_prior_close",
+            "enum": [
+              "populated",
+              "no_prior_close"
+            ],
+            "title": "Day State",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1762,6 +1929,55 @@
               }
             ],
             "title": "Pl Pct"
+          },
+          "quote_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Age Seconds"
+          },
+          "quote_fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Fetched At"
+          },
+          "quote_stale": {
+            "default": false,
+            "title": "Quote Stale",
+            "type": "boolean"
+          },
+          "raw_pl_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Pl Pct"
+          },
+          "raw_unrealized_pl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Unrealized Pl"
           },
           "shares": {
             "title": "Shares",
@@ -1842,6 +2058,9 @@
       },
       "DashboardResponse": {
         "properties": {
+          "account_summary": {
+            "$ref": "#/components/schemas/DashboardAccountSummary"
+          },
           "data_meta": {
             "$ref": "#/components/schemas/DashboardDataMeta"
           },

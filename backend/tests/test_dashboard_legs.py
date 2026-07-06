@@ -1,10 +1,12 @@
 """Unit tests for dashboard_legs pure helpers (no DB, no HTTP)."""
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.models.schemas import DashboardOpenLeg
+from app.services import dashboard_legs
 from app.services.dashboard_legs import (
     build_option_leg_index,
     build_option_mark_index,
@@ -18,6 +20,7 @@ from app.services.dashboard_legs import (
     compute_suggested_action,
     derive_leg_economics,
     derive_open_legs,
+    market_today,
     resolve_leg_delta,
 )
 
@@ -55,6 +58,75 @@ class TestComputeDte:
     @pytest.mark.unit
     def test_none_returns_sentinel(self):
         assert compute_dte(None, today=date(2026, 5, 5)) == 9999
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("days_out", [1, 7, 13, 14, 30, 45])
+    def test_dte_inclusive_of_expiry_day(self, days_out):
+        """An expiry `days_out` calendar days from `today` reads exactly that.
+
+        Parameterized off a moving `today` (today's date ± an offset) rather
+        than pinned ISO literals, per CLAUDE.md's now()-relative rule. Directly
+        pins the #418 acceptance criterion: an expiry N calendar days out is
+        `Nd` — no off-by-one in either direction.
+        """
+        today = date.today()
+        expiry = today + timedelta(days=days_out)
+        assert compute_dte(expiry.isoformat(), today=today) == days_out
+
+    @pytest.mark.unit
+    def test_dte_boundary_case_2026_07_04_to_07_17(self):
+        """The exact #418 regression: 2026-07-04 → 2026-07-17 must read 13."""
+        assert compute_dte("2026-07-17", today=date(2026, 7, 4)) == 13
+
+
+class TestMarketToday:
+    """`market_today()` anchors DTE to the Eastern market calendar (#418).
+
+    A UTC server clock rolls to the next day after 20:00 ET (00:00 UTC), which
+    knocked DTE one day low for evening captures. These tests freeze `now` at
+    an instant where the UTC date and the Eastern date differ, and prove the
+    DTE default follows the Eastern (trader) calendar, not the server's UTC
+    clock.
+    """
+
+    def _freeze_now(self, monkeypatch, instant_utc):
+        """Patch dashboard_legs.datetime so .now(tz) returns a fixed instant."""
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return instant_utc.astimezone(tz) if tz else instant_utc
+
+        monkeypatch.setattr(dashboard_legs, "datetime", _FrozenDateTime)
+
+    @pytest.mark.unit
+    def test_market_today_is_eastern_date_when_utc_has_rolled_over(
+        self, monkeypatch
+    ):
+        # 2026-07-05 00:30 UTC == 2026-07-04 20:30 America/New_York (EDT).
+        # UTC has already flipped to the 5th; the Eastern calendar is still the 4th.
+        instant = datetime(2026, 7, 5, 0, 30, tzinfo=timezone.utc)
+        self._freeze_now(monkeypatch, instant)
+        assert instant.date() == date(2026, 7, 5)  # server/UTC date
+        assert market_today() == date(2026, 7, 4)  # trader/Eastern date
+
+    @pytest.mark.unit
+    def test_default_dte_uses_eastern_not_utc_clock(self, monkeypatch):
+        # Same evening-capture instant. The bug rendered `12d`; anchoring the
+        # default `today` to Eastern restores the correct `13d`.
+        instant = datetime(2026, 7, 5, 0, 30, tzinfo=timezone.utc)
+        self._freeze_now(monkeypatch, instant)
+        # No explicit `today` → exercises the market-aware default.
+        assert compute_dte("2026-07-17") == 13
+
+    @pytest.mark.unit
+    def test_default_dte_agrees_with_daytime_clock(self, monkeypatch):
+        # 2026-07-04 15:00 UTC == 11:00 ET — same calendar day in both zones.
+        # Regression guard: the market anchor must not shift a within-day count.
+        instant = datetime(2026, 7, 4, 15, 0, tzinfo=timezone.utc)
+        self._freeze_now(monkeypatch, instant)
+        assert market_today() == date(2026, 7, 4)
+        assert compute_dte("2026-07-17") == 13
 
 
 class TestComputeMoneyness:

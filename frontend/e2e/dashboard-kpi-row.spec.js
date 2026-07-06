@@ -169,7 +169,10 @@ test.describe('KPI row (V0.5 — 7 tiles) @e2e', () => {
     await expect(tile).toContainText('Position with the largest unrealized loss.');
   });
 
-  test('empty Realized P/L renders $0 / 0% (zero-guard, not +$0.00, per spec §14.3)', async ({ page }) => {
+  test('empty Realized P/L renders $0 and NO bogus percent (#419)', async ({ page }) => {
+    // Bridge edit (#420/#419): the null-pct branch no longer renders the
+    // misleading "0% lifetime" placeholder — the percent is removed when there
+    // is no meaningful denominator (realized_pl_pct == null).
     await mockDashboard(page, {
       ...BASE_PAYLOAD,
       status: { ...BASE_PAYLOAD.status, journal: { positions_count: 0 } },
@@ -181,7 +184,7 @@ test.describe('KPI row (V0.5 — 7 tiles) @e2e', () => {
     const tile = page.getByTestId('kpi-realized-pl');
     await expect(tile).toContainText('$0');
     await expect(tile).not.toContainText('+$0.00');
-    await expect(tile).toContainText('0% lifetime');
+    await expect(tile).not.toContainText('0% lifetime');
   });
 
   test('empty Premium renders $0 / 0 trades (zero-guard, not +$0.00, per spec §14.3)', async ({ page }) => {

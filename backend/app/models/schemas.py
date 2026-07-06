@@ -756,6 +756,18 @@ DASHBOARD_RULE_ID = Literal[
 ]
 # Card valence — `priority` ranks urgency, `tone` carries valence (§4.3 Q6).
 DASHBOARD_ACTION_TONE = Literal["opportunity", "warning"]
+# New in v1.9.0 (#421, PRD #415 R3) — per-position and account-level day-change
+# state. ``populated`` = a signed $/% day change is available (Schwab supplied a
+# prior close / netChange for the symbol); ``no_prior_close`` = the explicit
+# empty state rendered as muted italic "no prior close" when the symbol has no
+# prior close, rather than a bare em-dash.
+DASHBOARD_DAY_STATE = Literal["populated", "no_prior_close"]
+# New in v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — the cost basis a
+# risk/review trigger evaluated against. "raw" flags a largest-loser card that
+# fired on the RAW broker-basis drawdown (per ADR #416, raw drives the trigger so
+# premium-softening cannot suppress a real mark-to-market hole). None on every
+# other card and when the trigger read the adjusted figure (the raw-null fallback).
+DASHBOARD_TRIGGER_BASIS = Literal["raw"]
 
 
 class DashboardSchwabStatus(BaseModel):
@@ -780,6 +792,18 @@ class DashboardCacheStatus(BaseModel):
     stale: int
     very_stale: int
     total: int
+    # New in v1.9.0 (#417, PRD #415 R5) — the displayed-quote freshness signal
+    # the dashboard pill switches to. ``fresh`` / ``stale`` / ``very_stale`` above
+    # remain the research/data cache buckets (FRED / earnings, aged in days) used
+    # by the action engine + Settings; these four describe the live per-symbol
+    # quotes actually shown. ``displayed_total`` counts assessable rows,
+    # ``displayed_stale`` those past the market-hours-aware budget, and
+    # ``stalest_symbol`` / ``stalest_age_seconds`` name the oldest shown quote for
+    # the pill hover. All additive/defaulted so older payloads still validate.
+    displayed_total: int = 0
+    displayed_stale: int = 0
+    stalest_symbol: Optional[str] = None
+    stalest_age_seconds: Optional[int] = None
 
 
 class DashboardJournalStatus(BaseModel):
@@ -848,6 +872,12 @@ class DashboardKpis(BaseModel):
     premium_collected_trades: int = 0
     realized_pl: float = 0.0
     realized_pl_pct: Optional[float] = None
+    # New in v1.9.0 (#420, R4) — ``notional_value`` and ``unrealized_pl`` now
+    # roll in open option-leg market value / P&L when leg economics are live.
+    # ``includes_options`` drives the "incl. options" tile subtext + the
+    # ``data-includes-options`` attribute. Defaults False so older payloads /
+    # tests that omit it still validate.
+    includes_options: bool = False
 
 
 class DashboardPositionRow(BaseModel):
@@ -873,6 +903,36 @@ class DashboardPositionRow(BaseModel):
     # when shares == 0 (cash-secured rows render "cash-secured", not a divide).
     broker_cost_basis_per_share: Optional[float] = None
     adjusted_cost_basis_per_share: Optional[float] = None
+    # New in v1.9.0 (#421, PRD #415 R3) — per-position day change. ``day_change``
+    # is the position's equity dollar move today (Schwab per-share ``netChange``
+    # × shares; None for 0-share cash-secured rows with no equity exposure).
+    # ``day_change_pct`` is the underlying's fractional day move (Schwab
+    # ``netPercentChange`` / 100, e.g. 0.0356 for +3.56%). ``day_state`` is
+    # "no_prior_close" when the symbol's quote carried no prior close / netChange
+    # (rendered as the explicit muted empty state, not a bare em-dash). All
+    # additive/defaulted so older payloads and tests that omit them still validate.
+    day_change: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    day_state: DASHBOARD_DAY_STATE = "no_prior_close"
+    # New in v1.9.0 (#417, PRD #415 R5) — per-symbol quote freshness. ``quote_age_
+    # seconds`` is the market-hours-aware age of the price shown in ``current_price``
+    # (measured against ``now`` during RTH, else the most recent session close, so
+    # weekends/after-hours don't false-positive). ``quote_stale`` is True once that
+    # age exceeds the intraday budget; ``quote_fetched_at`` is the quote's absolute
+    # ISO timestamp for the exact-time hover. All null/false when the quote carried
+    # no timestamp (freshness unassessable → never falsely flagged). Additive/defaulted.
+    quote_age_seconds: Optional[int] = None
+    quote_stale: bool = False
+    quote_fetched_at: Optional[str] = None
+    # New in v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — raw broker-basis
+    # P&L, rendered as the muted secondary line beneath the adjusted headline in
+    # each P&L cell. ``unrealized_pl`` / ``pl_pct`` (above) stay the ADJUSTED
+    # headline figures the KPI tiles aggregate; these are the raw broker-basis
+    # equivalents. ``raw_unrealized_pl`` = current_price*shares − broker_cost_basis;
+    # ``raw_pl_pct`` = that over broker_cost_basis. Both null for CSP/0-share rows
+    # with no broker basis (line 2 renders a muted em-dash). Additive/defaulted.
+    raw_pl_pct: Optional[float] = None
+    raw_unrealized_pl: Optional[float] = None
 
 
 class DashboardMoneyness(BaseModel):
@@ -991,6 +1051,11 @@ class DashboardNextAction(BaseModel):
     # carried by the two leg.* cards (empty for every other card type).
     tone: DASHBOARD_ACTION_TONE = "warning"
     triggered_rules: list[DashboardRuleEvaluation] = []
+    # New in v1.9.0 (#422, PRD #415 R6 / ADR #416) — the basis a risk/review
+    # trigger fired on. "raw" flags the largest-loser card that tripped on the raw
+    # broker-basis drawdown, so the frontend renders a "fired on raw basis" tag +
+    # ``data-trigger-basis``. None on every other card (byte-identical default).
+    trigger_basis: Optional[DASHBOARD_TRIGGER_BASIS] = None
 
 
 class DashboardActivity(BaseModel):
@@ -1011,6 +1076,31 @@ class DashboardDataMeta(BaseModel):
     sources_unavailable: list[str] = []
 
 
+class DashboardAccountSummary(BaseModel):
+    """Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).
+
+    New top-level ``account_summary`` key on the dashboard response. The
+    ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
+    account-level day change composed from per-position equity day changes.
+
+    The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
+    reconciliation fields (R1/R2/R4) are populated by the account-totals worker
+    (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
+    ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
+    worker lands. All fields are additive/defaulted so the payload validates
+    either way.
+    """
+
+    account_value: Optional[float] = None
+    equity_mv: Optional[float] = None
+    option_mv: Optional[float] = None
+    cash: Optional[float] = None
+    day_change: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    day_state: DASHBOARD_DAY_STATE = "no_prior_close"
+    reconciles: bool = False
+
+
 class DashboardResponse(BaseModel):
     generated_at: str
     status: DashboardStatus
@@ -1022,6 +1112,12 @@ class DashboardResponse(BaseModel):
     # New in V0.5.4 — server-side ranked action engine output. See
     # decision-dashboard-v05.md §2.2 / §14.7.
     next_actions: list[DashboardNextAction] = []
+    # New in v1.9.0 (#420 + #421, PRD #415 R1/R2/R3) — broker-reconciliation
+    # strip. default_factory so existing response constructions / tests that
+    # omit it still validate (all DashboardAccountSummary fields default).
+    account_summary: DashboardAccountSummary = Field(
+        default_factory=DashboardAccountSummary
+    )
 
 
 # --- Recovery Plan (V0.5.8, issue #182) ---
