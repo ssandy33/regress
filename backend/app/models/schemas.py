@@ -601,6 +601,11 @@ class ImportPreviewTrade(BaseModel):
     # import time, so the preview flags it instead of showing "New" (AC3c /
     # PRD #384 Q2). Default False so option/buy/dividend rows are unaffected.
     is_unmatched: bool = False
+    # True for a ``buy_stock`` that is the share-delivery leg of a coincident put
+    # ``assignment`` — it is suppressed at import so the assignment credits its
+    # shares exactly once (bug #425). Default False so genuine standalone buys
+    # and all other rows are unaffected.
+    is_assignment_leg: bool = False
 
 
 class ImportPreviewResponse(BaseModel):
@@ -611,6 +616,10 @@ class ImportPreviewResponse(BaseModel):
     # Count of rows flagged ``is_unmatched`` (unmatched equity sells that will be
     # skipped on import). Default 0; excluded from ``new_count`` (issue: AC3c).
     unmatched: int = 0
+    # Count of rows flagged ``is_assignment_leg`` (put-assignment share-delivery
+    # buy_stock legs suppressed on import). Default 0; excluded from ``new_count``
+    # (bug #425).
+    assignment_legs: int = 0
     new_count: int
 
 
@@ -649,6 +658,20 @@ class SkippedUnmatched(BaseModel):
     quantity: int
 
 
+class SuppressedAssignmentLeg(BaseModel):
+    """A ``buy_stock`` suppressed at import as a put-assignment delivery leg.
+
+    Surfaced from ``execute_mapped_import`` (bug #425) so the user sees that the
+    equity share-delivery leg of a put assignment was folded into the assignment
+    rather than silently dropped. The assignment already credits the delivered
+    shares at strike-based basis; persisting this leg would double the count.
+    """
+
+    ticker: str
+    opened_at: str
+    quantity: int
+
+
 class ImportResultResponse(BaseModel):
     imported: int
     skipped_duplicates: int
@@ -658,6 +681,10 @@ class ImportResultResponse(BaseModel):
     # (issue #388 / PRD #384 AC3c). Defaults empty so option-only imports
     # serialize unchanged.
     skipped_unmatched: list[SkippedUnmatched] = []
+    # buy_stock rows suppressed because they are the share-delivery leg of a
+    # coincident put assignment (bug #425). Defaults empty so imports without a
+    # put-assignment acquisition serialize unchanged.
+    skipped_assignment_legs: list[SuppressedAssignmentLeg] = []
 
 
 class ClearJournalResponse(BaseModel):

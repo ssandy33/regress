@@ -78,7 +78,7 @@ _QA_ACCOUNT_CASH: float = 1365.26
 
 # The expected number of archetypes a healthy seed run inserts. The deploy
 # auto-seed gate (ADR #359 D3) fails the deploy if the post-seed count differs.
-EXPECTED_ARCHETYPE_COUNT: int = 9
+EXPECTED_ARCHETYPE_COUNT: int = 10
 
 
 class SeedGuardError(Exception):
@@ -186,7 +186,7 @@ def _iso_date_in(days: int, *, now: datetime) -> str:
 
 
 def build_archetypes(now: datetime | None = None) -> list[Archetype]:
-    """Construct the nine synthetic archetypes with DTE-relative expirations.
+    """Construct the ten synthetic archetypes with DTE-relative expirations.
 
     ``now`` is injectable for deterministic tests; production callers omit it
     and get ``datetime.now(timezone.utc)``. Returns a fresh list each call (the
@@ -211,6 +211,8 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
     9. Dual-basis raw-loser (premium-softened equity underwater on raw basis but
        not on the adjusted basis) → #422 R6 dual-basis P&L cells + a P0 review
        card that fires on the RAW drawdown the adjusted basis hid (ADR #416).
+    10. Put-assignment acquisition (sell_put assigned into 100 shares) → #425
+       double-count fix: the position reconciles to exactly 100 shares, not 200.
     """
     now = now or datetime.now(timezone.utc)
     far = _iso_date_in(30, now=now)  # > 14 DTE
@@ -462,6 +464,50 @@ def build_archetypes(now: datetime | None = None) -> list[Archetype]:
             quote_time=fresh_quote_time,
             marks=[],
         ),
+        # 10 — Put-assignment acquisition (#425). A short put assigned into 100
+        # shares: the ledger carries the originating ``sell_put`` (closed by the
+        # assignment) and the ``assignment`` lifecycle row. The position holds
+        # exactly 100 shares — NOT 200 — proving the double-count fix reconciles
+        # a put-assignment acquisition to the correct count. Numbers mirror the
+        # real prod case (position F): strike 13.50 × 100 = 1350 broker basis,
+        # softened to 1320.66 by the $0.30/sh put premium net of $0.66 fees
+        # (30.00 − 0.66 = 29.34 → 1350 − 29.34 = 1320.66).
+        Archetype(
+            key="put_assignment_acquisition",
+            ticker="SEEDJ",
+            shares=100,
+            broker_cost_basis=1320.66,
+            strategy="wheel",
+            intended_state=(
+                "#425 put-assignment acquisition reconciles to 100 shares "
+                "(not 200), strike-based basis 1320.66"
+            ),
+            trades=[
+                SeedTrade(
+                    "sell_put",
+                    strike=13.50,
+                    expiration=past,
+                    premium=0.30,
+                    fees=0.66,
+                    closed_at=past + "T00:00:00+00:00",
+                    close_reason="assigned",
+                ),
+                SeedTrade(
+                    "assignment",
+                    strike=13.50,
+                    expiration=past,
+                    premium=0.0,
+                    quantity=1,
+                ),
+            ],
+            quote_price=13.75,  # slightly above basis/sh → small unrealized gain
+            # #421 R3 — up day (close 13.60 < last 13.75). Fresh quote (#417 R5).
+            close_price=13.60,
+            net_change=0.15,
+            net_pct=1.10,
+            quote_time=fresh_quote_time,
+            marks=[],
+        ),
     ]
 
 
@@ -630,13 +676,14 @@ def _seed_account_balances(db: DBSession) -> None:
 
 
 def seed_qa(db: DBSession, *, dry_run: bool = False) -> SeedResult:
-    """Seed QA with the eight synthetic archetypes + stub-pricing rows.
+    """Seed QA with the synthetic archetypes + stub-pricing rows.
 
     Guards against production first (raising :class:`SeedGuardError` before any
     read or write), then performs an **authoritative full reset** (ADR #359 D2):
     a rolling ``create_backup`` is taken, ALL position/trade/stub rows are wiped
-    (``app_settings`` / ``sessions`` / ``watchlist`` preserved), and the eight
-    archetypes are inserted. A per-archetype insert failure is collected (its key
+    (``app_settings`` / ``sessions`` / ``watchlist`` preserved), and the
+    ``EXPECTED_ARCHETYPE_COUNT`` archetypes are inserted. A per-archetype insert
+    failure is collected (its key
     added to ``SeedResult.failed_archetypes``) and the run continues, so one bad
     archetype does not abort the rest; the CLI exits non-zero when any failed.
 
