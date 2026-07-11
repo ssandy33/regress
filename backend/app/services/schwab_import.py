@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections import Counter
 
 from sqlalchemy.orm import Session
 
@@ -286,6 +287,93 @@ def _detect_unmatched_sells(db: Session, mapped_trades: list[dict]) -> set[int]:
     return unmatched
 
 
+def _detect_assignment_delivery_legs(
+    db: Session, mapped_trades: list[dict]
+) -> set[int]:
+    """Return indices of ``buy_stock`` rows that are the delivery leg of a
+    coincident put ``assignment`` and must NOT be inserted (bug #425).
+
+    When a short put is assigned, the acquisition can reach the import surface
+    twice: the option-leg ``assignment`` — which the recomputer credits
+    ``qty*100`` shares for at strike-based basis (see
+    :func:`app.services.positions.recompute_position_state`) — AND a same-day
+    equity ``buy_stock`` for the delivered shares (which the #385 equity
+    classifier now recognizes). Both add shares, so the position doubles. The
+    ``assignment`` is the canonical wheel event (it also consumes the short-put
+    leg and nets premium into basis), so the equity delivery leg is suppressed.
+
+    A ``buy_stock`` is a delivery leg when a put ``assignment`` exists on the
+    **same ticker and date** whose delivered shares (``assignment.quantity *
+    100``) equal the ``buy_stock``'s share count. The assignment may live in
+    this same batch (fresh import) or already be persisted (idempotent
+    re-import). A genuine standalone stock buy — a ``buy_stock`` with no
+    coincident assignment (the NOK/BB CSV case) — never matches and is left
+    untouched.
+
+    Matching is 1:1: each assignment's delivery slot is claimed by at most one
+    ``buy_stock``, so two same-day buys can't both collapse onto one assignment.
+    Returned indices are into the ORIGINAL ``mapped_trades`` list.
+    """
+    # Available put-assignment share-delivery slots, keyed by
+    # (ticker, normalized date, delivered shares).
+    slots: Counter[tuple[str, str, int]] = Counter()
+
+    # Persisted assignments (the idempotent re-import path: the assignment is
+    # already in the DB, only the duplicate buy_stock comes in again).
+    persisted = (
+        db.query(Trade.quantity, Position.ticker, Trade.opened_at)
+        .join(Position, Trade.position_id == Position.id)
+        .filter(Trade.trade_type == "assignment")
+        .all()
+    )
+    for quantity, ticker, opened_at in persisted:
+        key = (ticker, _normalize_date(opened_at or ""), int(quantity or 1) * 100)
+        slots[key] += 1
+
+    # Batch assignments that are not already persisted — so a re-imported
+    # assignment counted above is not double-counted here.
+    for mapped in mapped_trades:
+        if mapped.get("trade_type") != "assignment":
+            continue
+        if is_duplicate(
+            db,
+            mapped["ticker"],
+            mapped.get("strike"),
+            mapped.get("expiration"),
+            "assignment",
+            mapped["opened_at"],
+        ):
+            continue
+        key = (
+            mapped["ticker"],
+            _normalize_date(mapped["opened_at"]),
+            int(mapped.get("quantity") or 1) * 100,
+        )
+        slots[key] += 1
+
+    # Walk buy_stock rows in a stable chronological order (ties keep file order)
+    # and claim one delivery slot each. The stable order makes the preview and
+    # execute paths agree on exactly which rows are suppressed.
+    delivery_legs: set[int] = set()
+    order = sorted(
+        range(len(mapped_trades)),
+        key=lambda i: (mapped_trades[i].get("opened_at") or "", i),
+    )
+    for idx in order:
+        mapped = mapped_trades[idx]
+        if mapped.get("trade_type") != "buy_stock":
+            continue
+        key = (
+            mapped["ticker"],
+            _normalize_date(mapped["opened_at"]),
+            int(mapped.get("quantity") or 0),
+        )
+        if slots.get(key, 0) > 0:
+            slots[key] -= 1
+            delivery_legs.add(idx)
+    return delivery_legs
+
+
 def build_preview(
     db: Session,
     mapped_trades: list[dict],
@@ -304,9 +392,11 @@ def build_preview(
         f"****{account_number[-4:]}" if len(account_number) >= 4 else account_number
     )
     unmatched_indices = _detect_unmatched_sells(db, mapped_trades)
+    delivery_leg_indices = _detect_assignment_delivery_legs(db, mapped_trades)
     trades: list[dict] = []
     duplicates = 0
     unmatched = 0
+    assignment_legs = 0
     for idx, mapped in enumerate(mapped_trades):
         dup = is_duplicate(
             db,
@@ -319,12 +409,26 @@ def build_preview(
             quantity=mapped.get("quantity"),
             close_reason=mapped.get("close_reason"),
         )
+        is_assignment_leg = idx in delivery_leg_indices
         is_unmatched = idx in unmatched_indices
+        # Precedence mirrors the execute path: a row already persisted counts as
+        # a duplicate; otherwise a suppressed assignment delivery leg; otherwise
+        # an unmatched sell. Each row contributes to at most one bucket so
+        # new_count never double-subtracts.
         if dup:
             duplicates += 1
+        elif is_assignment_leg:
+            assignment_legs += 1
         elif is_unmatched:
             unmatched += 1
-        trades.append({**mapped, "is_duplicate": dup, "is_unmatched": is_unmatched})
+        trades.append(
+            {
+                **mapped,
+                "is_duplicate": dup,
+                "is_assignment_leg": is_assignment_leg,
+                "is_unmatched": is_unmatched,
+            }
+        )
 
     return {
         "account_number": masked_account,
@@ -332,7 +436,8 @@ def build_preview(
         "total": len(trades),
         "duplicates": duplicates,
         "unmatched": unmatched,
-        "new_count": len(trades) - duplicates - unmatched,
+        "assignment_legs": assignment_legs,
+        "new_count": len(trades) - duplicates - unmatched - assignment_legs,
     }
 
 
@@ -361,6 +466,12 @@ def execute_mapped_import(
     ``shares_sold > shares`` guard: the skipped rows are returned in
     ``skipped_unmatched`` so the UI can surface the warning.
 
+    A ``buy_stock`` that is the share-delivery leg of a coincident put
+    ``assignment`` (bug #425) is likewise suppressed — the assignment already
+    credits the delivered shares at strike-based basis, so persisting the
+    equity leg would double the share count. Suppressed rows are returned in
+    ``skipped_assignment_legs``. See :func:`_detect_assignment_delivery_legs`.
+
     Shared between the Schwab API import path and the CSV upload import path.
     """
     imported = 0
@@ -369,6 +480,7 @@ def execute_mapped_import(
     touched_position_ids: list[str] = []
     seen_position_ids: set[str] = set()
     skipped_unmatched: list[dict] = []
+    skipped_assignment_legs: list[dict] = []
 
     # Unmatched-sell pre-check (AC3c): equity sells with no shares to draw on
     # are skipped and recorded, never inserted (prevents negative shares at the
@@ -376,6 +488,12 @@ def execute_mapped_import(
     # ``build_preview`` uses, so the preview's "will skip" flag and what we
     # actually skip can never drift.
     unmatched_indices = _detect_unmatched_sells(db, mapped_trades)
+
+    # Put-assignment delivery-leg pre-check (bug #425): a buy_stock that is the
+    # share-delivery leg of a coincident put assignment is suppressed so the
+    # assignment credits its shares exactly once, at strike-based basis.
+    # Computed once here from the SAME detector build_preview uses.
+    delivery_leg_indices = _detect_assignment_delivery_legs(db, mapped_trades)
 
     for idx, mapped in enumerate(mapped_trades):
         ticker = mapped["ticker"]
@@ -393,6 +511,24 @@ def execute_mapped_import(
             close_reason=mapped.get("close_reason"),
         ):
             skipped += 1
+            continue
+
+        if idx in delivery_leg_indices:
+            logger.info(
+                "Suppressing put-assignment share-delivery buy_stock leg",
+                extra={
+                    "event": "equity_import.assignment_leg_suppressed",
+                    "outcome": "success",
+                    "ticker": ticker,
+                },
+            )
+            skipped_assignment_legs.append(
+                {
+                    "ticker": ticker,
+                    "opened_at": mapped["opened_at"],
+                    "quantity": mapped.get("quantity") or 0,
+                }
+            )
             continue
 
         if idx in unmatched_indices:
@@ -470,6 +606,7 @@ def execute_mapped_import(
         "skipped_duplicates": skipped,
         "positions_created": positions_created,
         "skipped_unmatched": skipped_unmatched,
+        "skipped_assignment_legs": skipped_assignment_legs,
     }
 
 
