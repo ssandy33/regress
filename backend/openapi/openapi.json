@@ -2729,6 +2729,11 @@
             "title": "Account Number",
             "type": "string"
           },
+          "assignment_legs": {
+            "default": 0,
+            "title": "Assignment Legs",
+            "type": "integer"
+          },
           "duplicates": {
             "title": "Duplicates",
             "type": "integer"
@@ -2791,6 +2796,11 @@
           "fees": {
             "title": "Fees",
             "type": "number"
+          },
+          "is_assignment_leg": {
+            "default": false,
+            "title": "Is Assignment Leg",
+            "type": "boolean"
           },
           "is_duplicate": {
             "title": "Is Duplicate",
@@ -2913,6 +2923,14 @@
           "positions_created": {
             "title": "Positions Created",
             "type": "integer"
+          },
+          "skipped_assignment_legs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SuppressedAssignmentLeg"
+            },
+            "title": "Skipped Assignment Legs",
+            "type": "array"
           },
           "skipped_duplicates": {
             "title": "Skipped Duplicates",
@@ -5698,6 +5716,30 @@
           "rule_compliance"
         ],
         "title": "StrikeRecommendation",
+        "type": "object"
+      },
+      "SuppressedAssignmentLeg": {
+        "description": "A ``buy_stock`` suppressed at import as a put-assignment delivery leg.\n\nSurfaced from ``execute_mapped_import`` (bug #425) so the user sees that the\nequity share-delivery leg of a put assignment was folded into the assignment\nrather than silently dropped. The assignment already credits the delivered\nshares at strike-based basis; persisting this leg would double the count.",
+        "properties": {
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "opened_at",
+          "quantity"
+        ],
+        "title": "SuppressedAssignmentLeg",
         "type": "object"
       },
       "ThesisPutRequest": {

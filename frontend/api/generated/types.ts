@@ -2565,6 +2565,11 @@ export interface components {
         ImportPreviewResponse: {
             /** Account Number */
             account_number: string;
+            /**
+             * Assignment Legs
+             * @default 0
+             */
+            assignment_legs: number;
             /** Duplicates */
             duplicates: number;
             /** New Count */
@@ -2587,6 +2592,11 @@ export interface components {
             expiration?: string | null;
             /** Fees */
             fees: number;
+            /**
+             * Is Assignment Leg
+             * @default false
+             */
+            is_assignment_leg: boolean;
             /** Is Duplicate */
             is_duplicate: boolean;
             /**
@@ -2635,6 +2645,11 @@ export interface components {
             imported: number;
             /** Positions Created */
             positions_created: number;
+            /**
+             * Skipped Assignment Legs
+             * @default []
+             */
+            skipped_assignment_legs: components["schemas"]["SuppressedAssignmentLeg"][];
             /** Skipped Duplicates */
             skipped_duplicates: number;
             /**
@@ -3828,6 +3843,23 @@ export interface components {
             vega?: number | null;
             /** Volume */
             volume: number;
+        };
+        /**
+         * SuppressedAssignmentLeg
+         * @description A ``buy_stock`` suppressed at import as a put-assignment delivery leg.
+         *
+         *     Surfaced from ``execute_mapped_import`` (bug #425) so the user sees that the
+         *     equity share-delivery leg of a put assignment was folded into the assignment
+         *     rather than silently dropped. The assignment already credits the delivered
+         *     shares at strike-based basis; persisting this leg would double the count.
+         */
+        SuppressedAssignmentLeg: {
+            /** Opened At */
+            opened_at: string;
+            /** Quantity */
+            quantity: number;
+            /** Ticker */
+            ticker: string;
         };
         /**
          * ThesisPutRequest
