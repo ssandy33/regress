@@ -162,3 +162,106 @@ test.describe('Nonce CSP — production build (#229)', () => {
     ).toHaveLength(0);
   });
 });
+
+/**
+ * Issue #405 — no `script-src` eval violation on the production dashboard.
+ *
+ * The report: Chrome DevTools' *Issues* panel flags a `Content-Security-Policy`
+ * violation on the prod `/dashboard` — `script-src` blocking a string-eval
+ * (`eval()` / `new Function()`). The subtlety is that a *caught* eval probe —
+ * e.g. a bundled `globalThis` polyfill's `Function("return this")()` fallback,
+ * or zod v4's `allowsEval` check — still fires the `securitypolicyviolation`
+ * DOM event *before* the exception is swallowed. The hydration tests (here and
+ * in `csp-nonce.spec.js`) listen on `page.on('console')`, which sees thrown /
+ * logged CSP errors but NOT a silently-caught probe — so neither catches this
+ * class of violation.
+ *
+ * This test lives in the *production-build* suite deliberately. It cannot go in
+ * `csp-nonce.spec.js`: that runs against `next dev`, whose
+ * `react-server-dom-turbopack` **development** runtime legitimately uses `eval`
+ * (hot-reload / flight protocol), firing `securitypolicyviolation` events that
+ * never exist in a production build. Only `next build && next start` (this
+ * config) reproduces what prod actually serves — the same reasoning that put
+ * the #229 guard here rather than in the dev suite.
+ *
+ * On current `main` this passes: a headless-Chromium load of the production
+ * `/dashboard` under the live `script-src 'self' 'nonce-…' 'wasm-unsafe-eval'`
+ * policy (no `'unsafe-eval'`) fires **zero** eval violations. The only
+ * `Function("return this")()` in the browser chunks is short-circuited by a
+ * `typeof globalThis === 'object'` guard and never executes in a modern
+ * browser; zod is a Node-only build-time dependency that never reaches the
+ * bundle. The reported symptom traced to a stale prod image predating the
+ * current Turbopack chunk isolation (Hypothesis C in the issue). This test is
+ * the behavioral regression guard — it goes red if any future change (or a
+ * stale deploy) reintroduces a runtime eval the policy blocks on the dashboard,
+ * and it does so WITHOUT adding `'unsafe-eval'` (the wrong fix, per the AC).
+ *
+ * Run: `npm run test:e2e:prod`. (CI does not run the prod suite yet — issue
+ * #231.)
+ */
+test.describe('Dashboard eval-probe CSP regression — production build (#405)', () => {
+  test('no script-src eval securitypolicyviolation fires on the production /dashboard', async ({
+    page,
+    request,
+  }) => {
+    // The securitypolicyviolation event only fires on a rendered page. With
+    // auth configured `/dashboard` 307s to /auth/signin (matcher-excluded), so
+    // there is no page to observe — skip cleanly, matching the tests above.
+    const probe = await fetchDashboard(request);
+    test.skip(
+      probe.status() >= 300 && probe.status() < 400,
+      'Auth enforced — /dashboard redirects; eval-probe check needs a rendered page',
+    );
+
+    // Register the listener before any page script runs (addInitScript) so a
+    // probe firing during early module evaluation is captured. Collect into a
+    // page-context array and read it back after load — more robust than parsing
+    // console text.
+    await page.addInitScript(() => {
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation', (event) => {
+        window.__cspViolations.push({
+          violatedDirective: event.violatedDirective,
+          blockedURI: event.blockedURI,
+          sourceFile: event.sourceFile,
+          lineNumber: event.lineNumber,
+          sample: event.sample,
+        });
+      });
+    });
+
+    const response = await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    // The nonce CSP must actually be in force — a missing policy would make a
+    // "zero violations" result meaningless. Assert the exact prod directive.
+    const scriptSrc = scriptSrcDirective(
+      response.headers()['content-security-policy'],
+    );
+    expect(scriptSrc, 'script-src directive is present').not.toBe('');
+    expect(scriptSrc, 'a per-request nonce is present').toMatch(
+      /'nonce-[A-Za-z0-9+/=]+'/,
+    );
+    expect(
+      scriptSrc,
+      "the wrong fix — 'unsafe-eval' — must NOT be present (issue #405 AC)",
+    ).not.toContain("'unsafe-eval'");
+
+    // Give lazily-imported client chunks (e.g. plotly) a beat to evaluate — the
+    // point at which a bundled eval probe would fire — before reading results.
+    await page.waitForTimeout(2000);
+
+    const violations = await page.evaluate(() => window.__cspViolations || []);
+    // Scope to script-src / eval-family violations — the subject of #405.
+    const evalViolations = violations.filter((v) =>
+      /script-src|eval/i.test(`${v.violatedDirective} ${v.blockedURI}`),
+    );
+
+    expect(
+      evalViolations,
+      `no script-src eval CSP violations on /dashboard: ${JSON.stringify(
+        evalViolations,
+      )}`,
+    ).toHaveLength(0);
+  });
+});
