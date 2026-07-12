@@ -1253,15 +1253,25 @@ def test_dashboard_cache_status_quote_driven(client, monkeypatch):
     research/data cache buckets (the #417 bug).
 
     Two positions: one with a minute-old quote (fresh under any market-hours
-    reference) and one with a 3-day-old quote (stale under any reference). The
-    3-day offset makes the assertion independent of when the suite runs (RTH,
-    weekend, or after-hours), per CLAUDE.md's no-pinned-now guidance.
+    reference) and one with a clearly-stale quote. The stale offset must survive
+    the *market-hours-aware* reference: outside RTH the age is measured against
+    the most recent session close (Fri 16:00 ET on a weekend), NOT wall-clock
+    ``now`` (see ``_market_reference_now`` in app/services/dashboard.py). A quote
+    seeded ``now − 3d`` can therefore read as little as ~0.3 market-days old when
+    the suite runs pre-open on a Monday (quote = Fri 09:00 ET, reference = Fri
+    16:00 ET) — which is what made this assertion flake on weekend/pre-open CI
+    runs. Seeding ``now − 6d`` keeps the market-adjusted age ≥ ~3.3 days at every
+    hour of the week, restoring the run-time independence per CLAUDE.md's
+    no-pinned-now guidance.
     """
     _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
 
     now = datetime.now(timezone.utc)
     fresh_ms = int((now - timedelta(minutes=1)).timestamp() * 1000)
-    stale_ms = int((now - timedelta(days=3)).timestamp() * 1000)
+    # 6d, not 3d: the age is measured against the most recent session close when
+    # the market is shut, so a 3d seed can fall below the 2d floor on weekend /
+    # pre-open runs. 6d clears it with margin at every run time.
+    stale_ms = int((now - timedelta(days=6)).timestamp() * 1000)
     quote_responses = {
         "NOK": {"lastPrice": 12.5, "quoteTime": fresh_ms},
         "BB": {"lastPrice": 4.2, "quoteTime": stale_ms},
@@ -1288,7 +1298,7 @@ def test_dashboard_cache_status_quote_driven(client, monkeypatch):
     assert cache["displayed_total"] == 2
     assert cache["displayed_stale"] == 1
     assert cache["stalest_symbol"] == "BB"
-    assert cache["stalest_age_seconds"] >= 2 * 24 * 3600  # ~3 days
+    assert cache["stalest_age_seconds"] >= 2 * 24 * 3600  # ≥2d (6d seed, session-close adjusted)
 
     rows = {r["ticker"]: r for r in data["positions"]}
     assert rows["BB"]["quote_stale"] is True
