@@ -12,7 +12,7 @@ Layer split (PRD #261 R3): pure-function composition + extraction are
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -82,7 +82,14 @@ def _open_position(**overrides) -> dict:
 
 
 def _account_result(**overrides) -> AccountValueResult:
-    base = dict(status="ok", total_capital=10000.0, cash=1365.26)
+    # Default ``cached_at`` is "now" so the broker value is fresh within the
+    # reconcile window (#429) unless a test overrides it with a stale timestamp.
+    base = dict(
+        status="ok",
+        total_capital=10000.0,
+        cash=1365.26,
+        cached_at=datetime.now(timezone.utc),
+    )
     base.update(overrides)
     return AccountValueResult(**base)
 
@@ -397,6 +404,7 @@ def test_dashboard_payload_has_account_summary(client, monkeypatch):
     assert summary["equity_mv"] == pytest.approx(17500.0)  # 100 shares @ 175
     assert summary["account_value"] == pytest.approx(17500.0 + 1365.26)
     assert summary["reconciles"] is True
+    assert summary["reconcile_state"] == "reconciled"
 
 
 @pytest.mark.integration
@@ -411,6 +419,7 @@ def test_dashboard_account_summary_empty_when_disconnected(client, monkeypatch):
     assert summary["account_value"] is None
     assert summary["cash"] is None
     assert summary["reconciles"] is False
+    assert summary["reconcile_state"] == "unavailable"
 
 
 @pytest.mark.integration
@@ -473,3 +482,221 @@ def test_realized_pl_sourced_from_journal_only(client, monkeypatch):
     # … but realized P/L stays 0: no closed premium, no equity realized P&L.
     assert kpis["realized_pl"] == pytest.approx(0.0)
     assert kpis["realized_pl_pct"] is None
+
+
+# -- #429: tri-state reconcile against a freshness-bounded broker value -------
+#
+# The 2026-07-19 bug: a live-computed account value reconciled against a
+# 15-min-cached (stale) broker ``liquidationValue`` false-positived
+# ``reconciles=false`` on ~$11 of cache drift. Fixed by gating the reconcile on
+# broker-value freshness (``RECONCILE_FRESH_WINDOW``) and a tri-state verdict:
+# fresh+near → ``reconciled``; fresh+far → ``mismatch``; stale/unresolved →
+# ``unavailable`` (never a false ``mismatch``).
+
+# Prod evidence numbers (issue #429):
+_EVID_EQUITY = 8519.89
+_EVID_OPTION_CTC = 42.00  # short leg → option_mv = -42.00
+_EVID_CASH = 1398.59
+_EVID_COMPUTED = _EVID_EQUITY - _EVID_OPTION_CTC + _EVID_CASH  # 9876.48
+_EVID_BROKER_LIVE = 9874.59  # Schwab live/close → gap $1.89 (within tolerance)
+_EVID_BROKER_STALE = 9865.59  # 15-min-cached → gap ~$10.89 (the false negative)
+
+
+class TestReconcileStatePredicate:
+    @pytest.mark.unit
+    def test_state_reconciled_when_fresh_and_within_tolerance(self):
+        from app.services.dashboard import _reconcile_state
+
+        assert _reconcile_state(10002.0, 10000.0, broker_value_fresh=True) == "reconciled"
+
+    @pytest.mark.unit
+    def test_state_mismatch_when_fresh_and_outside_tolerance(self):
+        from app.services.dashboard import _reconcile_state
+
+        assert _reconcile_state(10500.0, 10000.0, broker_value_fresh=True) == "mismatch"
+
+    @pytest.mark.unit
+    def test_state_unavailable_when_stale_even_if_within_tolerance(self):
+        # A stale broker value never reconciles OR mismatches — it's unknown.
+        from app.services.dashboard import _reconcile_state
+
+        assert _reconcile_state(10000.0, 10000.0, broker_value_fresh=False) == "unavailable"
+
+    @pytest.mark.unit
+    def test_state_unavailable_when_stale_even_if_far_apart(self):
+        from app.services.dashboard import _reconcile_state
+
+        assert _reconcile_state(10500.0, 10000.0, broker_value_fresh=False) == "unavailable"
+
+
+class TestBrokerValueFreshness:
+    @pytest.mark.unit
+    def test_fresh_within_window(self):
+        from app.services.dashboard import _broker_value_is_fresh
+
+        now = datetime.now(timezone.utc)
+        result = _account_result(cached_at=now - timedelta(seconds=30))
+        assert _broker_value_is_fresh(result, now) is True
+
+    @pytest.mark.unit
+    def test_stale_beyond_window(self):
+        from app.services.dashboard import _broker_value_is_fresh
+
+        now = datetime.now(timezone.utc)
+        result = _account_result(cached_at=now - timedelta(minutes=20))
+        assert _broker_value_is_fresh(result, now) is False
+
+    @pytest.mark.unit
+    def test_missing_cached_at_is_not_fresh(self):
+        from app.services.dashboard import _broker_value_is_fresh
+
+        result = _account_result(cached_at=None)
+        assert _broker_value_is_fresh(result) is False
+
+
+class TestBuildAccountSummaryReconcileState:
+    @pytest.mark.unit
+    def test_reconciled_on_fresh_within_tolerance_regression(self):
+        # AC1 — the 2026-07-19 numbers reconcile against a FRESH broker value:
+        # computed $9,876.48 vs live $9,874.59 = $1.89 gap, within tolerance.
+        rows = [_row(notional=_EVID_EQUITY)]
+        legs = [_leg(cost_to_close=_EVID_OPTION_CTC)]
+        with patch(
+            "app.services.dashboard.get_account_value",
+            return_value=_account_result(
+                cash=_EVID_CASH, total_capital=_EVID_BROKER_LIVE
+            ),
+        ):
+            summary = _build_account_summary(
+                db=None, position_rows=rows, open_legs=legs, schwab_configured=True
+            )
+        assert summary["account_value"] == pytest.approx(_EVID_COMPUTED)
+        assert summary["reconcile_state"] == "reconciled"
+        assert summary["reconciles"] is True
+
+    @pytest.mark.unit
+    def test_unavailable_on_stale_broker_not_mismatch_regression(self):
+        # AC2 — the exact false-negative: computed $9,876.48 vs STALE cached
+        # $9,865.59 is ~$11 apart (beyond tolerance), but because the broker
+        # value is stale the verdict is "unavailable", NOT "mismatch"/False.
+        rows = [_row(notional=_EVID_EQUITY)]
+        legs = [_leg(cost_to_close=_EVID_OPTION_CTC)]
+        stale = datetime.now(timezone.utc) - timedelta(minutes=20)
+        with patch(
+            "app.services.dashboard.get_account_value",
+            return_value=_account_result(
+                cash=_EVID_CASH, total_capital=_EVID_BROKER_STALE, cached_at=stale
+            ),
+        ):
+            summary = _build_account_summary(
+                db=None, position_rows=rows, open_legs=legs, schwab_configured=True
+            )
+        assert summary["reconcile_state"] == "unavailable"
+        assert summary["reconcile_state"] != "mismatch"
+        assert summary["reconciles"] is False
+        # Headline account value is still the computed sum (ties to positions).
+        assert summary["account_value"] == pytest.approx(_EVID_COMPUTED)
+
+    @pytest.mark.unit
+    def test_mismatch_on_fresh_beyond_tolerance(self):
+        # AC3 — a genuine discrepancy on FRESH data reads "mismatch" (alarming).
+        rows = [_row(notional=_EVID_EQUITY)]
+        legs = []
+        with patch(
+            "app.services.dashboard.get_account_value",
+            return_value=_account_result(
+                cash=_EVID_CASH, total_capital=_EVID_EQUITY + _EVID_CASH + 500.0
+            ),
+        ):
+            summary = _build_account_summary(
+                db=None, position_rows=rows, open_legs=legs, schwab_configured=True
+            )
+        assert summary["reconcile_state"] == "mismatch"
+        assert summary["reconciles"] is False
+
+
+class TestReconcileNoRoundTripWhenFresh:
+    @pytest.mark.unit
+    def test_no_schwab_roundtrip_when_fresh_cached(self, monkeypatch):
+        # AC4 — a fresh cached broker value is used as-is; the Schwab client is
+        # never invoked (no needless round-trip).
+        from app.services import schwab_account_value as sav
+        from app.services.dashboard import _resolve_account_balances
+
+        sav.clear_cache()
+        now = datetime.now(timezone.utc)
+        sav._cache["__default__"] = AccountValueResult(
+            status="ok",
+            total_capital=_EVID_BROKER_LIVE,
+            cash=_EVID_CASH,
+            cached_at=now,
+        )
+        calls = {"n": 0}
+
+        class _SpyClient:
+            def get_accounts(self):
+                calls["n"] += 1
+                return []
+
+        monkeypatch.setattr(sav, "SchwabClient", _SpyClient)
+        try:
+            balances = _resolve_account_balances(db=None, schwab_configured=True)
+        finally:
+            sav.clear_cache()
+
+        assert balances is not None
+        assert balances["broker_value_fresh"] is True
+        assert calls["n"] == 0
+
+
+@pytest.mark.integration
+def test_dashboard_reconcile_unavailable_when_broker_stale(client, monkeypatch):
+    """#429 wiring: a stale broker net-liq surfaces reconcile_state=unavailable
+    end-to-end — the headline account value still renders, but the parity check
+    is honestly 'can't confirm', not a red mismatch."""
+    _patch_status(monkeypatch, schwab_configured=True)
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 175.0},
+    )
+    stale = datetime.now(timezone.utc) - timedelta(minutes=20)
+    # Accept the force_refresh kwarg (the stale path retries with it) but keep
+    # returning a stale value so the reconcile stays unavailable.
+    monkeypatch.setattr(
+        "app.services.dashboard.get_account_value",
+        lambda db, **kw: _account_result(
+            cash=1365.26, total_capital=17500.0 + 1365.26 - 250.0, cached_at=stale
+        ),
+    )
+    _seed_position(client)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    summary = resp.json()["account_summary"]
+    assert summary["reconcile_state"] == "unavailable"
+    assert summary["reconciles"] is False
+    assert summary["account_value"] is not None
+
+
+@pytest.mark.integration
+def test_dashboard_reconcile_reconciled_when_broker_fresh(client, monkeypatch):
+    """#429 wiring: a fresh broker net-liq within tolerance surfaces
+    reconcile_state=reconciled end-to-end."""
+    _patch_status(monkeypatch, schwab_configured=True)
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 175.0},
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.get_account_value",
+        lambda db, **kw: _account_result(
+            cash=1365.26, total_capital=17500.0 + 1365.26
+        ),
+    )
+    _seed_position(client)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    summary = resp.json()["account_summary"]
+    assert summary["reconcile_state"] == "reconciled"
+    assert summary["reconciles"] is True
