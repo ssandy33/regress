@@ -958,7 +958,7 @@
         "type": "object"
       },
       "DashboardAccountSummary": {
-        "description": "Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).\n\nNew top-level ``account_summary`` key on the dashboard response. The\n``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the\naccount-level day change composed from per-position equity day changes.\n\nThe ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``\nreconciliation fields (R1/R2/R4) are populated by the account-totals worker\n(extends ``schwab_account_value``); the #421 spine emits them as ``None`` /\n``False`` (the \"Connect Schwab to reconcile\" unavailable state) until that\nworker lands. All fields are additive/defaulted so the payload validates\neither way.",
+        "description": "Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).\n\nNew top-level ``account_summary`` key on the dashboard response. The\n``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the\naccount-level day change composed from per-position equity day changes.\n\nThe ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` /\n``reconcile_state`` reconciliation fields (R1/R2/R4) are populated by the\naccount-totals worker (extends ``schwab_account_value``); the #421 spine\nemits them as ``None`` / ``\"unavailable\"`` (the \"Connect Schwab to\nreconcile\" state) until that worker lands. All fields are\nadditive/defaulted so the payload validates either way.\n\n``reconcile_state`` (#429) is the tri-state parity verdict:\n\n* ``\"reconciled\"`` — the tool-composed account value matches the broker's\n  *fresh* net-liquidation within quote-timing tolerance.\n* ``\"mismatch\"`` — the two disagree beyond tolerance on *fresh* broker\n  data (a real discrepancy worth surfacing loudly).\n* ``\"unavailable\"`` — the broker net-liquidation is stale beyond the\n  reconcile-freshness window, disconnected, or otherwise unresolvable. The\n  parity check can't be confirmed right now; render it muted, NOT as a red\n  \"doesn't reconcile\" (which the 15-min-stale cache used to false-positive\n  — #429).\n\n``reconciles`` is retained (back-compat) and is ``True`` iff\n``reconcile_state == \"reconciled\"``.",
         "properties": {
           "account_value": {
             "anyOf": [
@@ -1034,6 +1034,16 @@
               }
             ],
             "title": "Option Mv"
+          },
+          "reconcile_state": {
+            "default": "unavailable",
+            "enum": [
+              "reconciled",
+              "mismatch",
+              "unavailable"
+            ],
+            "title": "Reconcile State",
+            "type": "string"
           },
           "reconciles": {
             "default": false,

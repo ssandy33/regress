@@ -21,7 +21,16 @@ import { formatCurrency, formatPercent } from '../../utils/formatters';
  *   - unavailable (broker not connected → `summary.cash == null`) → account /
  *     cash tiles show `—` with a "Connect Schwab to reconcile" hint. Distinct
  *     from a false `$0`.
- *   - populated → figures + reconciliation flag.
+ *   - populated → figures + reconciliation badge.
+ *
+ * Reconcile badge (#429) — tri-state `summary.reconcile_state`, surfaced on the
+ * account-value hero tile via `data-reconcile-state` (plus the back-compat
+ * `data-reconciles`):
+ *   - `reconciled` → quiet ✓ (the parity check passed on fresh broker data).
+ *   - `unavailable` → muted "reconcile unavailable" — the broker net-liq is
+ *     stale/disconnected and can't be confirmed right now. NOT alarming.
+ *   - `mismatch` → the only alarming state (amber): a real discrepancy on
+ *     fresh broker data.
  *
  * Grid: `grid-cols-2 lg:grid-cols-4`; Account value spans 2 cols (hero).
  */
@@ -31,6 +40,38 @@ function plColor(value) {
   if (value > 0) return 'text-green-600 dark:text-green-400';
   if (value < 0) return 'text-red-600 dark:text-red-400';
   return undefined;
+}
+
+function ReconcileBadge({ state }) {
+  if (state === 'reconciled') {
+    return (
+      <span
+        data-reconcile-badge="reconciled"
+        className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 mt-1"
+      >
+        <span aria-hidden="true">✓</span> reconciled with broker
+      </span>
+    );
+  }
+  if (state === 'mismatch') {
+    return (
+      <span
+        data-reconcile-badge="mismatch"
+        className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 dark:text-amber-400 mt-1"
+      >
+        <span aria-hidden="true">⚠</span> doesn&apos;t match broker
+      </span>
+    );
+  }
+  // unavailable — muted "can't confirm", never alarming.
+  return (
+    <span
+      data-reconcile-badge="unavailable"
+      className="inline-flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500 mt-1"
+    >
+      reconcile unavailable
+    </span>
+  );
 }
 
 function signedCurrency(value) {
@@ -81,6 +122,11 @@ export default function AccountSummaryRow({ summary, loading }) {
 
   const cashValue = connected ? formatCurrency(summary.cash) : '—';
 
+  // Reconcile verdict (#429) — tri-state. Only surfaced once the broker
+  // balance resolves (connected); the disconnected strip already shows the
+  // "Connect Schwab to reconcile" hint in the subtext.
+  const reconcileState = summary.reconcile_state || 'unavailable';
+
   // Day change (#421 R3) — populated independently of broker reconciliation.
   const dayState = summary.day_state || 'no_prior_close';
   const dayPopulated = dayState === 'populated' && summary.day_change != null;
@@ -100,15 +146,23 @@ export default function AccountSummaryRow({ summary, loading }) {
     >
       {/* Account value hero — emphasis (blue ring + span) applied by the parent
           wrapper so the shared StatCard recipe stays intact (design spec). */}
-      <div className="col-span-2 lg:col-span-2 ring-1 ring-blue-500/40 rounded-lg">
+      <div className="col-span-2 lg:col-span-2 ring-1 ring-blue-500/40 rounded-lg relative">
         <StatCard
           label="Account value"
           value={accountValue}
           subtext={breakdown}
           tooltip={connected ? breakdown : undefined}
           dataTestid="kpi-account-value"
-          dataAttrs={{ 'data-reconciles': summary.reconciles ? 'true' : 'false' }}
+          dataAttrs={{
+            'data-reconciles': summary.reconciles ? 'true' : 'false',
+            'data-reconcile-state': reconcileState,
+          }}
         />
+        {connected && (
+          <div className="px-4 pb-3 -mt-2">
+            <ReconcileBadge state={reconcileState} />
+          </div>
+        )}
       </div>
       <StatCard
         label="Cash & sweep"

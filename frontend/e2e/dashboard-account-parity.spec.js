@@ -50,6 +50,7 @@ const BASE_PAYLOAD = {
     day_change_pct: null,
     day_state: 'no_prior_close',
     reconciles: true,
+    reconcile_state: 'reconciled',
   },
 };
 
@@ -94,9 +95,14 @@ test.describe('Dashboard account parity (#420) @e2e', () => {
     const accountValue = page.getByTestId('kpi-account-value');
     await expect(accountValue).toContainText('$10,526.76');
     await expect(accountValue).toHaveAttribute('data-reconciles', 'true');
+    await expect(accountValue).toHaveAttribute('data-reconcile-state', 'reconciled');
     // Reconciliation breakdown is traceable in the subtext.
     await expect(accountValue).toContainText('Equity $9,166.00');
     await expect(accountValue).toContainText('Cash $1,365.26');
+    // Quiet reconciled badge (sibling of the tile within the hero wrapper).
+    await expect(page.locator('[data-reconcile-badge="reconciled"]')).toContainText(
+      'reconciled with broker'
+    );
 
     await expect(page.getByTestId('kpi-cash')).toContainText('$1,365.26');
   });
@@ -145,5 +151,55 @@ test.describe('Dashboard account parity (#420) @e2e', () => {
     // Cash renders an em-dash, never a false $0.
     await expect(page.getByTestId('kpi-cash')).toContainText('—');
     await expect(page.getByTestId('kpi-cash')).not.toContainText('$0');
+  });
+
+  test('reconcile_state=unavailable → muted "reconcile unavailable", not alarming (#429)', async ({
+    page,
+  }) => {
+    const stale = {
+      ...BASE_PAYLOAD,
+      account_summary: {
+        ...BASE_PAYLOAD.account_summary,
+        reconciles: false,
+        reconcile_state: 'unavailable',
+      },
+    };
+    await mockDashboard(page, { ...stale, kpis: KPIS });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const accountValue = page.getByTestId('kpi-account-value');
+    // Headline value still renders (ties to the positions below).
+    await expect(accountValue).toContainText('$10,526.76');
+    await expect(accountValue).toHaveAttribute('data-reconcile-state', 'unavailable');
+    await expect(accountValue).toHaveAttribute('data-reconciles', 'false');
+    // Muted "can't confirm" copy — NOT a red "doesn't match".
+    await expect(page.locator('[data-reconcile-badge="unavailable"]')).toContainText(
+      'reconcile unavailable'
+    );
+    await expect(page.locator('[data-reconcile-badge="mismatch"]')).toHaveCount(0);
+  });
+
+  test('reconcile_state=mismatch → alarming "doesn\'t match broker" (#429)', async ({
+    page,
+  }) => {
+    const mismatch = {
+      ...BASE_PAYLOAD,
+      account_summary: {
+        ...BASE_PAYLOAD.account_summary,
+        reconciles: false,
+        reconcile_state: 'mismatch',
+      },
+    };
+    await mockDashboard(page, { ...mismatch, kpis: KPIS });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    const accountValue = page.getByTestId('kpi-account-value');
+    await expect(accountValue).toHaveAttribute('data-reconcile-state', 'mismatch');
+    await expect(accountValue).toHaveAttribute('data-reconciles', 'false');
+    await expect(page.locator('[data-reconcile-badge="mismatch"]')).toContainText(
+      "doesn't match broker"
+    );
   });
 });

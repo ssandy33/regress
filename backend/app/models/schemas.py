@@ -789,6 +789,13 @@ DASHBOARD_ACTION_TONE = Literal["opportunity", "warning"]
 # empty state rendered as muted italic "no prior close" when the symbol has no
 # prior close, rather than a bare em-dash.
 DASHBOARD_DAY_STATE = Literal["populated", "no_prior_close"]
+# New in v1.9.2 (#429) — tri-state broker-reconciliation verdict. Replaces the
+# bare ``reconciles: bool`` as the source of truth so a broker net-liquidation
+# that is stale-beyond-the-freshness-window (the 15-min cache false-positive that
+# #429 fixes) renders as an honest "unavailable"/"can't confirm" rather than a
+# red "doesn't reconcile". ``reconciles`` stays for back-compat (True iff
+# ``reconciled``).
+DASHBOARD_RECONCILE_STATE = Literal["reconciled", "mismatch", "unavailable"]
 # New in v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — the cost basis a
 # risk/review trigger evaluated against. "raw" flags a largest-loser card that
 # fired on the RAW broker-basis drawdown (per ADR #416, raw drives the trigger so
@@ -1110,12 +1117,27 @@ class DashboardAccountSummary(BaseModel):
     ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
     account-level day change composed from per-position equity day changes.
 
-    The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
-    reconciliation fields (R1/R2/R4) are populated by the account-totals worker
-    (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
-    ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
-    worker lands. All fields are additive/defaulted so the payload validates
-    either way.
+    The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` /
+    ``reconcile_state`` reconciliation fields (R1/R2/R4) are populated by the
+    account-totals worker (extends ``schwab_account_value``); the #421 spine
+    emits them as ``None`` / ``"unavailable"`` (the "Connect Schwab to
+    reconcile" state) until that worker lands. All fields are
+    additive/defaulted so the payload validates either way.
+
+    ``reconcile_state`` (#429) is the tri-state parity verdict:
+
+    * ``"reconciled"`` — the tool-composed account value matches the broker's
+      *fresh* net-liquidation within quote-timing tolerance.
+    * ``"mismatch"`` — the two disagree beyond tolerance on *fresh* broker
+      data (a real discrepancy worth surfacing loudly).
+    * ``"unavailable"`` — the broker net-liquidation is stale beyond the
+      reconcile-freshness window, disconnected, or otherwise unresolvable. The
+      parity check can't be confirmed right now; render it muted, NOT as a red
+      "doesn't reconcile" (which the 15-min-stale cache used to false-positive
+      — #429).
+
+    ``reconciles`` is retained (back-compat) and is ``True`` iff
+    ``reconcile_state == "reconciled"``.
     """
 
     account_value: Optional[float] = None
@@ -1126,6 +1148,7 @@ class DashboardAccountSummary(BaseModel):
     day_change_pct: Optional[float] = None
     day_state: DASHBOARD_DAY_STATE = "no_prior_close"
     reconciles: bool = False
+    reconcile_state: DASHBOARD_RECONCILE_STATE = "unavailable"
 
 
 class DashboardResponse(BaseModel):
