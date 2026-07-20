@@ -207,3 +207,10 @@ def test_stub_dashboard_populates_day_change(stub_db):
     summary = payload["account_summary"]
     assert summary["day_state"] == "populated"
     assert summary["day_change"] is not None
+
+    # QA reconcile (#429): the synthetic balances have no live broker
+    # liquidationValue, so the strip reconciles the tool's own composed value
+    # against itself and reads the green "reconciled" demo state — NOT a scary
+    # "mismatch" or a stale "unavailable".
+    assert summary["reconcile_state"] == "reconciled"
+    assert summary["reconciles"] is True
