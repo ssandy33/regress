@@ -40,7 +40,10 @@ from app.services.dashboard_legs import (
     parse_iso_to_utc,
 )
 from app.services.rules_config import load_rules_config
-from app.services.schwab_account_value import get_account_value
+from app.services.schwab_account_value import (
+    AccountValueResult,
+    get_account_value,
+)
 from app.services.schwab_auth import SchwabAuthError, SchwabTokenManager
 # ``SchwabClient`` is re-exported into this module's namespace as the stable
 # monkeypatch surface the dashboard integration tests target
@@ -73,14 +76,28 @@ ACTIVITY_PER_SIDE_LIMIT = 30
 # linked in PR #114 description.
 QUOTE_FANOUT_WORKERS = 8
 
-# Account-value reconciliation tolerance (#420 R1). The tool-composed
-# ``account_value`` (equity MV + option MV + cash) is reconciled to the broker's
-# reported net-liquidation within the GREATER of an absolute floor and a
-# percentage of the broker value — wide enough to absorb the known stale-quote
-# drift (~$17 in the 2026-07-04 evidence) so ``reconciles=false`` signals a real
-# discrepancy, not normal quote-timing noise (Risk #4).
+# Account-value reconciliation tolerance (#420 R1, resized by #429). The
+# tool-composed ``account_value`` (equity MV + option MV + cash) is reconciled to
+# the broker's reported net-liquidation within the GREATER of an absolute floor
+# and a percentage of the broker value. Sized for **quote-timing drift only** —
+# the ~$1.89 last-trade-vs-close spread in the 2026-07-19 evidence — NOT for
+# cache staleness. Staleness is handled separately: the reconcile only runs
+# against a broker net-liq that is fresh within ``RECONCILE_FRESH_WINDOW`` (see
+# below); a stale broker value reads ``"unavailable"``, never ``"mismatch"``.
 RECONCILE_ABS_TOLERANCE = 5.0
 RECONCILE_PCT_TOLERANCE = 0.001
+# Reconcile-freshness window (#429). The broker ``liquidationValue`` is cached
+# for 15 minutes (``schwab_account_value._CACHE_TTL``), but the tool's equity
+# side is live (per-request quote fan-out). Comparing live equity against a
+# 15-min-stale broker value false-positived ``reconciles=false`` on ~$11 of
+# cache drift (the reported bug). We only trust the broker value for the parity
+# check if it was captured within this short window — close enough to the live
+# quotes to be contemporaneous. A cached value fresh within this window is used
+# as-is (NO extra Schwab round-trip); a value staler than this triggers exactly
+# one contemporaneous refresh so both sides reflect ~the same moment. If the
+# refresh can't produce a fresh value (disconnected / transient failure), the
+# reconcile reads ``"unavailable"`` rather than comparing against stale data.
+RECONCILE_FRESH_WINDOW = timedelta(minutes=2)
 # QA-only synthetic account balances (stub pricing_mode). Seeded by seed_qa so
 # the Account Summary strip renders "populated" on QA where there is no live
 # Schwab feed (#420 QA-demoable data).
@@ -998,12 +1015,34 @@ def _reconciles(account_value: float, broker_net_liq: float) -> bool:
     """Return True iff ``account_value`` is within tolerance of ``broker_net_liq``.
 
     Tolerance is the greater of :data:`RECONCILE_ABS_TOLERANCE` and
-    :data:`RECONCILE_PCT_TOLERANCE` × |broker net-liq| (Risk #4).
+    :data:`RECONCILE_PCT_TOLERANCE` × |broker net-liq| — sized for quote-timing
+    drift only (#429). Staleness is gated upstream by
+    :func:`_reconcile_state`, not absorbed here.
     """
     tolerance = max(
         RECONCILE_ABS_TOLERANCE, RECONCILE_PCT_TOLERANCE * abs(broker_net_liq)
     )
     return abs(account_value - broker_net_liq) <= tolerance
+
+
+def _reconcile_state(
+    account_value: float,
+    broker_net_liq: float,
+    broker_value_fresh: bool,
+) -> str:
+    """Resolve the tri-state parity verdict (#429).
+
+    * ``broker_value_fresh is False`` → ``"unavailable"`` — the broker
+      net-liquidation is stale beyond :data:`RECONCILE_FRESH_WINDOW` (or a
+      refresh couldn't produce a contemporaneous value). We cannot honestly
+      compare a live equity side against a stale broker value, so the parity
+      check is "can't confirm right now", NOT a red mismatch.
+    * fresh + within tolerance → ``"reconciled"``.
+    * fresh + outside tolerance → ``"mismatch"`` — a real discrepancy.
+    """
+    if not broker_value_fresh:
+        return "unavailable"
+    return "reconciled" if _reconciles(account_value, broker_net_liq) else "mismatch"
 
 
 def _empty_account_summary() -> dict:
@@ -1023,7 +1062,23 @@ def _empty_account_summary() -> dict:
         # day change reads "no prior close".
         "day_state": "no_prior_close",
         "reconciles": False,
+        "reconcile_state": "unavailable",
     }
+
+
+def _broker_value_is_fresh(
+    result: AccountValueResult, now: Optional[datetime] = None
+) -> bool:
+    """Return True iff ``result.cached_at`` is within :data:`RECONCILE_FRESH_WINDOW`.
+
+    The broker net-liquidation is only trustworthy for the parity check if it
+    was captured close enough to the live equity quotes to be contemporaneous
+    (#429). A missing ``cached_at`` is treated as not-fresh.
+    """
+    if result.cached_at is None:
+        return False
+    reference = now or datetime.now(timezone.utc)
+    return (reference - result.cached_at) < RECONCILE_FRESH_WINDOW
 
 
 def _resolve_account_balances(
@@ -1031,23 +1086,47 @@ def _resolve_account_balances(
 ) -> Optional[dict]:
     """Resolve broker cash + net-liquidation for the account-summary strip.
 
-    Returns ``{"cash": float, "broker_net_liq": Optional[float]}`` or ``None``
-    when no balance source is available (→ empty "Connect Schwab" state).
+    Returns ``{"cash": float, "broker_net_liq": Optional[float],
+    "broker_value_fresh": bool}`` or ``None`` when no balance source is
+    available (→ empty "Connect Schwab" state).
 
-    * **Live** (``schwab_configured``): reads the extended
-      :func:`schwab_account_value.get_account_value` (15-min cached; never
-      raises). Requires a parseable ``cash`` — a net-liq without cash is not
-      enough to render the cash tile honestly.
+    * **Live** (``schwab_configured``): reads
+      :func:`schwab_account_value.get_account_value` with a
+      **reconcile-freshness gate** (#429). The first call respects the 15-min
+      cache (NO round-trip on a cache hit). If the resolved broker value is
+      fresh within :data:`RECONCILE_FRESH_WINDOW`, it is used as-is — no extra
+      Schwab round-trip. If it is stale-for-reconcile (older than the window),
+      exactly one ``force_refresh`` fetch is made so the broker net-liq
+      reflects ~the same moment as the live equity quotes. Requires a
+      parseable ``cash`` — a net-liq without cash is not enough to render the
+      cash tile honestly. ``broker_value_fresh`` reports whether the final
+      value is within the window; a refresh that couldn't produce a fresh
+      value (disconnected / transient failure) reads ``False`` →
+      ``"unavailable"`` reconcile, never a stale-driven ``"mismatch"``.
     * **QA stub** (``pricing_mode == "stub"``): reads the synthetic
       ``qa_account_balances`` ``app_settings`` row seeded by ``seed_qa``. A
       null ``broker_net_liq`` means "reconcile against the tool's own
-      composed value" (QA has no independent broker figure).
+      composed value" (QA has no independent broker figure); it is
+      ``broker_value_fresh=True`` by construction (synthetic, contemporaneous)
+      so the QA strip demos the green ``"reconciled"`` state.
     """
     if schwab_configured:
+        now = datetime.now(timezone.utc)
+        # First call respects the 15-min cache — no round-trip on a cache hit.
         result = get_account_value(db)
+        if not _broker_value_is_fresh(result, now):
+            # Cached broker value is stale for the reconcile window → one
+            # contemporaneous refresh so it lines up with the live equity
+            # quotes. Skipped entirely when the value is already fresh (no
+            # needless Schwab round-trip).
+            result = get_account_value(db, force_refresh=True)
         if result.status not in ("ok", "stale") or result.cash is None:
             return None
-        return {"cash": result.cash, "broker_net_liq": result.total_capital}
+        return {
+            "cash": result.cash,
+            "broker_net_liq": result.total_capital,
+            "broker_value_fresh": _broker_value_is_fresh(result, now),
+        }
 
     if settings.pricing_mode == "stub" and settings.app_env != "production":
         try:
@@ -1072,7 +1151,13 @@ def _resolve_account_balances(
             broker_net_liq, (int, float)
         ):
             broker_net_liq = None
-        return {"cash": float(cash), "broker_net_liq": broker_net_liq}
+        # Synthetic QA balances are contemporaneous by construction — mark them
+        # fresh so the QA strip demos the green "reconciled" state (#429).
+        return {
+            "cash": float(cash),
+            "broker_net_liq": broker_net_liq,
+            "broker_value_fresh": True,
+        }
 
     return None
 
@@ -1107,11 +1192,17 @@ def _build_account_summary(
         account_value = equity_mv + option_mv + cash
 
         # No independent broker net-liq (QA synthetic) → reconcile against the
-        # tool's own composed value so the happy-path "reconciles" state renders.
+        # tool's own composed value so the happy-path "reconciled" state renders.
         broker_net_liq = balances["broker_net_liq"]
         if broker_net_liq is None:
             broker_net_liq = account_value
-        reconciles = _reconciles(account_value, broker_net_liq)
+        # Tri-state verdict (#429): a stale-beyond-window broker value reads
+        # "unavailable", never a false "mismatch". ``reconciles`` is derived for
+        # back-compat (True iff "reconciled").
+        broker_value_fresh = balances.get("broker_value_fresh", False)
+        reconcile_state = _reconcile_state(
+            account_value, broker_net_liq, broker_value_fresh
+        )
 
         summary.update(
             {
@@ -1119,7 +1210,8 @@ def _build_account_summary(
                 "equity_mv": equity_mv,
                 "option_mv": option_mv,
                 "cash": cash,
-                "reconciles": reconciles,
+                "reconcile_state": reconcile_state,
+                "reconciles": reconcile_state == "reconciled",
             }
         )
 

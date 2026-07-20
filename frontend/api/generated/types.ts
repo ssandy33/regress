@@ -1802,12 +1802,27 @@ export interface components {
          *     ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
          *     account-level day change composed from per-position equity day changes.
          *
-         *     The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
-         *     reconciliation fields (R1/R2/R4) are populated by the account-totals worker
-         *     (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
-         *     ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
-         *     worker lands. All fields are additive/defaulted so the payload validates
-         *     either way.
+         *     The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` /
+         *     ``reconcile_state`` reconciliation fields (R1/R2/R4) are populated by the
+         *     account-totals worker (extends ``schwab_account_value``); the #421 spine
+         *     emits them as ``None`` / ``"unavailable"`` (the "Connect Schwab to
+         *     reconcile" state) until that worker lands. All fields are
+         *     additive/defaulted so the payload validates either way.
+         *
+         *     ``reconcile_state`` (#429) is the tri-state parity verdict:
+         *
+         *     * ``"reconciled"`` — the tool-composed account value matches the broker's
+         *       *fresh* net-liquidation within quote-timing tolerance.
+         *     * ``"mismatch"`` — the two disagree beyond tolerance on *fresh* broker
+         *       data (a real discrepancy worth surfacing loudly).
+         *     * ``"unavailable"`` — the broker net-liquidation is stale beyond the
+         *       reconcile-freshness window, disconnected, or otherwise unresolvable. The
+         *       parity check can't be confirmed right now; render it muted, NOT as a red
+         *       "doesn't reconcile" (which the 15-min-stale cache used to false-positive
+         *       — #429).
+         *
+         *     ``reconciles`` is retained (back-compat) and is ``True`` iff
+         *     ``reconcile_state == "reconciled"``.
          */
         DashboardAccountSummary: {
             /** Account Value */
@@ -1828,6 +1843,12 @@ export interface components {
             equity_mv?: number | null;
             /** Option Mv */
             option_mv?: number | null;
+            /**
+             * Reconcile State
+             * @default unavailable
+             * @enum {string}
+             */
+            reconcile_state: "reconciled" | "mismatch" | "unavailable";
             /**
              * Reconciles
              * @default false
