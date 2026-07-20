@@ -9,6 +9,17 @@ const MODES = [
 
 test.describe('Regression mode selector bar @e2e', () => {
   test.beforeEach(async ({ page }) => {
+    // Mock the FRED health endpoint as configured to suppress the setup
+    // wizard, matching the convention in analysis-a11y / stats-grouped-display.
+    // Without this, a fresh (unconfigured) backend reports configured:false and
+    // the SetupWizard's full-screen overlay intercepts the mode-button clicks.
+    await page.route('**/api/settings/health/fred', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ configured: true, valid: true, error: null }),
+      })
+    );
     await page.goto('/analysis');
     await page.waitForLoadState('networkidle');
   });

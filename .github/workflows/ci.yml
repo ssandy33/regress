@@ -331,6 +331,53 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # Shakedown stabilization (ci/stabilize-shakedown): the Playwright
+      # webServer only starts the Next.js dev server; nothing here starts the
+      # backend, so every /api/* the frontend proxies to localhost:8000 got
+      # ECONNREFUSED and any spec that touched a real endpoint (or SSR/proxy)
+      # flaked. Start a stub-pricing backend on 8000 and health-gate on it so
+      # the proxy has something to answer before Playwright runs. Mirrors the
+      # backend-integration job (Python 3.12 + backend/requirements.txt) and the
+      # QA stub path (PRICING_MODE=stub, no live Schwab; ephemeral SQLite DB).
+      # NEXTAUTH_SECRET is intentionally NOT set — auth is opt-in on that var
+      # (frontend/middleware.js + auth.js); setting it would enforce auth and
+      # redirect the dashboard specs to /auth/signin.
+      - name: Set up Python 3.12 (backend for e2e)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      - name: Start backend (stub pricing, ephemeral SQLite)
+        working-directory: backend
+        env:
+          PRICING_MODE: stub
+          APP_ENV: development
+          DATABASE_URL: sqlite:///./ci_e2e.db
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+            --log-level warning > /tmp/backend-e2e.log 2>&1 &
+          echo "Backend launched (pid $!)"
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:8000/api/health > /dev/null; then
+              echo "Backend healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Backend did not answer /api/health within 90s"
+          echo "----- backend log -----"
+          cat /tmp/backend-e2e.log || true
+          exit 1
+
       # Quality v1 — Wave 2 (#270): enforce @smoke / @e2e tagging convention.
       # Fails the job if any frontend/e2e/*.spec.js (non-prod) has an untagged
       # test() or test.describe() call at column 0. See CLAUDE.md "Testing
@@ -357,4 +404,5 @@ jobs:
           path: |
             frontend/playwright-report
             frontend/test-results
+            /tmp/backend-e2e.log
           if-no-files-found: ignore
