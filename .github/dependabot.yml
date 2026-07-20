@@ -1,0 +1,62 @@
+# Dependabot configuration — controls the version-update cadence so updates
+# arrive grouped and weekly instead of one ungoverned PR per dependency.
+#
+# NOTE on the noisy "Dependabot Updates" failures in the Actions tab: those are
+# *security* updates (auto-enabled in repo settings), which run independently of
+# this file. Some fail because the advisory has no patched version yet (e.g.
+# @babel/core) — Dependabot can't produce a fix, so the job errors. That noise
+# clears when upstream ships a fix or the alert is dismissed; this config governs
+# the *version*-update PRs and keeps them grouped + low-volume.
+version: 2
+updates:
+  # Frontend (npm) — group patch+minor into one PR per week to cut PR volume;
+  # majors come as their own PRs for deliberate review.
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # Backend (pip) — same grouped weekly cadence.
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # GitHub Actions — keep the workflow action pins current (also grouped).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "ci"
