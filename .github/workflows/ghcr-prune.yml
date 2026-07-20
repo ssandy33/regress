@@ -194,7 +194,16 @@ jobs:
           while IFS= read -r d; do
             [ -n "${d}" ] && EXCLUDED_DIGEST["${d}"]=1
           done <<< "${DEPLOYED_DIGESTS}"
-          echo "Deployed digests excluded from delete: ${!EXCLUDED_DIGEST[*]:-<none>}"
+          # NOTE: use an explicit size check, not ${!ARR[*]:-default}. Combining
+          # associative-array key-listing (${!ARR[*]}) with :-default makes bash
+          # fall back to *indirect expansion* on the array's values (all "1"),
+          # which errors with `1 1 1 1: invalid variable name` and aborts the job
+          # under `set -e` whenever the exclusion set is non-empty.
+          if [ "${#EXCLUDED_DIGEST[@]}" -gt 0 ]; then
+            echo "Deployed digests excluded from delete: ${!EXCLUDED_DIGEST[*]}"
+          else
+            echo "Deployed digests excluded from delete: <none>"
+          fi
 
           prune_package() {
             local pkg="$1"
