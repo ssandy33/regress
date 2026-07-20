@@ -144,8 +144,18 @@ class TestCacheMiss:
         assert result.total_capital == 25000.0
         assert result.account_id_masked == "…4471"
         assert result.account_type == "CASH"
+        # Bridge edit (#420): the sanitised account shape gained the parity
+        # addends (cash / equity_market_value / option_market_value), all None
+        # here because ``_account`` seeds only ``liquidationValue``.
         assert result.accounts == [
-            {"account_id_masked": "…4471", "account_type": "CASH", "net_liquidation": 25000.0}
+            {
+                "account_id_masked": "…4471",
+                "account_type": "CASH",
+                "net_liquidation": 25000.0,
+                "cash": None,
+                "equity_market_value": None,
+                "option_market_value": None,
+            }
         ]
         assert result.cached_at is not None
 

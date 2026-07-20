@@ -59,6 +59,41 @@ _ACTION_DIRECT_TRADE_TYPE: dict[str, str] = {
 }
 
 
+# --- Equity / dividend action recognition (issue #385) ---------------------
+#
+# Equity rows carry a plain ticker (e.g. ``F``, ``AAPL``) that
+# :func:`_parse_option_symbol` rejects. Their journal ``trade_type`` is
+# determined by the Action alone. ``buy``/``sell`` move shares; dividends move
+# cash and are recognized by an explicit common-verb set PLUS a substring
+# fallback (any action containing ``"dividend"`` or ``" div"``) so new Schwab
+# dividend variants don't silently drop. See PRD #384 Q1.
+_ACTION_EQUITY_TRADE_TYPE: dict[str, str] = {
+    "buy": "buy_stock",
+    "sell": "sell_stock",
+}
+
+# Common Schwab dividend action verbs (lowercased). The substring fallback in
+# :func:`_classify_equity_action` catches any future variant; this explicit set
+# documents the ones seen in real exports.
+_DIVIDEND_ACTIONS: frozenset[str] = frozenset(
+    {
+        "cash dividend",
+        "qualified dividend",
+        "ordinary dividend",
+        "special dividend",
+        "non-qualified div",
+        "qual div reinvest",
+        "reinvest dividend",
+        "pr yr div reinvest",
+    }
+)
+
+# Bare equity ticker: 1-6 letters, optionally with a ``.``/``/`` share-class
+# suffix (e.g. ``BRK.B``, ``BF/B``). No digits/dates/strikes — those belong to
+# option symbols and are rejected here.
+_EQUITY_SYMBOL_RE = re.compile(r"^[A-Z]{1,6}(?:[./][A-Z]{1,2})?$")
+
+
 # Human-readable option symbol: "F 03/27/2026 13.50 P" / "AAPL 03/21/2026 150.00 P"
 _HUMAN_SYMBOL_RE = re.compile(
     r"^\s*(?P<ticker>[A-Z][A-Z0-9.\-]{0,9})\s+"
@@ -80,22 +115,26 @@ _OCC_SYMBOL_RE = re.compile(
 def parse_schwab_csv(file_bytes: bytes) -> list[dict]:
     """Parse a Schwab transaction CSV export into journal trade dicts.
 
-    Non-options rows (stock buys/sells, dividends, ACH transfers, etc.) and
-    rows whose Action does not map to a known options instruction are silently
-    skipped. Malformed rows that fail to parse are also skipped — the parser
-    never raises on a single bad row, so a partially valid file still yields
-    the rows that did parse.
+    Recognizes options rows (sell/buy-to-close/assigned/exercised/expired) and,
+    since issue #385, equity rows: stock buys, stock sells, and dividends. Genuine
+    non-equity noise (ACH transfers, journal entries, etc.) is silently skipped;
+    an equity-looking row with an unclassifiable Action is logged and skipped.
+    Malformed rows that fail to parse are also skipped — the parser never raises
+    on a single bad row, so a partially valid file still yields the rows that
+    did parse.
 
     Args:
         file_bytes: Raw CSV file content. UTF-8 with BOM is tolerated; other
             encodings are best-effort decoded as latin-1 fallback.
 
     Returns:
-        A list of dicts matching the shape of
-        :func:`app.services.schwab_import.map_schwab_transaction`:
-
-        ``ticker``, ``trade_type``, ``strike``, ``expiration`` (YYYY-MM-DD),
-        ``premium`` (per-share, signed), ``fees``, ``quantity``, ``opened_at``.
+        A list of dicts. Options rows match the shape of
+        :func:`app.services.schwab_import.map_schwab_transaction`
+        (``ticker``, ``trade_type``, ``strike``, ``expiration``, ``premium``,
+        ``fees``, ``quantity``, ``opened_at``). Equity/dividend rows additionally
+        carry ``unit_amount`` (per-share price, or total $ for dividends) and
+        ``close_reason`` (the raw Schwab dividend sub-type), with ``strike`` /
+        ``expiration`` set to ``None`` and ``premium`` to ``0.0`` (issue #385).
     """
     text = _decode_csv_bytes(file_bytes)
     if not text.strip():
@@ -143,7 +182,17 @@ def _map_csv_row(raw_row: dict, header_map: dict[str, str]) -> dict | None:
     finalizer (see :mod:`app.services.positions`), not parsed from the equity
     row.
     """
-    action_raw = (raw_row.get(header_map.get("action", ""), "") or "").strip().lower()
+    action_original = (raw_row.get(header_map.get("action", ""), "") or "").strip()
+    action_raw = action_original.lower()
+
+    # Equity / dividend rows (issue #385): plain-ticker buys, sells, and
+    # dividends. Their trade_type is determined by the Action alone and they
+    # carry a distinct mapped-dict shape (premium=0.0, money in unit_amount).
+    equity_trade_type = _classify_equity_action(action_raw)
+    if equity_trade_type is not None:
+        return _map_equity_row(
+            raw_row, header_map, action_original, equity_trade_type
+        )
 
     # Action values whose journal trade_type is determined by the Action alone
     # (currently just "Expired"). These bypass the (instruction, putCall) lookup
@@ -151,6 +200,21 @@ def _map_csv_row(raw_row: dict, header_map: dict[str, str]) -> dict | None:
     direct_trade_type = _ACTION_DIRECT_TRADE_TYPE.get(action_raw)
     instruction = _ACTION_TO_INSTRUCTION.get(action_raw) if direct_trade_type is None else None
     if direct_trade_type is None and instruction is None:
+        # AC1e: an equity-looking row (plain ticker + money Amount) whose verb
+        # we cannot classify must log a structured warning and skip — never
+        # crash, never be counted. Genuine non-equity noise (ACH, journals)
+        # keeps the existing silent skip.
+        if _looks_like_equity_activity(raw_row, header_map):
+            symbol = (raw_row.get(header_map.get("symbol", ""), "") or "").strip()
+            logger.warning(
+                "equity_row.skipped: unrecognized equity action %r",
+                action_original,
+                extra={
+                    "event": "equity_row.skipped",
+                    "outcome": "no_data",
+                    "ticker": _parse_equity_symbol(symbol),
+                },
+            )
         return None
 
     symbol = (raw_row.get(header_map.get("symbol", ""), "") or "").strip()
@@ -266,6 +330,137 @@ def _parse_option_symbol(symbol: str) -> tuple[str, str, float, str] | None:
         )
 
     return None
+
+
+def _classify_equity_action(action_raw: str) -> str | None:
+    """Classify a lowercased, trimmed Action into an equity ``trade_type``.
+
+    Returns ``"buy_stock"``, ``"sell_stock"``, ``"dividend"``, or ``None`` if
+    the action is not an equity/dividend verb. Dividends are matched against an
+    explicit common-verb set first, then a substring fallback (``"dividend"`` or
+    ``" div"``) so unseen Schwab variants still classify rather than drop.
+    """
+    direct = _ACTION_EQUITY_TRADE_TYPE.get(action_raw)
+    if direct is not None:
+        return direct
+    if action_raw in _DIVIDEND_ACTIONS:
+        return "dividend"
+    if "dividend" in action_raw or " div" in action_raw:
+        return "dividend"
+    return None
+
+
+def _parse_equity_symbol(symbol: str) -> str | None:
+    """Parse a bare equity ticker, returning the uppercased symbol or None.
+
+    Accepts plain tickers (``F``, ``AAPL``) and share-class variants
+    (``BRK.B``, ``BF/B``). Returns ``None`` when the symbol is empty or still
+    looks like an option symbol (any date/strike/put-call structure), so an
+    option leg that slipped past the equity path is not misclassified.
+    """
+    if not symbol:
+        return None
+    candidate = symbol.strip().upper()
+    if not _EQUITY_SYMBOL_RE.match(candidate):
+        return None
+    # Defensive: never treat an option symbol as equity.
+    if _parse_option_symbol(symbol) is not None:
+        return None
+    return candidate
+
+
+def _map_equity_row(
+    raw_row: dict,
+    header_map: dict[str, str],
+    action_original: str,
+    trade_type: str,
+) -> dict | None:
+    """Map a recognized equity/dividend CSV row to a journal trade dict.
+
+    Emits the frozen equity contract (issue #385): ``premium`` is always 0.0
+    (equity money flows through ``unit_amount``, never premium), ``strike`` and
+    ``expiration`` are ``None``, and dividends carry their raw Schwab action
+    string in ``close_reason`` for future tax-bucket reporting (PRD #384 Q1).
+
+    Returns ``None`` to skip when the symbol is not a plain equity ticker, the
+    date is unparseable, or a share-moving row has no positive quantity.
+    """
+    symbol = (raw_row.get(header_map.get("symbol", ""), "") or "").strip()
+    ticker = _parse_equity_symbol(symbol)
+    if ticker is None:
+        return None
+
+    opened_at = _normalize_csv_date(raw_row.get(header_map.get("date", ""), ""))
+    if not opened_at:
+        return None
+
+    amount = _parse_float(raw_row.get(header_map.get("amount", ""), ""))
+    if amount is None:
+        amount = 0.0
+    fees = _parse_float(raw_row.get(header_map.get("fees & comm", ""), "")) or 0.0
+
+    if trade_type == "dividend":
+        # A dividend moves no shares: cash flows through unit_amount (total $).
+        return {
+            "ticker": ticker,
+            "trade_type": "dividend",
+            "strike": None,
+            "expiration": None,
+            "premium": 0.0,
+            "unit_amount": round(abs(amount), 2),
+            "quantity": 0,
+            "fees": round(abs(fees), 2),
+            "opened_at": opened_at,
+            "close_reason": action_original,
+        }
+
+    # buy_stock / sell_stock: per-share unit_amount, integer share count.
+    quantity = _parse_int(raw_row.get(header_map.get("quantity", ""), ""))
+    if quantity is None or abs(quantity) <= 0:
+        logger.warning(
+            "equity_row.skipped: equity %s row missing positive quantity",
+            trade_type,
+            extra={
+                "event": "equity_row.skipped",
+                "outcome": "no_data",
+                "ticker": ticker,
+            },
+        )
+        return None
+    quantity = abs(quantity)
+
+    price = _parse_float(raw_row.get(header_map.get("price", ""), ""))
+    if price is not None and price > 0:
+        unit_amount = abs(price)
+    else:
+        unit_amount = abs(amount) / quantity
+
+    return {
+        "ticker": ticker,
+        "trade_type": trade_type,
+        "strike": None,
+        "expiration": None,
+        "premium": 0.0,
+        "unit_amount": round(unit_amount, 4),
+        "quantity": int(quantity),
+        "fees": round(abs(fees), 2),
+        "opened_at": opened_at,
+        "close_reason": None,
+    }
+
+
+def _looks_like_equity_activity(raw_row: dict, header_map: dict[str, str]) -> bool:
+    """Heuristic: does an unclassified row look like equity activity?
+
+    Used to decide whether an unrecognized action warrants a structured warning
+    (AC1e) versus the existing silent skip for genuine non-equity noise (ACH
+    transfers, journal entries). True when the Symbol is a plain ticker AND the
+    row carries a parseable money Amount.
+    """
+    symbol = (raw_row.get(header_map.get("symbol", ""), "") or "").strip()
+    if _parse_equity_symbol(symbol) is None:
+        return False
+    return _parse_float(raw_row.get(header_map.get("amount", ""), "")) is not None
 
 
 def _normalize_csv_date(date_str: str) -> str:

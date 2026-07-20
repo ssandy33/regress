@@ -252,6 +252,24 @@ def _schwab_token_expiring_action(
     }
 
 
+def _loser_drawdown(row: dict) -> tuple[float | None, float | None, bool]:
+    """Return ``(eval_pl, eval_pct, on_raw)`` — the drawdown figures the loss
+    trigger evaluates for one position row.
+
+    Per ADR #416 (PRD #415 R6, Option B) the review/risk trigger fires on the
+    **raw broker-basis** drawdown so a premium-softened (adjusted) basis cannot
+    silently pull a real mark-to-market hole back above threshold. When the raw
+    figure is absent (CSP/0-share rows carry no broker basis) it falls back to the
+    adjusted figure — the conservative choice, since for premium-collected
+    positions raw P&L ≤ adjusted P&L, so adjusted-when-raw-null never over-fires.
+    ``on_raw`` reports which basis was used so the card can label its firing basis.
+    """
+    raw_pl = row.get("raw_unrealized_pl")
+    if raw_pl is not None:
+        return raw_pl, row.get("raw_pl_pct"), True
+    return row.get("unrealized_pl"), row.get("pl_pct"), False
+
+
 def _largest_loser_action(
     positions: Iterable[dict], loss_review_threshold_pct: float
 ) -> dict | None:
@@ -261,6 +279,11 @@ def _largest_loser_action(
     multiple positions breach the threshold. Trigger is whichever-fires-first
     between the configured loss-review threshold and ``-$1,000``.
 
+    v1.9.0 (#422, ADR #416 Option B): the drawdown inputs are the **raw**
+    broker-basis figures (:func:`_loser_drawdown`), falling back to the adjusted
+    figures only when the raw basis is genuinely absent. The card labels its
+    firing basis via ``trigger_basis="raw"`` when raw drove it.
+
     ``loss_review_threshold_pct`` is the configured
     ``rules_config.risk.loss_review_threshold_pct`` — a *whole-percent* value
     (e.g. ``-15.0`` for −15%). ``pl_pct`` is a *fraction* (e.g. ``-0.15``), so
@@ -268,28 +291,25 @@ def _largest_loser_action(
     :func:`app.routers.positions._is_flagged` so the dashboard largest-loser
     card and the recovery flag gate agree.
     """
-    candidates: list[tuple[float, dict]] = []
+    candidates: list[tuple[float, str, dict, float | None, bool]] = []
     for row in positions:
-        unrealized_pl = row.get("unrealized_pl")
-        if unrealized_pl is None or unrealized_pl >= 0:
+        eval_pl, eval_pct, on_raw = _loser_drawdown(row)
+        if eval_pl is None or eval_pl >= 0:
             continue
-        pct = row.get("pl_pct")
-        triggered = unrealized_pl <= LARGE_LOSER_DOLLAR_THRESHOLD or (
-            pct is not None and pct <= loss_review_threshold_pct / 100.0
+        triggered = eval_pl <= LARGE_LOSER_DOLLAR_THRESHOLD or (
+            eval_pct is not None and eval_pct <= loss_review_threshold_pct / 100.0
         )
         if not triggered:
             continue
-        candidates.append((unrealized_pl, row))
+        candidates.append((eval_pl, row["ticker"], row, eval_pct, on_raw))
     if not candidates:
         return None
-    # Most negative unrealized_pl wins; ticker A→Z is the deterministic tie
+    # Most negative eval_pl wins; ticker A→Z is the deterministic tie
     # breaker so equal-loss positions don't shuffle between runs.
-    candidates.sort(key=lambda pair: (pair[0], pair[1]["ticker"]))
-    _, worst = candidates[0]
-    ticker = worst["ticker"]
-    amount_dollars = _format_dollar(worst["unrealized_pl"])
-    pct = worst.get("pl_pct")
-    amount_pct = _format_signed_pct(pct) if pct is not None else ""
+    candidates.sort(key=lambda c: (c[0], c[1]))
+    eval_pl, ticker, worst, eval_pct, on_raw = candidates[0]
+    amount_dollars = _format_dollar(eval_pl)
+    amount_pct = _format_signed_pct(eval_pct) if eval_pct is not None else ""
     # Issue #164: single space between ticker and dollar amount.
     # The earlier ``f"{ticker}  {amount_dollars}"`` rendered as
     # ``AAPL  -$1,234`` in the UI; the frontend prints the string verbatim
@@ -299,16 +319,38 @@ def _largest_loser_action(
         if amount_pct
         else f"{ticker} {amount_dollars}"
     )
+    # R6: when the raw basis drove the trigger, spell out the raw-vs-adjusted
+    # divergence so the user understands why a card fired below the softer
+    # adjusted number they see as the headline. ``trigger_basis="raw"`` drives the
+    # frontend "fired on raw basis" tag + ``data-trigger-basis``.
+    trigger_basis: str | None = None
+    if on_raw:
+        trigger_basis = "raw"
+        adjusted_pct = worst.get("pl_pct")
+        adjusted_note = (
+            f" ({_format_signed_pct(adjusted_pct)} adjusted)"
+            if adjusted_pct is not None
+            else ""
+        )
+        raw_figure = amount_pct if amount_pct else amount_dollars
+        reason = (
+            f"Down {raw_figure} on raw broker basis{adjusted_note}. "
+            f"Below your {loss_review_threshold_pct:g}% review threshold "
+            "(or -$1,000 absolute)."
+        )
+    else:
+        reason = (
+            f"Position is below your {loss_review_threshold_pct:g}% "
+            "review threshold (or -$1,000 absolute)."
+        )
     return {
         "id": f"position.large_loser.{worst['id']}",
         "action_id": "position.large_loser",
         "priority": "P0",
         "title": f"Review {ticker}",
         "subject": {"ticker": ticker, "amount": amount},
-        "reason": (
-            f"Position is below your {loss_review_threshold_pct:g}% "
-            "review threshold (or -$1,000 absolute)."
-        ),
+        "trigger_basis": trigger_basis,
+        "reason": reason,
         # V0.5.8 (#182): the CTA destination moved from the Journal filter
         # page to the new Recovery Plan route. Same PR ships the
         # destination so the link never 404s mid-deploy.
@@ -353,9 +395,16 @@ def _itm_short_dte_actions(
                     f"Short {leg.get('type', 'put')} is ITM with {int(dte)} day"
                     f"{'s' if dte != 1 else ''} to expiration."
                 ),
+                # #375: route to the per-leg BTC decision screen (byte-identical
+                # to the buy-to-close cards) instead of the Journal data table —
+                # the leg id is already in scope, so the urgent ITM card lands on
+                # a decision view, not a dead-end.
                 "cta": {
-                    "label": "Manage in Journal",
-                    "href": f"/journal?position={quote(str(leg['position_id']), safe='')}",
+                    "label": "Review buy-to-close",
+                    "href": (
+                        f"/positions/{quote(str(leg['position_id']), safe='')}"
+                        f"/legs/{quote(str(leg['id']), safe='')}/btc"
+                    ),
                     "kind": "link",
                 },
                 # Sort metadata consumed by `_tie_breaker_for`.
@@ -387,11 +436,15 @@ def _short_dte_aggregate_actions(
             continue
         ticker = leg["ticker"]
         entry = by_ticker.get(ticker)
+        # #375: retain the min-DTE leg's own position_id + id so the aggregate
+        # card can route to that most-urgent leg's BTC decision screen. Strict
+        # `<` keeps first-seen ties (the first leg at a given min DTE wins).
         if entry is None or dte < entry["min_dte"]:
             by_ticker[ticker] = {
                 "ticker": ticker,
                 "min_dte": int(dte),
                 "position_id": leg["position_id"],
+                "leg_id": leg["id"],
                 "leg_count": (entry["leg_count"] + 1) if entry else 1,
             }
         else:
@@ -414,9 +467,15 @@ def _short_dte_aggregate_actions(
                     f"{count} open {leg_word} on {ticker} expire within "
                     f"{short_dte_max} days."
                 ),
+                # #375: route the aggregate card to the most-urgent (min-DTE)
+                # leg's BTC decision screen instead of the Journal data table,
+                # so a multi-leg ticker still lands on a decision view.
                 "cta": {
-                    "label": f"Manage {ticker}",
-                    "href": f"/journal?position={quote(str(entry['position_id']), safe='')}",
+                    "label": "Review buy-to-close",
+                    "href": (
+                        f"/positions/{quote(str(entry['position_id']), safe='')}"
+                        f"/legs/{quote(str(entry['leg_id']), safe='')}/btc"
+                    ),
                     "kind": "link",
                 },
                 "_dte": entry["min_dte"],

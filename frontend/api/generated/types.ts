@@ -1794,6 +1794,46 @@ export interface components {
             per_leg_breakdown?: components["schemas"]["CoveredCallLegBreakdown"][];
             position: components["schemas"]["CoveredCallPositionSummary"];
         };
+        /**
+         * DashboardAccountSummary
+         * @description Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).
+         *
+         *     New top-level ``account_summary`` key on the dashboard response. The
+         *     ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
+         *     account-level day change composed from per-position equity day changes.
+         *
+         *     The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
+         *     reconciliation fields (R1/R2/R4) are populated by the account-totals worker
+         *     (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
+         *     ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
+         *     worker lands. All fields are additive/defaulted so the payload validates
+         *     either way.
+         */
+        DashboardAccountSummary: {
+            /** Account Value */
+            account_value?: number | null;
+            /** Cash */
+            cash?: number | null;
+            /** Day Change */
+            day_change?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /**
+             * Day State
+             * @default no_prior_close
+             * @enum {string}
+             */
+            day_state: "populated" | "no_prior_close";
+            /** Equity Mv */
+            equity_mv?: number | null;
+            /** Option Mv */
+            option_mv?: number | null;
+            /**
+             * Reconciles
+             * @default false
+             */
+            reconciles: boolean;
+        };
         /** DashboardActivity */
         DashboardActivity: {
             /**
@@ -1816,10 +1856,24 @@ export interface components {
         };
         /** DashboardCacheStatus */
         DashboardCacheStatus: {
+            /**
+             * Displayed Stale
+             * @default 0
+             */
+            displayed_stale: number;
+            /**
+             * Displayed Total
+             * @default 0
+             */
+            displayed_total: number;
             /** Fresh */
             fresh: number;
             /** Stale */
             stale: number;
+            /** Stalest Age Seconds */
+            stalest_age_seconds?: number | null;
+            /** Stalest Symbol */
+            stalest_symbol?: string | null;
             /** Total */
             total: number;
             /** Very Stale */
@@ -1875,6 +1929,11 @@ export interface components {
         };
         /** DashboardKpis */
         DashboardKpis: {
+            /**
+             * Includes Options
+             * @default false
+             */
+            includes_options: boolean;
             largest_loser?: components["schemas"]["DashboardKpiLargestLoser"] | null;
             largest_risk?: components["schemas"]["DashboardKpiLargestRisk"] | null;
             /** Notional Change Pct */
@@ -1956,6 +2015,8 @@ export interface components {
              * @enum {string}
              */
             tone: "opportunity" | "warning";
+            /** Trigger Basis */
+            trigger_basis?: "raw" | null;
             /**
              * Triggered Rules
              * @default []
@@ -2107,6 +2168,16 @@ export interface components {
             broker_cost_basis_per_share?: number | null;
             /** Current Price */
             current_price?: number | null;
+            /** Day Change */
+            day_change?: number | null;
+            /** Day Change Pct */
+            day_change_pct?: number | null;
+            /**
+             * Day State
+             * @default no_prior_close
+             * @enum {string}
+             */
+            day_state: "populated" | "no_prior_close";
             /** Id */
             id: string;
             /**
@@ -2120,6 +2191,19 @@ export interface components {
             open_legs_count: number;
             /** Pl Pct */
             pl_pct?: number | null;
+            /** Quote Age Seconds */
+            quote_age_seconds?: number | null;
+            /** Quote Fetched At */
+            quote_fetched_at?: string | null;
+            /**
+             * Quote Stale
+             * @default false
+             */
+            quote_stale: boolean;
+            /** Raw Pl Pct */
+            raw_pl_pct?: number | null;
+            /** Raw Unrealized Pl */
+            raw_unrealized_pl?: number | null;
             /** Shares */
             shares: number;
             /** Strategy */
@@ -2153,6 +2237,7 @@ export interface components {
         };
         /** DashboardResponse */
         DashboardResponse: {
+            account_summary?: components["schemas"]["DashboardAccountSummary"];
             data_meta: components["schemas"]["DashboardDataMeta"];
             /** Generated At */
             generated_at: string;
@@ -2480,6 +2565,11 @@ export interface components {
         ImportPreviewResponse: {
             /** Account Number */
             account_number: string;
+            /**
+             * Assignment Legs
+             * @default 0
+             */
+            assignment_legs: number;
             /** Duplicates */
             duplicates: number;
             /** New Count */
@@ -2488,15 +2578,32 @@ export interface components {
             total: number;
             /** Trades */
             trades: components["schemas"]["ImportPreviewTrade"][];
+            /**
+             * Unmatched
+             * @default 0
+             */
+            unmatched: number;
         };
         /** ImportPreviewTrade */
         ImportPreviewTrade: {
+            /** Close Reason */
+            close_reason?: string | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /** Fees */
             fees: number;
+            /**
+             * Is Assignment Leg
+             * @default false
+             */
+            is_assignment_leg: boolean;
             /** Is Duplicate */
             is_duplicate: boolean;
+            /**
+             * Is Unmatched
+             * @default false
+             */
+            is_unmatched: boolean;
             /** Opened At */
             opened_at: string;
             /** Premium */
@@ -2504,14 +2611,16 @@ export interface components {
             /** Quantity */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /** Ticker */
             ticker: string;
             /**
              * Trade Type
              * @enum {string}
              */
-            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired";
+            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend";
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /**
          * ImportRequest
@@ -2536,8 +2645,18 @@ export interface components {
             imported: number;
             /** Positions Created */
             positions_created: number;
+            /**
+             * Skipped Assignment Legs
+             * @default []
+             */
+            skipped_assignment_legs: components["schemas"]["SuppressedAssignmentLeg"][];
             /** Skipped Duplicates */
             skipped_duplicates: number;
+            /**
+             * Skipped Unmatched
+             * @default []
+             */
+            skipped_unmatched: components["schemas"]["SkippedUnmatched"][];
         };
         /** LinearRegressionRequest */
         LinearRegressionRequest: {
@@ -2808,6 +2927,11 @@ export interface components {
             broker_cost_basis_per_share?: number | null;
             /** Closed At */
             closed_at?: string | null;
+            /**
+             * Dividend Income
+             * @default 0
+             */
+            dividend_income: number;
             /** Id */
             id: string;
             /** Min Compliant Cc Strike */
@@ -2816,6 +2940,11 @@ export interface components {
             notes?: string | null;
             /** Opened At */
             opened_at: string;
+            /**
+             * Realized Equity Pl
+             * @default 0
+             */
+            realized_equity_pl: number;
             /** Shares */
             shares: number;
             /** Status */
@@ -3629,6 +3758,23 @@ export interface components {
             /** Value */
             value: string;
         };
+        /**
+         * SkippedUnmatched
+         * @description An equity sell skipped at import because no shares were available to draw on.
+         *
+         *     Surfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the
+         *     user sees *why* a sell row was not inserted instead of silently dropping it.
+         *     The import-time pre-check is the user-visible half of the recomputer's
+         *     defensive ``shares_sold > shares`` guard.
+         */
+        SkippedUnmatched: {
+            /** Opened At */
+            opened_at: string;
+            /** Quantity */
+            quantity: number;
+            /** Ticker */
+            ticker: string;
+        };
         /** StationarityResult */
         StationarityResult: {
             /** Adf Statistic */
@@ -3699,6 +3845,23 @@ export interface components {
             volume: number;
         };
         /**
+         * SuppressedAssignmentLeg
+         * @description A ``buy_stock`` suppressed at import as a put-assignment delivery leg.
+         *
+         *     Surfaced from ``execute_mapped_import`` (bug #425) so the user sees that the
+         *     equity share-delivery leg of a put assignment was folded into the assignment
+         *     rather than silently dropped. The assignment already credits the delivered
+         *     shares at strike-based basis; persisting this leg would double the count.
+         */
+        SuppressedAssignmentLeg: {
+            /** Opened At */
+            opened_at: string;
+            /** Quantity */
+            quantity: number;
+            /** Ticker */
+            ticker: string;
+        };
+        /**
          * ThesisPutRequest
          * @description Request body for ``PUT /api/positions/{id}/research/thesis``.
          *
@@ -3739,7 +3902,7 @@ export interface components {
         /** TradeCreate */
         TradeCreate: {
             /** Close Reason */
-            close_reason?: ("fifty_pct_target" | "full_expiration" | "rolled" | "closed_early" | "assigned" | "called_away") | null;
+            close_reason?: string | null;
             /** Closed At */
             closed_at?: string | null;
             /** Delta At Entry Hint */
@@ -3749,7 +3912,7 @@ export interface components {
             /** Earnings Buffer Days Hint */
             earnings_buffer_days_hint?: number | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /**
              * Fees
              * @default 0
@@ -3767,12 +3930,14 @@ export interface components {
              */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /**
              * Trade Type
              * @enum {string}
              */
-            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired";
+            trade_type: "sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend";
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /**
          * TradeEvent
@@ -3799,7 +3964,7 @@ export interface components {
             /** Closed At */
             closed_at?: string | null;
             /** Expiration */
-            expiration: string;
+            expiration?: string | null;
             /** Fees */
             fees: number;
             /** Id */
@@ -3813,9 +3978,11 @@ export interface components {
             /** Quantity */
             quantity: number;
             /** Strike */
-            strike: number;
+            strike?: number | null;
             /** Trade Type */
             trade_type: string;
+            /** Unit Amount */
+            unit_amount?: number | null;
         };
         /** TradeUpdate */
         TradeUpdate: {
@@ -3836,7 +4003,7 @@ export interface components {
             /** Strike */
             strike?: number | null;
             /** Trade Type */
-            trade_type?: ("sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired") | null;
+            trade_type?: ("sell_put" | "buy_put_close" | "assignment" | "sell_call" | "buy_call_close" | "called_away" | "expired" | "buy_stock" | "sell_stock" | "dividend") | null;
         };
         /**
          * UniverseRules

@@ -5,6 +5,12 @@ import Link from 'next/link';
  *
  * Used by the dashboard status strip. Follow-up: consolidate the inline
  * status banners in OptionScanner.jsx and SettingsPage.jsx onto this primitive.
+ *
+ * ``title`` sets a native hover tooltip (e.g. the freshness pill's stalest-quote
+ * detail, #417). ``dataAttrs`` is an object of extra ``data-*`` attributes spread
+ * onto the rendered element (e.g. ``{ 'data-freshness-state': 'stale' }``) so
+ * callers can attach frozen test/contract attributes without bloating the
+ * primitive's prop list.
  */
 const STATE_CLASSES = {
   ok: 'bg-emerald-500',
@@ -18,6 +24,8 @@ export default function StatusPill({
   label,
   href,
   dataTestid,
+  title,
+  dataAttrs = {},
 }) {
   const dot = STATE_CLASSES[state] ?? STATE_CLASSES.neutral;
   const inner = (
@@ -38,7 +46,9 @@ export default function StatusPill({
       <Link
         href={href}
         data-testid={dataTestid}
+        title={title}
         className={`${baseClasses} hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors`}
+        {...dataAttrs}
       >
         {inner}
       </Link>
@@ -46,7 +56,7 @@ export default function StatusPill({
   }
 
   return (
-    <span data-testid={dataTestid} className={baseClasses}>
+    <span data-testid={dataTestid} title={title} className={baseClasses} {...dataAttrs}>
       {inner}
     </span>
   );

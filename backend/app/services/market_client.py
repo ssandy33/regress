@@ -28,6 +28,7 @@ keys). This means every downstream consumer — ``dashboard.py``,
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session as DBSession
 
@@ -36,6 +37,23 @@ from app.models.database import OptionMarkStub, QuoteStub
 from app.services.schwab_client import SchwabClient, SchwabClientError
 
 logger = logging.getLogger(__name__)
+
+
+def _iso_to_epoch_millis(iso: str | None) -> int | None:
+    """Convert a stub ISO ``quote_time`` to epoch millis (Schwab ``quoteTime``).
+
+    Returns ``None`` when the value is absent or unparseable so a malformed
+    seed row degrades that field rather than raising in the fetch worker.
+    """
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
 
 
 class StubSchwabClient:
@@ -64,8 +82,21 @@ class StubSchwabClient:
         dicts; :meth:`get_quote` / :meth:`get_option_chain` then serve from
         memory and never touch the session (or ORM-managed objects) again.
         """
-        self._quotes: dict[str, float] = {
-            row.ticker: row.last_price for row in db.query(QuoteStub).all()
+        self._quotes: dict[str, dict] = {
+            row.ticker: {
+                "last_price": row.last_price,
+                # v1.9.0 (#421/#417) — day-change + freshness fields. Nullable;
+                # an archetype that omits them models the "no prior close" (R3)
+                # degrade path. ``quote_time`` is stored ISO and emitted as epoch
+                # millis (Schwab's ``quoteTime`` shape) by :meth:`get_quote`.
+                # ``getattr`` defaults keep the snapshot tolerant of rows that
+                # predate these columns (idempotent ``create_all``, no Alembic).
+                "close_price": getattr(row, "close_price", None),
+                "net_change": getattr(row, "net_change", None),
+                "net_pct": getattr(row, "net_pct", None),
+                "quote_time": getattr(row, "quote_time", None),
+            }
+            for row in db.query(QuoteStub).all()
         }
         self._marks: dict[str, list[dict]] = {}
         for row in db.query(OptionMarkStub).all():
@@ -83,16 +114,33 @@ class StubSchwabClient:
         """Return a Schwab-shaped quote dict for ``ticker`` from the snapshot.
 
         Mirrors :meth:`SchwabClient.get_quote`: returns a ``quote``-node dict
-        carrying ``lastPrice`` / ``mark``. Raises :class:`SchwabClientError`
-        when no stub row exists (same contract as the live client's no-data
-        case), so the dashboard's per-ticker guard degrades that ticker.
-        Reads only the in-memory snapshot — thread-safe under the parallel
-        fetch fan-out.
+        carrying ``lastPrice`` / ``mark``, plus the day-change / freshness fields
+        (``closePrice`` / ``netChange`` / ``netPercentChange`` / ``quoteTime``)
+        when the seeded stub row supplies them (#421 R3 / #417 R5). ``quoteTime``
+        is emitted as epoch **millis** (Schwab's shape) derived from the stub's
+        ISO ``quote_time``. Fields absent from the stub row are omitted so an
+        archetype can model the "no prior close" degrade path.
+
+        Raises :class:`SchwabClientError` when no stub row exists (same contract
+        as the live client's no-data case), so the dashboard's per-ticker guard
+        degrades that ticker. Reads only the in-memory snapshot — thread-safe
+        under the parallel fetch fan-out.
         """
-        last_price = self._quotes.get(ticker)
-        if last_price is None:
+        row = self._quotes.get(ticker)
+        if row is None:
             raise SchwabClientError(f"No stub quote for '{ticker}'")
-        return {"lastPrice": last_price, "mark": last_price}
+        last_price = row["last_price"]
+        quote: dict = {"lastPrice": last_price, "mark": last_price}
+        if row.get("close_price") is not None:
+            quote["closePrice"] = row["close_price"]
+        if row.get("net_change") is not None:
+            quote["netChange"] = row["net_change"]
+        if row.get("net_pct") is not None:
+            quote["netPercentChange"] = row["net_pct"]
+        quote_time_ms = _iso_to_epoch_millis(row.get("quote_time"))
+        if quote_time_ms is not None:
+            quote["quoteTime"] = quote_time_ms
+        return quote
 
     def get_option_chain(
         self,

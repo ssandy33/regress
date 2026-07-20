@@ -2,7 +2,7 @@ from typing import Literal, Optional
 
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DateRange(BaseModel):
@@ -360,6 +360,11 @@ TRADE_TYPES = Literal[
     "buy_call_close",
     "called_away",
     "expired",
+    # Equity / dividend rows (issue #382). These carry NULL strike/expiration,
+    # premium=0.0, and route their per-unit money through ``unit_amount``.
+    "buy_stock",
+    "sell_stock",
+    "dividend",
 ]
 CLOSE_REASONS = Literal["fifty_pct_target", "full_expiration", "rolled", "closed_early", "assigned", "called_away"]
 
@@ -399,14 +404,25 @@ class PositionUpdate(BaseModel):
 class TradeCreate(BaseModel):
     position_id: str
     trade_type: TRADE_TYPES
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382): a stock buy/sell or a
+    # dividend has no option strike/expiration. Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows (issue #382): per-share cost
+    # (buy_stock/sell_stock) or total dividend $ (dividend). None for option rows.
+    unit_amount: Optional[float] = None
     fees: float = 0.0
-    quantity: int = Field(default=1, ge=1)
+    # ``quantity`` is the share count for buy_stock/sell_stock and 0 for
+    # dividend rows; ge=0 (relaxed from ge=1) so a dividend's zero quantity
+    # validates (issue #382). Option rows still pass a contract count >= 1.
+    quantity: int = Field(default=1, ge=0)
     opened_at: str
     closed_at: Optional[str] = None
-    close_reason: Optional[CLOSE_REASONS] = None
+    # Free-text rather than the CLOSE_REASONS literal because dividend rows
+    # store the Schwab sub-type label (e.g. "Qualified Dividend") here (issue
+    # #382, Q3) so future tax-bucket reporting can recover it without a re-import.
+    close_reason: Optional[str] = None
     # Entry-compliance hints (issue #160 / Quality v1 Wave 3). All three are
     # optional and default to None for back-compat — Schwab-imported trades
     # never carry them. When provided on a sell_put / sell_call trade they
@@ -423,6 +439,28 @@ class TradeCreate(BaseModel):
     dte_at_entry_hint: Optional[int] = Field(default=None, ge=0)
     delta_at_entry_hint: Optional[float] = Field(default=None, allow_inf_nan=False)
     earnings_buffer_days_hint: Optional[int] = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _require_strike_expiration_for_options(self) -> "TradeCreate":
+        """Option rows must carry strike + expiration; equity rows must not.
+
+        ``strike``/``expiration`` were relaxed to Optional for equity import
+        (issue #382), but the position recomputer still dereferences
+        ``float(trade.strike)`` on every option branch. Without this guard a
+        manually-created option trade (e.g. ``sell_put``) with a null strike
+        would validate here and then crash recompute. Equity/dividend rows
+        (``buy_stock``/``sell_stock``/``dividend``) legitimately leave both
+        None (CodeRabbit, PR #392).
+        """
+        equity_types = {"buy_stock", "sell_stock", "dividend"}
+        if self.trade_type not in equity_types:
+            if self.strike is None:
+                raise ValueError(f"strike is required for trade_type {self.trade_type!r}")
+            if self.expiration is None:
+                raise ValueError(
+                    f"expiration is required for trade_type {self.trade_type!r}"
+                )
+        return self
 
 
 class TradeUpdate(BaseModel):
@@ -441,9 +479,15 @@ class TradeResponse(BaseModel):
     id: str
     position_id: str
     trade_type: str
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382/#386): a stock buy/sell or a
+    # dividend has no option strike/expiration. The journal UI renders these as
+    # an N/A placeholder (issue #389). Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows: per-share cost (buy_stock/
+    # sell_stock) or total dividend $ (dividend). None for option rows (#386).
+    unit_amount: Optional[float] = None
     fees: float
     quantity: int
     opened_at: str
@@ -519,6 +563,11 @@ class PositionResponse(BaseModel):
     broker_cost_basis_per_share: Optional[float] = None
     adjusted_cost_basis_per_share: Optional[float] = None
     min_compliant_cc_strike: float
+    # Equity realized P&L and dividend income (issues #386/#387, ADR #391):
+    # derived at read time from the trade ledger, never stored. Default 0.0 so
+    # options-only positions serialize unchanged.
+    realized_equity_pl: float = 0.0
+    dividend_income: float = 0.0
     trades: list[TradeResponse] = []
 
 
@@ -532,13 +581,31 @@ class PositionListResponse(BaseModel):
 class ImportPreviewTrade(BaseModel):
     ticker: str
     trade_type: TRADE_TYPES
-    strike: float
-    expiration: str
+    # Optional for equity/dividend rows (issue #382/#385): a stock buy/sell or a
+    # dividend has no option strike/expiration. The preview UI renders these as
+    # an N/A placeholder (issue #389). Option rows still populate them.
+    strike: Optional[float] = None
+    expiration: Optional[str] = None
     premium: float
+    # Per-unit money for equity/dividend rows (issue #385): per-share cost
+    # (buy_stock/sell_stock) or total dividend $ (dividend). None for option rows.
+    unit_amount: Optional[float] = None
     fees: float
     quantity: int
     opened_at: str
+    # Holds the raw Schwab dividend sub-type (e.g. "Qualified Dividend") on
+    # dividend rows; None otherwise (issue #385, PRD #384 Q1).
+    close_reason: Optional[str] = None
     is_duplicate: bool
+    # True for an equity sell with no shares to draw on — it will be skipped at
+    # import time, so the preview flags it instead of showing "New" (AC3c /
+    # PRD #384 Q2). Default False so option/buy/dividend rows are unaffected.
+    is_unmatched: bool = False
+    # True for a ``buy_stock`` that is the share-delivery leg of a coincident put
+    # ``assignment`` — it is suppressed at import so the assignment credits its
+    # shares exactly once (bug #425). Default False so genuine standalone buys
+    # and all other rows are unaffected.
+    is_assignment_leg: bool = False
 
 
 class ImportPreviewResponse(BaseModel):
@@ -546,6 +613,13 @@ class ImportPreviewResponse(BaseModel):
     trades: list[ImportPreviewTrade]
     total: int
     duplicates: int
+    # Count of rows flagged ``is_unmatched`` (unmatched equity sells that will be
+    # skipped on import). Default 0; excluded from ``new_count`` (issue: AC3c).
+    unmatched: int = 0
+    # Count of rows flagged ``is_assignment_leg`` (put-assignment share-delivery
+    # buy_stock legs suppressed on import). Default 0; excluded from ``new_count``
+    # (bug #425).
+    assignment_legs: int = 0
     new_count: int
 
 
@@ -570,10 +644,47 @@ class ImportRequest(BaseModel):
         return v
 
 
+class SkippedUnmatched(BaseModel):
+    """An equity sell skipped at import because no shares were available to draw on.
+
+    Surfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the
+    user sees *why* a sell row was not inserted instead of silently dropping it.
+    The import-time pre-check is the user-visible half of the recomputer's
+    defensive ``shares_sold > shares`` guard.
+    """
+
+    ticker: str
+    opened_at: str
+    quantity: int
+
+
+class SuppressedAssignmentLeg(BaseModel):
+    """A ``buy_stock`` suppressed at import as a put-assignment delivery leg.
+
+    Surfaced from ``execute_mapped_import`` (bug #425) so the user sees that the
+    equity share-delivery leg of a put assignment was folded into the assignment
+    rather than silently dropped. The assignment already credits the delivered
+    shares at strike-based basis; persisting this leg would double the count.
+    """
+
+    ticker: str
+    opened_at: str
+    quantity: int
+
+
 class ImportResultResponse(BaseModel):
     imported: int
     skipped_duplicates: int
     positions_created: int
+    # Equity sells dropped because the running share balance (existing open
+    # position shares + buys earlier in the same import) could not cover them
+    # (issue #388 / PRD #384 AC3c). Defaults empty so option-only imports
+    # serialize unchanged.
+    skipped_unmatched: list[SkippedUnmatched] = []
+    # buy_stock rows suppressed because they are the share-delivery leg of a
+    # coincident put assignment (bug #425). Defaults empty so imports without a
+    # put-assignment acquisition serialize unchanged.
+    skipped_assignment_legs: list[SuppressedAssignmentLeg] = []
 
 
 class ClearJournalResponse(BaseModel):
@@ -672,6 +783,18 @@ DASHBOARD_RULE_ID = Literal[
 ]
 # Card valence — `priority` ranks urgency, `tone` carries valence (§4.3 Q6).
 DASHBOARD_ACTION_TONE = Literal["opportunity", "warning"]
+# New in v1.9.0 (#421, PRD #415 R3) — per-position and account-level day-change
+# state. ``populated`` = a signed $/% day change is available (Schwab supplied a
+# prior close / netChange for the symbol); ``no_prior_close`` = the explicit
+# empty state rendered as muted italic "no prior close" when the symbol has no
+# prior close, rather than a bare em-dash.
+DASHBOARD_DAY_STATE = Literal["populated", "no_prior_close"]
+# New in v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — the cost basis a
+# risk/review trigger evaluated against. "raw" flags a largest-loser card that
+# fired on the RAW broker-basis drawdown (per ADR #416, raw drives the trigger so
+# premium-softening cannot suppress a real mark-to-market hole). None on every
+# other card and when the trigger read the adjusted figure (the raw-null fallback).
+DASHBOARD_TRIGGER_BASIS = Literal["raw"]
 
 
 class DashboardSchwabStatus(BaseModel):
@@ -696,6 +819,18 @@ class DashboardCacheStatus(BaseModel):
     stale: int
     very_stale: int
     total: int
+    # New in v1.9.0 (#417, PRD #415 R5) — the displayed-quote freshness signal
+    # the dashboard pill switches to. ``fresh`` / ``stale`` / ``very_stale`` above
+    # remain the research/data cache buckets (FRED / earnings, aged in days) used
+    # by the action engine + Settings; these four describe the live per-symbol
+    # quotes actually shown. ``displayed_total`` counts assessable rows,
+    # ``displayed_stale`` those past the market-hours-aware budget, and
+    # ``stalest_symbol`` / ``stalest_age_seconds`` name the oldest shown quote for
+    # the pill hover. All additive/defaulted so older payloads still validate.
+    displayed_total: int = 0
+    displayed_stale: int = 0
+    stalest_symbol: Optional[str] = None
+    stalest_age_seconds: Optional[int] = None
 
 
 class DashboardJournalStatus(BaseModel):
@@ -764,6 +899,12 @@ class DashboardKpis(BaseModel):
     premium_collected_trades: int = 0
     realized_pl: float = 0.0
     realized_pl_pct: Optional[float] = None
+    # New in v1.9.0 (#420, R4) — ``notional_value`` and ``unrealized_pl`` now
+    # roll in open option-leg market value / P&L when leg economics are live.
+    # ``includes_options`` drives the "incl. options" tile subtext + the
+    # ``data-includes-options`` attribute. Defaults False so older payloads /
+    # tests that omit it still validate.
+    includes_options: bool = False
 
 
 class DashboardPositionRow(BaseModel):
@@ -789,6 +930,36 @@ class DashboardPositionRow(BaseModel):
     # when shares == 0 (cash-secured rows render "cash-secured", not a divide).
     broker_cost_basis_per_share: Optional[float] = None
     adjusted_cost_basis_per_share: Optional[float] = None
+    # New in v1.9.0 (#421, PRD #415 R3) — per-position day change. ``day_change``
+    # is the position's equity dollar move today (Schwab per-share ``netChange``
+    # × shares; None for 0-share cash-secured rows with no equity exposure).
+    # ``day_change_pct`` is the underlying's fractional day move (Schwab
+    # ``netPercentChange`` / 100, e.g. 0.0356 for +3.56%). ``day_state`` is
+    # "no_prior_close" when the symbol's quote carried no prior close / netChange
+    # (rendered as the explicit muted empty state, not a bare em-dash). All
+    # additive/defaulted so older payloads and tests that omit them still validate.
+    day_change: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    day_state: DASHBOARD_DAY_STATE = "no_prior_close"
+    # New in v1.9.0 (#417, PRD #415 R5) — per-symbol quote freshness. ``quote_age_
+    # seconds`` is the market-hours-aware age of the price shown in ``current_price``
+    # (measured against ``now`` during RTH, else the most recent session close, so
+    # weekends/after-hours don't false-positive). ``quote_stale`` is True once that
+    # age exceeds the intraday budget; ``quote_fetched_at`` is the quote's absolute
+    # ISO timestamp for the exact-time hover. All null/false when the quote carried
+    # no timestamp (freshness unassessable → never falsely flagged). Additive/defaulted.
+    quote_age_seconds: Optional[int] = None
+    quote_stale: bool = False
+    quote_fetched_at: Optional[str] = None
+    # New in v1.9.0 (#422, PRD #415 R6 / ADR #416 Option B) — raw broker-basis
+    # P&L, rendered as the muted secondary line beneath the adjusted headline in
+    # each P&L cell. ``unrealized_pl`` / ``pl_pct`` (above) stay the ADJUSTED
+    # headline figures the KPI tiles aggregate; these are the raw broker-basis
+    # equivalents. ``raw_unrealized_pl`` = current_price*shares − broker_cost_basis;
+    # ``raw_pl_pct`` = that over broker_cost_basis. Both null for CSP/0-share rows
+    # with no broker basis (line 2 renders a muted em-dash). Additive/defaulted.
+    raw_pl_pct: Optional[float] = None
+    raw_unrealized_pl: Optional[float] = None
 
 
 class DashboardMoneyness(BaseModel):
@@ -907,6 +1078,11 @@ class DashboardNextAction(BaseModel):
     # carried by the two leg.* cards (empty for every other card type).
     tone: DASHBOARD_ACTION_TONE = "warning"
     triggered_rules: list[DashboardRuleEvaluation] = []
+    # New in v1.9.0 (#422, PRD #415 R6 / ADR #416) — the basis a risk/review
+    # trigger fired on. "raw" flags the largest-loser card that tripped on the raw
+    # broker-basis drawdown, so the frontend renders a "fired on raw basis" tag +
+    # ``data-trigger-basis``. None on every other card (byte-identical default).
+    trigger_basis: Optional[DASHBOARD_TRIGGER_BASIS] = None
 
 
 class DashboardActivity(BaseModel):
@@ -927,6 +1103,31 @@ class DashboardDataMeta(BaseModel):
     sources_unavailable: list[str] = []
 
 
+class DashboardAccountSummary(BaseModel):
+    """Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).
+
+    New top-level ``account_summary`` key on the dashboard response. The
+    ``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the
+    account-level day change composed from per-position equity day changes.
+
+    The ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``
+    reconciliation fields (R1/R2/R4) are populated by the account-totals worker
+    (extends ``schwab_account_value``); the #421 spine emits them as ``None`` /
+    ``False`` (the "Connect Schwab to reconcile" unavailable state) until that
+    worker lands. All fields are additive/defaulted so the payload validates
+    either way.
+    """
+
+    account_value: Optional[float] = None
+    equity_mv: Optional[float] = None
+    option_mv: Optional[float] = None
+    cash: Optional[float] = None
+    day_change: Optional[float] = None
+    day_change_pct: Optional[float] = None
+    day_state: DASHBOARD_DAY_STATE = "no_prior_close"
+    reconciles: bool = False
+
+
 class DashboardResponse(BaseModel):
     generated_at: str
     status: DashboardStatus
@@ -938,6 +1139,12 @@ class DashboardResponse(BaseModel):
     # New in V0.5.4 — server-side ranked action engine output. See
     # decision-dashboard-v05.md §2.2 / §14.7.
     next_actions: list[DashboardNextAction] = []
+    # New in v1.9.0 (#420 + #421, PRD #415 R1/R2/R3) — broker-reconciliation
+    # strip. default_factory so existing response constructions / tests that
+    # omit it still validate (all DashboardAccountSummary fields default).
+    account_summary: DashboardAccountSummary = Field(
+        default_factory=DashboardAccountSummary
+    )
 
 
 # --- Recovery Plan (V0.5.8, issue #182) ---

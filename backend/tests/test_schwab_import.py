@@ -589,3 +589,333 @@ class TestPositionLifecycleOnImport:
         f_position = next(p for p in open_positions if p.ticker == "F")
         assert f_position.shares == 100
         assert f_position.broker_cost_basis == pytest.approx(1350.0)
+
+
+# --- Equity dedup, Gap #2 plumbing, and unmatched-sell pre-check (issue #388) ---
+
+
+def _equity_mapped(
+    ticker: str,
+    trade_type: str,
+    opened_at: str,
+    *,
+    unit_amount: float | None = None,
+    quantity: int = 0,
+    fees: float = 0.0,
+    close_reason: str | None = None,
+) -> dict:
+    """Build a mapped equity/dividend dict (strike/expiration None, premium 0).
+
+    Mirrors the shape produced for ``buy_stock`` / ``sell_stock`` / ``dividend``
+    rows (issue #382/#385) so the #388 import tests don't round-trip through a
+    parser.
+    """
+    return {
+        "ticker": ticker,
+        "trade_type": trade_type,
+        "strike": None,
+        "expiration": None,
+        "premium": 0.0,
+        "unit_amount": unit_amount,
+        "fees": fees,
+        "quantity": quantity,
+        "opened_at": opened_at,
+        "close_reason": close_reason,
+    }
+
+
+class TestEquityDedupDiscriminator:
+    """Issue #388 AC6a/AC6b/AC6c/AC6e — equity rows are not collapsed by dedup."""
+
+    @pytest.mark.integration
+    def test_ac6a_two_buys_different_prices_not_collapsed(self, db_session):
+        """AC6a: two same-day buys at different per-share prices both import.
+
+        Re-importing the same range adds zero (both are now duplicates).
+        """
+        first = [
+            _equity_mapped("AAPL", "buy_stock", "2026-05-01", unit_amount=150.0, quantity=10),
+            _equity_mapped("AAPL", "buy_stock", "2026-05-01", unit_amount=152.0, quantity=10),
+        ]
+        result = execute_mapped_import(db_session, first)
+        assert result["imported"] == 2
+
+        trades = db_session.query(Trade).filter(Trade.trade_type == "buy_stock").all()
+        assert len(trades) == 2
+        assert {round(t.unit_amount, 2) for t in trades} == {150.0, 152.0}
+
+        # Re-import same rows → both dedup, zero added.
+        rerun = execute_mapped_import(
+            db_session,
+            [
+                _equity_mapped("AAPL", "buy_stock", "2026-05-01", unit_amount=150.0, quantity=10),
+                _equity_mapped("AAPL", "buy_stock", "2026-05-01", unit_amount=152.0, quantity=10),
+            ],
+        )
+        assert rerun["imported"] == 0
+        assert rerun["skipped_duplicates"] == 2
+
+    @pytest.mark.integration
+    def test_ac6b_two_buys_same_price_different_quantity_not_collapsed(self, db_session):
+        """AC6b: same ticker/day/price but different quantities both import."""
+        mapped = [
+            _equity_mapped("MSFT", "buy_stock", "2026-05-02", unit_amount=400.0, quantity=5),
+            _equity_mapped("MSFT", "buy_stock", "2026-05-02", unit_amount=400.0, quantity=8),
+        ]
+        result = execute_mapped_import(db_session, mapped)
+        assert result["imported"] == 2
+
+        quantities = sorted(
+            t.quantity
+            for t in db_session.query(Trade).filter(Trade.trade_type == "buy_stock").all()
+        )
+        assert quantities == [5, 8]
+
+    @pytest.mark.integration
+    def test_ac6c_cash_and_qualified_dividend_same_day_not_collapsed(self, db_session):
+        """AC6c: same-day cash + qualified dividend (same $) both kept.
+
+        They differ only by ``close_reason`` (the raw Schwab sub-type), which is
+        the equity discriminator that prevents the collapse.
+        """
+        mapped = [
+            _equity_mapped(
+                "KO", "dividend", "2026-05-03", unit_amount=44.0, quantity=0,
+                close_reason="Cash Dividend",
+            ),
+            _equity_mapped(
+                "KO", "dividend", "2026-05-03", unit_amount=44.0, quantity=0,
+                close_reason="Qualified Dividend",
+            ),
+        ]
+        result = execute_mapped_import(db_session, mapped)
+        assert result["imported"] == 2
+
+        reasons = sorted(
+            t.close_reason
+            for t in db_session.query(Trade).filter(Trade.trade_type == "dividend").all()
+        )
+        assert reasons == ["Cash Dividend", "Qualified Dividend"]
+
+    @pytest.mark.unit
+    def test_ac6e_option_dedup_signature_unchanged(self, db_session):
+        """AC6e: option dedup ignores the equity discriminator entirely.
+
+        An option row (strike not None) deduplicates on the historical 5-tuple
+        even when called with unit_amount/quantity/close_reason kwargs that would
+        differ — those must not narrow the option key.
+        """
+        pos = Position(
+            id="p1", ticker="AAPL", shares=100, broker_cost_basis=15000,
+            status="open", strategy="wheel", opened_at="2025-01-01",
+        )
+        db_session.add(pos)
+        trade = Trade(
+            id="t1", position_id="p1", trade_type="sell_put", strike=150.0,
+            expiration="2025-03-21", premium=3.0, fees=0.0, quantity=1,
+            opened_at="2025-03-01T10:00:00Z",
+        )
+        db_session.add(trade)
+        db_session.commit()
+
+        # Same option 5-tuple but a different (irrelevant) unit_amount/quantity:
+        # still a duplicate because the discriminator does not apply to options.
+        assert is_duplicate(
+            db_session, "AAPL", 150.0, "2025-03-21", "sell_put",
+            "2025-03-01T10:00:00Z", unit_amount=999.0, quantity=99,
+        ) is True
+
+
+class TestImportRoundTripsEquityFields:
+    """Gap #2 (issue #388): unit_amount and close_reason persist on import."""
+
+    @pytest.mark.integration
+    def test_buy_stock_round_trips_unit_amount(self, db_session):
+        mapped = [
+            _equity_mapped("NVDA", "buy_stock", "2026-05-04", unit_amount=120.5, quantity=10),
+        ]
+        execute_mapped_import(db_session, mapped)
+
+        trade = db_session.query(Trade).filter(Trade.trade_type == "buy_stock").first()
+        assert trade is not None
+        assert trade.unit_amount == pytest.approx(120.5)
+        assert trade.quantity == 10
+
+    @pytest.mark.integration
+    def test_dividend_round_trips_close_reason(self, db_session):
+        mapped = [
+            _equity_mapped(
+                "T", "dividend", "2026-05-05", unit_amount=27.75, quantity=0,
+                close_reason="Qualified Dividend",
+            ),
+        ]
+        execute_mapped_import(db_session, mapped)
+
+        trade = db_session.query(Trade).filter(Trade.trade_type == "dividend").first()
+        assert trade is not None
+        assert trade.close_reason == "Qualified Dividend"
+        assert trade.unit_amount == pytest.approx(27.75)
+
+
+class TestUnmatchedSellPreCheck:
+    """AC3c (issue #388): equity sells with no shares to draw on are skipped."""
+
+    @pytest.mark.integration
+    def test_unmatched_sell_skipped_and_recorded(self, db_session):
+        """A sell_stock with no prior shares is not inserted and is reported."""
+        mapped = [
+            _equity_mapped("AMD", "sell_stock", "2026-05-06", unit_amount=160.0, quantity=10),
+        ]
+        result = execute_mapped_import(db_session, mapped)
+
+        assert result["imported"] == 0
+        assert result["skipped_unmatched"] == [
+            {"ticker": "AMD", "opened_at": "2026-05-06", "quantity": 10}
+        ]
+        # No sell_stock trade inserted; no negative-share position.
+        assert db_session.query(Trade).filter(Trade.trade_type == "sell_stock").count() == 0
+
+    @pytest.mark.integration
+    def test_sell_with_prior_buy_in_same_import_inserts(self, db_session):
+        """A sell that a same-import buy can cover is inserted normally."""
+        mapped = [
+            _equity_mapped("AMD", "buy_stock", "2026-05-06", unit_amount=155.0, quantity=20),
+            _equity_mapped("AMD", "sell_stock", "2026-05-07", unit_amount=160.0, quantity=10),
+        ]
+        result = execute_mapped_import(db_session, mapped)
+
+        assert result["imported"] == 2
+        assert result["skipped_unmatched"] == []
+        assert db_session.query(Trade).filter(Trade.trade_type == "sell_stock").count() == 1
+
+    @pytest.mark.integration
+    def test_sell_drawing_on_existing_open_shares_inserts(self, db_session):
+        """A sell can draw on already-owned shares from an existing open position."""
+        pos = Position(
+            id="pos-own", ticker="GOOG", shares=100, broker_cost_basis=15000,
+            status="open", strategy="holding", opened_at="2026-01-01",
+        )
+        db_session.add(pos)
+        db_session.commit()
+
+        mapped = [
+            _equity_mapped("GOOG", "sell_stock", "2026-05-08", unit_amount=170.0, quantity=50),
+        ]
+        result = execute_mapped_import(db_session, mapped)
+
+        assert result["imported"] == 1
+        assert result["skipped_unmatched"] == []
+
+    @pytest.mark.integration
+    def test_oversell_after_partial_buy_is_unmatched(self, db_session):
+        """Selling more than the running balance covers → that sell is unmatched."""
+        mapped = [
+            _equity_mapped("PLTR", "buy_stock", "2026-05-06", unit_amount=20.0, quantity=10),
+            _equity_mapped("PLTR", "sell_stock", "2026-05-07", unit_amount=22.0, quantity=25),
+        ]
+        result = execute_mapped_import(db_session, mapped)
+
+        assert result["imported"] == 1  # the buy only
+        assert result["skipped_unmatched"] == [
+            {"ticker": "PLTR", "opened_at": "2026-05-07", "quantity": 25}
+        ]
+
+
+class TestDedupDiscriminatorComposition:
+    """Unit-level checks of the discriminator's NULL/value composition (no DB needed)."""
+
+    @pytest.mark.unit
+    def test_equity_trade_types_membership(self):
+        from app.services.schwab_import import _EQUITY_TRADE_TYPES
+
+        assert "buy_stock" in _EQUITY_TRADE_TYPES
+        assert "sell_stock" in _EQUITY_TRADE_TYPES
+        assert "dividend" in _EQUITY_TRADE_TYPES
+        # Option lifecycle types are NOT equity — they keep the 5-tuple key.
+        assert "sell_put" not in _EQUITY_TRADE_TYPES
+        assert "assignment" not in _EQUITY_TRADE_TYPES
+
+
+@pytest.mark.integration
+class TestPreviewFlagsUnmatchedSells:
+    """The preview must flag unmatched equity sells (AC3c / PRD #384 Q2) and the
+    flag must agree with what execute_mapped_import actually skips."""
+
+    def test_preview_flags_unmatched_sell_and_excludes_from_new_count(self, db_session):
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("F", "sell_stock", "2026-03-20", unit_amount=15.0, quantity=50),
+            _equity_mapped("T", "sell_stock", "2026-03-28", unit_amount=18.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)
+
+        assert preview["total"] == 3
+        assert preview["duplicates"] == 0
+        assert preview["unmatched"] == 1
+        # buy F + matched sell F count as importable; the unmatched T sell does not.
+        assert preview["new_count"] == 2
+
+        by_ticker = {(t["ticker"], t["trade_type"]): t for t in preview["trades"]}
+        assert by_ticker[("T", "sell_stock")]["is_unmatched"] is True
+        assert by_ticker[("F", "sell_stock")]["is_unmatched"] is False
+        assert by_ticker[("F", "buy_stock")]["is_unmatched"] is False
+
+    def test_preview_flag_agrees_with_execute_skip(self, db_session):
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("T", "sell_stock", "2026-03-28", unit_amount=18.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)  # read-only
+        result = execute_mapped_import(db_session, mapped)
+
+        # The preview's unmatched count must equal what execute actually skipped.
+        assert preview["unmatched"] == len(result["skipped_unmatched"]) == 1
+        assert result["skipped_unmatched"][0]["ticker"] == "T"
+        assert result["imported"] == 1  # only the F buy
+
+    def test_preview_no_unmatched_when_all_sells_covered(self, db_session):
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("F", "sell_stock", "2026-03-20", unit_amount=15.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 0
+        assert all(t["is_unmatched"] is False for t in preview["trades"])
+
+    def test_buy_listed_after_sell_but_earlier_in_time_is_matched(self, db_session):
+        # CodeRabbit #397: Schwab exports are often newest-first, so the sell can
+        # be listed ABOVE the buy that covers it. Chronological simulation must
+        # NOT flag it as unmatched.
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "sell_stock", "2026-03-20", unit_amount=15.0, quantity=50),
+            _equity_mapped("F", "buy_stock", "2026-03-01", unit_amount=11.0, quantity=100),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 0
+        assert all(t["is_unmatched"] is False for t in preview["trades"])
+
+        result = execute_mapped_import(db_session, mapped)
+        assert result["skipped_unmatched"] == []
+        assert result["imported"] == 2
+
+    def test_sell_chronologically_before_any_buy_is_unmatched(self, db_session):
+        # The sell (01-01) genuinely precedes the buy (02-01) in time, even though
+        # the buy is listed first -> correctly flagged unmatched.
+        from app.services.schwab_import import build_preview
+
+        mapped = [
+            _equity_mapped("F", "buy_stock", "2026-02-01", unit_amount=11.0, quantity=100),
+            _equity_mapped("F", "sell_stock", "2026-01-01", unit_amount=15.0, quantity=50),
+        ]
+        preview = build_preview(db_session, mapped)
+        assert preview["unmatched"] == 1
+        by = {(t["ticker"], t["trade_type"]): t for t in preview["trades"]}
+        assert by[("F", "sell_stock")]["is_unmatched"] is True

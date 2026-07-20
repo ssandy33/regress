@@ -5,6 +5,37 @@ const MODES = {
   CSV: 'csv',
 };
 
+// --- equity (issue #389) ---
+const TYPE_LABELS = {
+  sell_put: 'Sell Put',
+  buy_put_close: 'Buy Put Close',
+  assignment: 'Assignment',
+  sell_call: 'Sell Call',
+  buy_call_close: 'Buy Call Close',
+  called_away: 'Called Away',
+  buy_stock: 'Stock Buy',
+  sell_stock: 'Stock Sell',
+  dividend: 'Dividend',
+};
+
+const EQUITY_TYPES = new Set(['buy_stock', 'sell_stock', 'dividend']);
+
+const EQUITY_PILL_CLASSES = {
+  buy_stock: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  sell_stock: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+  dividend: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
+};
+
+// Accessible "this column does not apply to this row kind" placeholder (#389).
+function NotApplicable() {
+  return (
+    <span data-testid="na-placeholder" className="text-slate-400 dark:text-slate-500">
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">Not applicable</span>
+    </span>
+  );
+}
+
 function toLocalDate(d) {
   const tzOffsetMs = d.getTimezoneOffset() * 60_000;
   return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
@@ -144,6 +175,22 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                 <li>Positions created: {result.positions_created}</li>
               </ul>
             </div>
+            {result.skipped_unmatched && result.skipped_unmatched.length > 0 && (
+              <div
+                data-testid="import-unmatched-warning"
+                className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4"
+              >
+                <p className="text-amber-800 dark:text-amber-200 font-medium">
+                  Skipped {result.skipped_unmatched.length} unmatched{' '}
+                  {result.skipped_unmatched.length === 1 ? 'sell' : 'sells'}
+                </p>
+                <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+                  These stock sells had no prior shares to draw on (
+                  {[...new Set(result.skipped_unmatched.map((s) => s.ticker))].join(', ')}
+                  ). Import the matching buys first, then re-import to capture them.
+                </p>
+              </div>
+            )}
             <button onClick={onClose} className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
               Done
             </button>
@@ -152,7 +199,8 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
           <div data-testid="import-preview" className="space-y-4">
             <p className="text-sm text-slate-600 dark:text-slate-400">
               {preview.account_number ? `Account: ${preview.account_number} | ` : ''}
-              {preview.total} trades found | {preview.duplicates} duplicates | {preview.new_count} new
+              {preview.total} trades found | {preview.duplicates} duplicates
+              {preview.unmatched > 0 ? ` | ${preview.unmatched} unmatched` : ''} | {preview.new_count} new
             </p>
 
             {emptyPreview && mode === MODES.API && (
@@ -181,8 +229,8 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                 className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4"
               >
                 <p className="text-sm text-amber-800 dark:text-amber-200">
-                  No options trades found in this CSV. Make sure the export is from
-                  Schwab.com Activity & Statements and includes options activity.
+                  No trades found in this CSV. Make sure the export is from
+                  Schwab.com Activity & Statements.
                 </p>
               </div>
             )}
@@ -202,18 +250,57 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                     </tr>
                   </thead>
                   <tbody>
-                    {preview.trades.map((t, i) => (
-                      <tr key={i} className="border-t border-slate-200 dark:border-slate-700">
+                    {preview.trades.map((t, i) => {
+                      const isEquity = EQUITY_TYPES.has(t.trade_type);
+                      const isDividend = t.trade_type === 'dividend';
+                      return (
+                      <tr
+                        key={i}
+                        data-testid={isEquity ? 'equity-row' : undefined}
+                        className="border-t border-slate-200 dark:border-slate-700"
+                      >
                         <td className="px-3 py-2 text-slate-900 dark:text-white">{t.ticker}</td>
-                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{t.trade_type}</td>
-                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">${t.strike}</td>
-                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{t.expiration}</td>
-                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">${(t.premium ?? 0).toFixed(2)}</td>
-                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{t.quantity}</td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                          {isEquity ? (
+                            <span
+                              data-testid="row-type-badge"
+                              className={`px-2 py-0.5 text-xs font-medium rounded-full ${EQUITY_PILL_CLASSES[t.trade_type]}`}
+                            >
+                              {TYPE_LABELS[t.trade_type] || t.trade_type}
+                            </span>
+                          ) : (
+                            TYPE_LABELS[t.trade_type] || t.trade_type
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                          {isEquity ? <NotApplicable /> : `$${t.strike}`}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                          {isEquity ? <NotApplicable /> : t.expiration}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                          {isEquity ? (
+                            <>
+                              ${(t.unit_amount ?? 0).toFixed(2)}
+                              {!isDividend && (
+                                <span className="text-slate-400 dark:text-slate-500">/sh</span>
+                              )}
+                            </>
+                          ) : (
+                            `$${(t.premium ?? 0).toFixed(2)}`
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                          {isDividend ? <NotApplicable /> : t.quantity}
+                        </td>
                         <td className="px-3 py-2">
                           {t.is_duplicate ? (
                             <span data-testid="duplicate-badge" className="px-2 py-0.5 text-xs font-medium rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
                               Duplicate
+                            </span>
+                          ) : t.is_unmatched ? (
+                            <span data-testid="unmatched-badge" title="No prior shares to draw on — will be skipped on import" className="px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                              Unmatched — will skip
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
@@ -222,7 +309,8 @@ export default function ImportModal({ onClose, onPreview, onImport, onPreviewCsv
                           )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

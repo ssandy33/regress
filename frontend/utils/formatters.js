@@ -70,6 +70,25 @@ export function formatRelativeTime(iso) {
   return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+/**
+ * Compact quote-age label for the per-symbol freshness flag + pill hover (#417).
+ *
+ * Renders whole-unit ages: ``"12s"`` / ``"3m"`` / ``"3h"`` / ``"2d"`` (largest
+ * whole unit, floored). ``null`` / negative → ``"—"``. Deliberately terse — the
+ * exact timestamp lives in the hover title, this is the inline glance value.
+ */
+export function formatQuoteAge(seconds) {
+  if (seconds == null || isNaN(seconds) || seconds < 0) return '—';
+  const s = Math.floor(seconds);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+}
+
 export function categoryLabel(category) {
   const labels = {
     stock: 'Stocks',

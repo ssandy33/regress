@@ -5,8 +5,12 @@ import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatt
  * KpiRow — seven-tile portfolio summary above the decision row.
  *
  * V0.5 extends the row from 4 to 7 tiles (issue #148):
- *   - Open positions, Notional value, Open legs, Unrealized P/L (existing)
+ *   - Open positions, Portfolio value, Open legs, Unrealized P/L (existing)
  *   - Largest risk, Realized P/L (lifetime), Premium collected (lifetime) (new)
+ *
+ * v1.9.0 (#420, R4): "Notional value" is renamed "Portfolio value" (testid
+ * stays `kpi-notional`) and both it and Unrealized P/L now roll in open option
+ * legs, carrying an "incl. options" subtext + `data-includes-options`.
  *
  * Breakpoints per spec §14.2 (overrides §2.3): `grid-cols-2 md:grid-cols-3
  * lg:grid-cols-7`. The 7th tile spans 2 columns on mobile (`col-span-2`) to
@@ -14,7 +18,8 @@ import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatt
  *
  * Empty-state rules (spec §14.3):
  *   - Largest risk: `—` with tooltip (it's a pointer, not an aggregate)
- *   - Realized P/L: `$0` / `0%` (aggregate, mirrors Premium-collected)
+ *   - Realized P/L: `$0`; percent omitted when there's no meaningful
+ *     denominator (`realized_pl_pct == null`) — issue #419, no "0% lifetime".
  *   - Premium collected: `$0` / `0 trades`
  *
  * Payload-only fields (`kpis.premium_collected_ytd`, `kpis.largest_loser`)
@@ -80,14 +85,36 @@ export default function KpiRow({ kpis }) {
     : undefined;
   const largestRiskColor = largestRisk ? plColor(largestRisk.unrealized_pl) : undefined;
 
-  // Realized P/L (lifetime) — aggregate; empty state is $0 / 0%.
+  // Realized P/L (lifetime) — aggregate. Issue #419: when there's no
+  // meaningful denominator (``realized_pl_pct == null`` — e.g. equity realized
+  // P&L folded in with no coherent basis) render NO percent, not the bogus
+  // "0% lifetime" placeholder (a non-zero realized dollar amount is never 0% of
+  // anything meaningful). The dollar figure stands alone.
   const realizedPl = kpis.realized_pl ?? 0;
   const realizedPlValue = signedCurrency(realizedPl);
   const realizedPlPct = kpis.realized_pl_pct;
   const realizedPlSubtext =
     realizedPlPct == null
-      ? '0% lifetime'
+      ? undefined
       : `${realizedPlPct > 0 ? '+' : ''}${formatPercent(realizedPlPct)} lifetime`;
+
+  // R4 (#420): options rolled into Portfolio value + Unrealized P/L. The
+  // "incl. options" affordance is appended to the existing pct subtext (or
+  // stands alone) and mirrored on ``data-includes-options`` for the contract.
+  const inclOptions = kpis.includes_options === true;
+  const inclOptionsAttr = inclOptions ? { 'data-includes-options': 'true' } : undefined;
+  const withInclOptions = (pctText) => {
+    if (inclOptions) {
+      return pctText ? `${pctText} · incl. options` : 'incl. options';
+    }
+    return pctText || undefined;
+  };
+  const notionalSubtext = withInclOptions(
+    pctSubtext(kpis.notional_change_pct, 'from cost')
+  );
+  const unrealizedSubtext = withInclOptions(
+    pctSubtext(kpis.unrealized_pl_pct, 'on basis')
+  );
 
   // Premium collected (lifetime) — aggregate; empty state is $0 / 0 trades.
   const premiumTotal = kpis.premium_collected_total ?? 0;
@@ -107,10 +134,11 @@ export default function KpiRow({ kpis }) {
         dataTestid="kpi-open-positions"
       />
       <StatCard
-        label="Notional value"
+        label="Portfolio value"
         value={kpis.notional_value > 0 ? formatCurrency(kpis.notional_value) : '—'}
-        subtext={pctSubtext(kpis.notional_change_pct, 'from cost') || undefined}
+        subtext={notionalSubtext}
         dataTestid="kpi-notional"
+        dataAttrs={inclOptionsAttr}
       />
       <StatCard
         label="Open legs"
@@ -121,9 +149,10 @@ export default function KpiRow({ kpis }) {
       <StatCard
         label="Unrealized P/L"
         value={plDisplay}
-        subtext={pctSubtext(kpis.unrealized_pl_pct, 'on basis') || undefined}
+        subtext={unrealizedSubtext}
         colorClass={plColor(pl)}
         dataTestid="kpi-unrealized-pl"
+        dataAttrs={inclOptionsAttr}
       />
       <StatCard
         label="Largest risk"

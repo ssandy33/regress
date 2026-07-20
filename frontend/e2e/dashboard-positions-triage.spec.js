@@ -256,7 +256,11 @@ test.describe('Positions triage table @e2e', () => {
     await page.waitForURL(/\/journal\?position=pos-aapl/);
   });
 
-  test('Day column header and `—` placeholders render on desktop', async ({ page }) => {
+  // Bridge edit (v1.9.0 #421, R3): the Day cell is no longer a hard-coded `—`.
+  // The TRIAGE_PAYLOAD rows carry no day-change fields, so each cell renders the
+  // explicit "no prior close" empty state (data-day-state="no_prior_close").
+  // Populated day-change rendering is covered in dashboard-day-change.spec.js.
+  test('Day column header and no-prior-close cells render on desktop', async ({ page }) => {
     // Default Playwright viewport is 1280×720 (desktop, > lg=1024).
     await mockDashboard(page, TRIAGE_PAYLOAD);
     await page.goto('/dashboard');
@@ -267,11 +271,12 @@ test.describe('Positions triage table @e2e', () => {
       .locator('th', { hasText: 'Day' });
     await expect(dayHeader).toBeVisible();
 
-    // Every populated row carries a `—` Day cell on desktop.
+    // Rows without day-change data render the explicit no-prior-close state.
     const dayCells = page.getByTestId('dashboard-position-day');
     await expect(dayCells).toHaveCount(4);
     for (let i = 0; i < 4; i += 1) {
-      await expect(dayCells.nth(i)).toContainText('—');
+      await expect(dayCells.nth(i)).toHaveAttribute('data-day-state', 'no_prior_close');
+      await expect(dayCells.nth(i)).toContainText('no prior close');
     }
   });
 

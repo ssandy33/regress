@@ -2447,3 +2447,266 @@ class TestComputeAssignmentNetting:
         )
 
         assert compute_assignment_netting(list(pos.trades)) == {}
+
+
+# --- Equity recompute branches (issues #386/#387, PRD #384) ------------------
+
+
+def _make_equity_trade(
+    position_id: str,
+    *,
+    trade_type: str,
+    opened_at: str,
+    quantity: int = 0,
+    unit_amount: float = 0.0,
+    fees: float = 0.0,
+    close_reason: str | None = None,
+) -> Trade:
+    """Build an equity/dividend Trade row (NULL strike/expiration, premium 0)."""
+    return Trade(
+        id=str(uuid.uuid4()),
+        position_id=position_id,
+        trade_type=trade_type,
+        strike=None,
+        expiration=None,
+        premium=0.0,
+        unit_amount=unit_amount,
+        fees=fees,
+        quantity=quantity,
+        opened_at=opened_at,
+        close_reason=close_reason,
+    )
+
+
+def _seed_equity_position(
+    db,
+    *,
+    ticker: str,
+    trades: Iterable[dict],
+    status: str = "open",
+) -> Position:
+    """Create a Position + equity Trade ledger from a compact dict spec."""
+    position = Position(
+        id=str(uuid.uuid4()),
+        ticker=ticker,
+        shares=0,
+        broker_cost_basis=0.0,
+        status=status,
+        strategy="holding",
+        opened_at="2026-01-01T00:00:00Z",
+    )
+    db.add(position)
+    db.flush()
+    for spec in trades:
+        db.add(_make_equity_trade(position.id, **spec))
+    db.commit()
+    db.refresh(position)
+    return position
+
+
+class TestEquityRecompute:
+    """Recomputer applied to equity (buy_stock/sell_stock/dividend) ledgers."""
+
+    @pytest.mark.integration
+    def test_buy_stock_records_shares_and_weighted_avg_basis(self, db_session):
+        """AC2a: a buy_stock yields shares + broker basis (unit*shares + fees)."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="AAPL",
+            trades=[
+                {
+                    "trade_type": "buy_stock",
+                    "opened_at": "2026-01-05",
+                    "quantity": 100,
+                    "unit_amount": 150.0,
+                    "fees": 1.0,
+                }
+            ],
+        )
+        recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        assert pos.shares == 100
+        assert pos.broker_cost_basis == pytest.approx(15001.0)  # 150*100 + 1
+        assert pos.status == "open"
+
+    @pytest.mark.integration
+    def test_second_buy_recomputes_weighted_avg_basis(self, db_session):
+        """AC2b: a second buy at a different date folds into the running basis."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="MSFT",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 10.0},
+                {"trade_type": "buy_stock", "opened_at": "2026-02-05", "quantity": 100, "unit_amount": 20.0},
+            ],
+        )
+        recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        assert pos.shares == 200
+        assert pos.broker_cost_basis == pytest.approx(3000.0)  # 1000 + 2000
+
+    @pytest.mark.integration
+    def test_no_unknown_trade_type_warning_for_equity(self, db_session, caplog):
+        """AC2c: equity/dividend rows do not trip the unknown-trade_type warning."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="NVDA",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 50.0},
+                {"trade_type": "dividend", "opened_at": "2026-02-05", "unit_amount": 12.0, "close_reason": "Qualified Dividend"},
+            ],
+        )
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="app.services.positions"):
+            recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        assert "unknown trade_type" not in caplog.text
+
+    @pytest.mark.integration
+    def test_sell_reduces_shares_and_basis(self, db_session):
+        """AC3a: a partial sell reduces shares and basis by weighted-avg."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="AMD",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 200, "unit_amount": 10.0},
+                {"trade_type": "sell_stock", "opened_at": "2026-02-05", "quantity": 100, "unit_amount": 15.0},
+            ],
+        )
+        recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        assert pos.shares == 100
+        # basis 2000 → reduce by avg(10)*100 = 1000 → 1000 remains.
+        assert pos.broker_cost_basis == pytest.approx(1000.0)
+        assert pos.status == "open"
+
+    @pytest.mark.integration
+    def test_sell_all_closes_at_zero(self, db_session):
+        """AC3b: selling the full position drives status to closed with closed_at."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="TSLA",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 200.0},
+                {"trade_type": "sell_stock", "opened_at": "2026-03-05", "quantity": 100, "unit_amount": 250.0},
+            ],
+        )
+        recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        assert pos.shares == 0
+        assert pos.status == "closed"
+        assert pos.closed_at == "2026-03-05"
+
+    @pytest.mark.integration
+    def test_unmatched_sell_skipped_no_negative_shares(self, db_session, caplog):
+        """AC3c: an oversized sell is skipped — shares/basis unchanged, no negatives."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="INTC",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 30.0},
+                {"trade_type": "sell_stock", "opened_at": "2026-02-05", "quantity": 200, "unit_amount": 35.0},
+            ],
+        )
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="app.services.positions"):
+            recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        assert pos.shares == 100  # unchanged — the unmatched sell did nothing
+        assert pos.broker_cost_basis == pytest.approx(3000.0)
+        assert pos.status == "open"
+        assert "unmatched sell_stock" in caplog.text
+
+    @pytest.mark.integration
+    def test_dividend_does_not_mutate_shares_or_basis(self, db_session):
+        """AC4a/4b: a dividend row leaves shares/basis untouched (income is derived)."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="KO",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 60.0},
+                {"trade_type": "dividend", "opened_at": "2026-02-05", "unit_amount": 44.0, "close_reason": "Qualified Dividend"},
+            ],
+        )
+        recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        assert pos.shares == 100
+        assert pos.broker_cost_basis == pytest.approx(6000.0)
+        # close_reason on the dividend trade is preserved (never touched).
+        div = next(t for t in pos.trades if t.trade_type == "dividend")
+        assert div.close_reason == "Qualified Dividend"
+
+    @pytest.mark.integration
+    def test_buy_stock_position_labels_as_holding(self, db_session):
+        """A share-holding position with no open legs derives the 'holding' label (#131)."""
+        pos = _seed_equity_position(
+            db_session,
+            ticker="GOOG",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 100.0},
+            ],
+        )
+        recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        assert pos.strategy == "holding"
+
+
+class TestEquityDeriveHelpers:
+    """``_build_position_response`` surfaces realized P&L + dividend income."""
+
+    @pytest.mark.integration
+    def test_position_response_surfaces_realized_equity_pl(self, db_session):
+        """AC3a: realized_equity_pl appears on the response for a sold position."""
+        from app.services.journal import _build_position_response
+
+        pos = _seed_equity_position(
+            db_session,
+            ticker="QCOM",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 10.0},
+                {"trade_type": "sell_stock", "opened_at": "2026-02-05", "quantity": 100, "unit_amount": 12.0, "fees": 2.0},
+            ],
+        )
+        recompute_position_state(db_session, pos.id, clock=_frozen_clock())
+        db_session.refresh(pos)
+        resp = _build_position_response(pos)
+        # (12-10)*100 - 2 = 198.
+        assert resp["realized_equity_pl"] == pytest.approx(198.0)
+        assert resp["dividend_income"] == pytest.approx(0.0)
+
+    @pytest.mark.integration
+    def test_position_response_surfaces_dividend_income(self, db_session):
+        """AC4a/4b: dividend income is attributed to the position's ticker."""
+        from app.services.journal import _build_position_response
+
+        pos = _seed_equity_position(
+            db_session,
+            ticker="JNJ",
+            trades=[
+                {"trade_type": "buy_stock", "opened_at": "2026-01-05", "quantity": 100, "unit_amount": 150.0},
+                {"trade_type": "dividend", "opened_at": "2026-02-05", "unit_amount": 30.0},
+                {"trade_type": "dividend", "opened_at": "2026-05-05", "unit_amount": 30.0},
+            ],
+        )
+        resp = _build_position_response(pos)
+        assert resp["dividend_income"] == pytest.approx(60.0)
+
+    @pytest.mark.integration
+    def test_options_only_position_zero_equity_fields(self, db_session):
+        """An options-only position serializes realized_equity_pl/dividend_income as 0.0."""
+        from app.services.journal import _build_position_response
+
+        pos = _seed_position(
+            db_session,
+            ticker="SPY",
+            trades=[
+                {
+                    "trade_type": "sell_put",
+                    "strike": 400.0,
+                    "expiration": "2026-06-19",
+                    "opened_at": "2026-05-01",
+                }
+            ],
+        )
+        resp = _build_position_response(pos)
+        assert resp["realized_equity_pl"] == pytest.approx(0.0)
+        assert resp["dividend_income"] == pytest.approx(0.0)

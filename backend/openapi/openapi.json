@@ -957,6 +957,93 @@
         "title": "CoveredCallView",
         "type": "object"
       },
+      "DashboardAccountSummary": {
+        "description": "Broker-reconciliation strip payload (v1.9.0, PRD #415 R1/R2/R3-account).\n\nNew top-level ``account_summary`` key on the dashboard response. The\n``day_change`` / ``day_change_pct`` / ``day_state`` fields (R3, #421) are the\naccount-level day change composed from per-position equity day changes.\n\nThe ``account_value`` / ``equity_mv`` / ``option_mv`` / ``cash`` / ``reconciles``\nreconciliation fields (R1/R2/R4) are populated by the account-totals worker\n(extends ``schwab_account_value``); the #421 spine emits them as ``None`` /\n``False`` (the \"Connect Schwab to reconcile\" unavailable state) until that\nworker lands. All fields are additive/defaulted so the payload validates\neither way.",
+        "properties": {
+          "account_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Value"
+          },
+          "cash": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cash"
+          },
+          "day_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "day_state": {
+            "default": "no_prior_close",
+            "enum": [
+              "populated",
+              "no_prior_close"
+            ],
+            "title": "Day State",
+            "type": "string"
+          },
+          "equity_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equity Mv"
+          },
+          "option_mv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option Mv"
+          },
+          "reconciles": {
+            "default": false,
+            "title": "Reconciles",
+            "type": "boolean"
+          }
+        },
+        "title": "DashboardAccountSummary",
+        "type": "object"
+      },
       "DashboardActivity": {
         "properties": {
           "kind": {
@@ -1036,6 +1123,16 @@
       },
       "DashboardCacheStatus": {
         "properties": {
+          "displayed_stale": {
+            "default": 0,
+            "title": "Displayed Stale",
+            "type": "integer"
+          },
+          "displayed_total": {
+            "default": 0,
+            "title": "Displayed Total",
+            "type": "integer"
+          },
           "fresh": {
             "title": "Fresh",
             "type": "integer"
@@ -1043,6 +1140,28 @@
           "stale": {
             "title": "Stale",
             "type": "integer"
+          },
+          "stalest_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stalest Age Seconds"
+          },
+          "stalest_symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stalest Symbol"
           },
           "total": {
             "title": "Total",
@@ -1181,6 +1300,11 @@
       },
       "DashboardKpis": {
         "properties": {
+          "includes_options": {
+            "default": false,
+            "title": "Includes Options",
+            "type": "boolean"
+          },
           "largest_loser": {
             "anyOf": [
               {
@@ -1377,6 +1501,18 @@
             ],
             "title": "Tone",
             "type": "string"
+          },
+          "trigger_basis": {
+            "anyOf": [
+              {
+                "const": "raw",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Basis"
           },
           "triggered_rules": {
             "default": [],
@@ -1728,6 +1864,37 @@
             ],
             "title": "Current Price"
           },
+          "day_change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change"
+          },
+          "day_change_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day Change Pct"
+          },
+          "day_state": {
+            "default": "no_prior_close",
+            "enum": [
+              "populated",
+              "no_prior_close"
+            ],
+            "title": "Day State",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1762,6 +1929,55 @@
               }
             ],
             "title": "Pl Pct"
+          },
+          "quote_age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Age Seconds"
+          },
+          "quote_fetched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote Fetched At"
+          },
+          "quote_stale": {
+            "default": false,
+            "title": "Quote Stale",
+            "type": "boolean"
+          },
+          "raw_pl_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Pl Pct"
+          },
+          "raw_unrealized_pl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Unrealized Pl"
           },
           "shares": {
             "title": "Shares",
@@ -1842,6 +2058,9 @@
       },
       "DashboardResponse": {
         "properties": {
+          "account_summary": {
+            "$ref": "#/components/schemas/DashboardAccountSummary"
+          },
           "data_meta": {
             "$ref": "#/components/schemas/DashboardDataMeta"
           },
@@ -2510,6 +2729,11 @@
             "title": "Account Number",
             "type": "string"
           },
+          "assignment_legs": {
+            "default": 0,
+            "title": "Assignment Legs",
+            "type": "integer"
+          },
           "duplicates": {
             "title": "Duplicates",
             "type": "integer"
@@ -2528,6 +2752,11 @@
             },
             "title": "Trades",
             "type": "array"
+          },
+          "unmatched": {
+            "default": 0,
+            "title": "Unmatched",
+            "type": "integer"
           }
         },
         "required": [
@@ -2542,16 +2771,44 @@
       },
       "ImportPreviewTrade": {
         "properties": {
+          "close_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Close Reason"
+          },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "title": "Fees",
             "type": "number"
           },
+          "is_assignment_leg": {
+            "default": false,
+            "title": "Is Assignment Leg",
+            "type": "boolean"
+          },
           "is_duplicate": {
             "title": "Is Duplicate",
+            "type": "boolean"
+          },
+          "is_unmatched": {
+            "default": false,
+            "title": "Is Unmatched",
             "type": "boolean"
           },
           "opened_at": {
@@ -2567,8 +2824,15 @@
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "ticker": {
             "title": "Ticker",
@@ -2582,17 +2846,29 @@
               "sell_call",
               "buy_call_close",
               "called_away",
-              "expired"
+              "expired",
+              "buy_stock",
+              "sell_stock",
+              "dividend"
             ],
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "ticker",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "fees",
           "quantity",
@@ -2648,9 +2924,25 @@
             "title": "Positions Created",
             "type": "integer"
           },
+          "skipped_assignment_legs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SuppressedAssignmentLeg"
+            },
+            "title": "Skipped Assignment Legs",
+            "type": "array"
+          },
           "skipped_duplicates": {
             "title": "Skipped Duplicates",
             "type": "integer"
+          },
+          "skipped_unmatched": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SkippedUnmatched"
+            },
+            "title": "Skipped Unmatched",
+            "type": "array"
           }
         },
         "required": [
@@ -3451,6 +3743,11 @@
             ],
             "title": "Closed At"
           },
+          "dividend_income": {
+            "default": 0.0,
+            "title": "Dividend Income",
+            "type": "number"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -3473,6 +3770,11 @@
           "opened_at": {
             "title": "Opened At",
             "type": "string"
+          },
+          "realized_equity_pl": {
+            "default": 0.0,
+            "title": "Realized Equity Pl",
+            "type": "number"
           },
           "shares": {
             "title": "Shares",
@@ -5187,6 +5489,30 @@
         "title": "SettingsResponse",
         "type": "object"
       },
+      "SkippedUnmatched": {
+        "description": "An equity sell skipped at import because no shares were available to draw on.\n\nSurfaced from ``execute_mapped_import`` (issue #388 / PRD #384 AC3c) so the\nuser sees *why* a sell row was not inserted instead of silently dropping it.\nThe import-time pre-check is the user-visible half of the recomputer's\ndefensive ``shares_sold > shares`` guard.",
+        "properties": {
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "opened_at",
+          "quantity"
+        ],
+        "title": "SkippedUnmatched",
+        "type": "object"
+      },
       "StationarityResult": {
         "properties": {
           "adf_statistic": {
@@ -5392,6 +5718,30 @@
         "title": "StrikeRecommendation",
         "type": "object"
       },
+      "SuppressedAssignmentLeg": {
+        "description": "A ``buy_stock`` suppressed at import as a put-assignment delivery leg.\n\nSurfaced from ``execute_mapped_import`` (bug #425) so the user sees that the\nequity share-delivery leg of a put assignment was folded into the assignment\nrather than silently dropped. The assignment already credits the delivered\nshares at strike-based basis; persisting this leg would double the count.",
+        "properties": {
+          "opened_at": {
+            "title": "Opened At",
+            "type": "string"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "ticker": {
+            "title": "Ticker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticker",
+          "opened_at",
+          "quantity"
+        ],
+        "title": "SuppressedAssignmentLeg",
+        "type": "object"
+      },
       "ThesisPutRequest": {
         "description": "Request body for ``PUT /api/positions/{id}/research/thesis``.\n\n``thesis`` is the freeform note body. Empty strings are explicitly\nallowed (they clear the note) — the plan does not forbid empty bodies.\nPydantic enforces the 4000-character ceiling at request validation\ntime; oversize bodies return ``422`` automatically. The router layer\nre-validates server-side for defence in depth, so callers that bypass\nthe model still get a sanitized 422.",
         "properties": {
@@ -5444,14 +5794,6 @@
           "close_reason": {
             "anyOf": [
               {
-                "enum": [
-                  "fifty_pct_target",
-                  "full_expiration",
-                  "rolled",
-                  "closed_early",
-                  "assigned",
-                  "called_away"
-                ],
                 "type": "string"
               },
               {
@@ -5507,8 +5849,15 @@
             "title": "Earnings Buffer Days Hint"
           },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "default": 0.0,
@@ -5529,13 +5878,20 @@
           },
           "quantity": {
             "default": 1,
-            "minimum": 1.0,
+            "minimum": 0.0,
             "title": "Quantity",
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "trade_type": {
             "enum": [
@@ -5545,17 +5901,29 @@
               "sell_call",
               "buy_call_close",
               "called_away",
-              "expired"
+              "expired",
+              "buy_stock",
+              "sell_stock",
+              "dividend"
             ],
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "position_id",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "opened_at"
         ],
@@ -5618,8 +5986,15 @@
             "title": "Closed At"
           },
           "expiration": {
-            "title": "Expiration",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiration"
           },
           "fees": {
             "title": "Fees",
@@ -5646,20 +6021,36 @@
             "type": "integer"
           },
           "strike": {
-            "title": "Strike",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strike"
           },
           "trade_type": {
             "title": "Trade Type",
             "type": "string"
+          },
+          "unit_amount": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Amount"
           }
         },
         "required": [
           "id",
           "position_id",
           "trade_type",
-          "strike",
-          "expiration",
           "premium",
           "fees",
           "quantity",
@@ -5777,7 +6168,10 @@
                   "sell_call",
                   "buy_call_close",
                   "called_away",
-                  "expired"
+                  "expired",
+                  "buy_stock",
+                  "sell_stock",
+                  "dividend"
                 ],
                 "type": "string"
               },
@@ -5898,7 +6292,7 @@
   "info": {
     "description": "Backend API for financial data fetching, caching, and regression analysis",
     "title": "Financial Regression Analysis Tool",
-    "version": "1.6.1"
+    "version": "1.8.0"
   },
   "openapi": "3.1.0",
   "paths": {

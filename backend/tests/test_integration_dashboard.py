@@ -166,8 +166,8 @@ def test_dashboard_populated(client, monkeypatch):
     # Pin "today" so DTE math is deterministic.
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     aapl_id = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
@@ -612,8 +612,8 @@ def test_dashboard_itm_short_dte_action(client, monkeypatch):
 
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     pid = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
@@ -977,8 +977,8 @@ def test_dashboard_leg_deep_itm_call_reports_high(client, monkeypatch):
     )
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     pid = _seed_position(client, ticker="F", shares=100, broker_cost_basis=1500.0)
@@ -1030,8 +1030,8 @@ def test_dashboard_leg_delta_threads_from_chain(client, monkeypatch):
     )
     today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
     monkeypatch.setattr(
-        "app.services.dashboard.date",
-        type("D", (), {"today": staticmethod(lambda: today)}),
+        "app.services.dashboard.market_today",
+        lambda: today,
     )
 
     # Spy on the real derive_open_legs to capture the un-stripped leg dicts.
@@ -1064,3 +1064,357 @@ def test_dashboard_leg_delta_threads_from_chain(client, monkeypatch):
     assert leg["assignment_depth"] == "deep"
     assert leg["current_mid"] == pytest.approx(5.10)
     assert isinstance(leg["current_mid"], float)
+
+
+# ---------------------------------------------------------------------------
+# Issue #375 — expiration cards route to the per-leg BTC decision screen
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_dashboard_expiration_cards_link_to_btc(client, monkeypatch):
+    """C-8 — full stack: an ITM short-DTE leg and an OTM short-DTE aggregate
+    both surface CTAs to the per-leg BTC route, with no `/journal?position=`
+    dead-end (issue #375 AC1/AC2/AC3)."""
+    import re
+
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    # AAPL put @ 175 with price 174 → ITM (per-leg `expiration.itm_short_dte`).
+    # TSLA put @ 200 with price 230 → OTM (aggregate `expiration.short_dte`).
+    quote_responses = {"AAPL": {"lastPrice": 174.0}, "TSLA": {"lastPrice": 230.0}}
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: quote_responses[ticker],
+    )
+
+    today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
+    monkeypatch.setattr(
+        "app.services.dashboard.market_today",
+        lambda: today,
+    )
+
+    aapl_id = _seed_position(client, ticker="AAPL", broker_cost_basis=17000.0)
+    _seed_trade(
+        client,
+        aapl_id,
+        trade_type="sell_put",
+        strike=175.0,
+        expiration="2026-05-08",  # 3 DTE → ITM short-DTE per-leg card
+    )
+    tsla_id = _seed_position(client, ticker="TSLA", broker_cost_basis=20000.0)
+    _seed_trade(
+        client,
+        tsla_id,
+        trade_type="sell_put",
+        strike=200.0,
+        expiration="2026-05-09",  # 4 DTE → OTM short-DTE aggregate card
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    cards_by_id = {a["action_id"]: a for a in data["next_actions"]}
+    assert "expiration.itm_short_dte" in cards_by_id
+    assert "expiration.short_dte" in cards_by_id
+
+    btc_route = re.compile(r"^/positions/[^/]+/legs/[^/]+/btc$")
+    for action_id in ("expiration.itm_short_dte", "expiration.short_dte"):
+        href = cards_by_id[action_id]["cta"]["href"]
+        assert btc_route.match(href), f"{action_id} href not BTC route: {href!r}"
+        assert "/journal?position=" not in href
+
+
+# -- Issue #421 (PRD #415 R3): per-position + account-level day change --------
+#
+# The rich-quote threading refactor stops discarding the closePrice / netChange
+# / netPercentChange fields Schwab already returns on the quote node, so the DAY
+# column and the account-level day-change tile populate from the same fetch.
+
+
+@pytest.mark.integration
+def test_dashboard_positions_carry_day_change(client, monkeypatch):
+    """A configured Schwab quote with netChange / netPercentChange populates the
+    per-position day_change / day_change_pct / day_state fields (#421 R3)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {
+            "lastPrice": 12.5,
+            "mark": 12.5,
+            "closePrice": 12.07,
+            "netChange": 0.43,
+            "netPercentChange": 3.56,
+        },
+    )
+
+    pid = _seed_position(client, ticker="NOK", broker_cost_basis=1207.0, shares=100)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=15.0,
+        expiration="2026-08-15",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    row = next(r for r in data["positions"] if r["ticker"] == "NOK")
+    assert row["day_state"] == "populated"
+    # 0.43 per-share × 100 shares = $43.00 equity day change.
+    assert row["day_change"] == pytest.approx(43.0)
+    # 3.56 (Schwab number) normalized to a fraction.
+    assert row["day_change_pct"] == pytest.approx(0.0356)
+
+
+@pytest.mark.integration
+def test_dashboard_payload_has_account_summary(client, monkeypatch):
+    """The payload carries an account_summary block whose day change sums the
+    per-position equity day changes; reconciliation fields stay unavailable on
+    the #421 spine (#421 R1/R2/R3 wiring)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {
+            "lastPrice": 12.5,
+            "closePrice": 12.07,
+            "netChange": 0.43,
+            "netPercentChange": 3.56,
+        },
+    )
+
+    pid = _seed_position(client, ticker="NOK", broker_cost_basis=1207.0, shares=100)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=15.0,
+        expiration="2026-08-15",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    summary = resp.json()["account_summary"]
+    assert summary is not None
+    assert summary["day_state"] == "populated"
+    assert summary["day_change"] == pytest.approx(43.0)
+    # Broker reconciliation is wired by a later worker — unavailable here.
+    assert summary["account_value"] is None
+    assert summary["cash"] is None
+    assert summary["reconciles"] is False
+
+
+@pytest.mark.integration
+def test_dashboard_no_prior_close_state(client, monkeypatch):
+    """A quote lacking closePrice / netChange yields the explicit no_prior_close
+    state rather than a silent zero (#421 R3 empty state)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 20.0},  # price only, no day fields
+    )
+
+    pid = _seed_position(client, ticker="AAPL", broker_cost_basis=1900.0, shares=100)
+    _seed_trade(
+        client,
+        pid,
+        trade_type="sell_call",
+        strike=25.0,
+        expiration="2026-08-15",
+    )
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    row = next(r for r in data["positions"] if r["ticker"] == "AAPL")
+    assert row["day_state"] == "no_prior_close"
+    assert row["day_change"] is None
+    assert row["day_change_pct"] is None
+    assert data["account_summary"]["day_state"] == "no_prior_close"
+
+
+# ---------------------------------------------------------------------------
+# Issue #417 — honest quote freshness (PRD #415 R5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_dashboard_cache_status_quote_driven(client, monkeypatch):
+    """The status.cache block carries the displayed-quote freshness signal, and
+    the freshness pill is driven by the OLDEST displayed quote — not the
+    research/data cache buckets (the #417 bug).
+
+    Two positions: one with a minute-old quote (fresh under any market-hours
+    reference) and one with a clearly-stale quote. The stale offset must survive
+    the *market-hours-aware* reference: outside RTH the age is measured against
+    the most recent session close (Fri 16:00 ET on a weekend), NOT wall-clock
+    ``now`` (see ``_market_reference_now`` in app/services/dashboard.py). A quote
+    seeded ``now − 3d`` can therefore read as little as ~0.3 market-days old when
+    the suite runs pre-open on a Monday (quote = Fri 09:00 ET, reference = Fri
+    16:00 ET) — which is what made this assertion flake on weekend/pre-open CI
+    runs. Seeding ``now − 6d`` keeps the market-adjusted age ≥ ~3.3 days at every
+    hour of the week, restoring the run-time independence per CLAUDE.md's
+    no-pinned-now guidance.
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    now = datetime.now(timezone.utc)
+    fresh_ms = int((now - timedelta(minutes=1)).timestamp() * 1000)
+    # 6d, not 3d: the age is measured against the most recent session close when
+    # the market is shut, so a 3d seed can fall below the 2d floor on weekend /
+    # pre-open runs. 6d clears it with margin at every run time.
+    stale_ms = int((now - timedelta(days=6)).timestamp() * 1000)
+    quote_responses = {
+        "NOK": {"lastPrice": 12.5, "quoteTime": fresh_ms},
+        "BB": {"lastPrice": 4.2, "quoteTime": stale_ms},
+    }
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: quote_responses[ticker],
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {},
+    )
+
+    _seed_position(client, ticker="NOK", shares=100, broker_cost_basis=1200.0)
+    _seed_position(client, ticker="BB", shares=100, broker_cost_basis=500.0)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    cache = data["status"]["cache"]
+    # New quote-driven fields present alongside the legacy research buckets.
+    assert cache["displayed_total"] == 2
+    assert cache["displayed_stale"] == 1
+    assert cache["stalest_symbol"] == "BB"
+    assert cache["stalest_age_seconds"] >= 2 * 24 * 3600  # ≥2d (6d seed, session-close adjusted)
+
+    rows = {r["ticker"]: r for r in data["positions"]}
+    assert rows["BB"]["quote_stale"] is True
+    assert rows["BB"]["quote_age_seconds"] is not None
+    assert rows["BB"]["quote_fetched_at"] is not None
+    assert rows["NOK"]["quote_stale"] is False
+
+
+@pytest.mark.integration
+def test_dashboard_freshness_null_when_quote_lacks_timestamp(client, monkeypatch):
+    """A quote with no ``quoteTime`` is unassessable — the row gets null age +
+    not-stale, and it is excluded from the displayed-quote count (never a false
+    stale flag)."""
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 9.0},  # no quoteTime
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {},
+    )
+
+    _seed_position(client, ticker="F", shares=100, broker_cost_basis=1500.0)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    row = next(r for r in data["positions"] if r["ticker"] == "F")
+    assert row["quote_age_seconds"] is None
+    assert row["quote_stale"] is False
+    assert data["status"]["cache"]["displayed_total"] == 0
+    assert data["status"]["cache"]["displayed_stale"] == 0
+
+
+# -- R6 dual-basis P&L + raw-basis review trigger (issue #422) ----------------
+
+
+def _seed_dual_basis_sofi(client, monkeypatch):
+    """Seed the SOFI-shaped divergence: broker $5,000, adjusted $4,650 (a closed
+    $3.50 sell_call softens the basis), marked at $41 → raw −$900 (−18%) vs
+    adjusted −$550 (−11.8%). Returns the position id.
+    """
+    _patch_status(monkeypatch, schwab_configured=True, fred_key="abc123")
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_quote",
+        lambda self, ticker: {"lastPrice": 41.0},
+    )
+    monkeypatch.setattr(
+        "app.services.dashboard.SchwabClient.get_option_chain",
+        lambda self, ticker, *a, **kw: {},
+    )
+    today = datetime(2026, 5, 5, tzinfo=timezone.utc).date()
+    monkeypatch.setattr("app.services.dashboard.market_today", lambda: today)
+
+    sofi_id = _seed_position(
+        client, ticker="SOFI", broker_cost_basis=5000.0, shares=100
+    )
+    # A closed premium-bearing leg (3.5 × 100 = $350) reduces the adjusted basis
+    # below broker so raw and adjusted P&L diverge — without leaving an open leg.
+    _seed_trade(
+        client,
+        sofi_id,
+        trade_type="sell_call",
+        strike=55.0,
+        expiration="2026-04-01",
+        premium=3.5,
+        fees=0.0,
+        closed_at="2026-04-02T00:00:00Z",
+        close_reason="full_expiration",
+    )
+    return sofi_id
+
+
+@pytest.mark.integration
+def test_dashboard_position_carries_raw_pl(client, monkeypatch):
+    """The payload row carries raw broker-basis P&L alongside the adjusted headline."""
+    _seed_dual_basis_sofi(client, monkeypatch)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    row = next(r for r in data["positions"] if r["ticker"] == "SOFI")
+
+    # Adjusted headline (basis 4,650 → −$550) stays the primary figures.
+    assert row["unrealized_pl"] == pytest.approx(-550.0, abs=1.0)
+    # Raw broker-basis secondary (basis 5,000 → −$900 / −18%).
+    assert row["raw_unrealized_pl"] == pytest.approx(-900.0, abs=1.0)
+    assert row["raw_pl_pct"] == pytest.approx(-0.18, abs=0.001)
+    # The raw drawdown is deeper than the softer adjusted headline.
+    assert row["raw_unrealized_pl"] < row["unrealized_pl"]
+
+
+@pytest.mark.integration
+def test_review_card_reads_raw_figure(client, monkeypatch):
+    """The P0 review card fires on the RAW drawdown the adjusted basis hid.
+
+    Adjusted −11.8% is under the default −15% review threshold; raw −18.0% is
+    past it. The card must fire, label its firing basis raw, and report the raw
+    figure (ADR #416 — the whole point of R6).
+    """
+    _seed_dual_basis_sofi(client, monkeypatch)
+
+    resp = client.get("/api/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    loser = next(
+        (a for a in data["next_actions"] if a["action_id"] == "position.large_loser"),
+        None,
+    )
+    assert loser is not None, "raw −18% drawdown must fire the review card"
+    assert loser["subject"]["ticker"] == "SOFI"
+    assert loser["trigger_basis"] == "raw"
+    # Subject + reason report the RAW figure, not the softer adjusted −$550.
+    assert "-$900" in loser["subject"]["amount"]
+    assert "raw broker basis" in loser["reason"]
