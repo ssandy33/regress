@@ -76,7 +76,15 @@ function cachePill(cache) {
 
 function journalPill(journal) {
   const count = journal?.positions_count ?? 0;
-  return { state: 'neutral', label: `Journal ${count} positions` };
+  // Informational count, NOT a health signal (#437): render a numeric badge
+  // rather than a grey status dot so it doesn't read as "journal degraded"
+  // next to the green health pills. Links to /journal.
+  return {
+    variant: 'count',
+    count,
+    label: count === 1 ? 'position in Journal' : 'positions in Journal',
+    title: `${count} open ${count === 1 ? 'position' : 'positions'} in your journal`,
+  };
 }
 
 export default function StatusStrip({ status }) {

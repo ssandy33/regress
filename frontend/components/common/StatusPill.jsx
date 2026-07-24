@@ -11,6 +11,12 @@ import Link from 'next/link';
  * onto the rendered element (e.g. ``{ 'data-freshness-state': 'stale' }``) so
  * callers can attach frozen test/contract attributes without bloating the
  * primitive's prop list.
+ *
+ * ``variant`` (#437): ``'status'`` (default) renders the colored health dot.
+ * ``'count'`` renders a numeric badge instead of a dot — for INFORMATIONAL
+ * counts (e.g. the journal position count) that share the strip but are NOT
+ * health signals. A grey status dot in a row of green health dots reads as
+ * "degraded"; the count badge makes "this is a tally, not a status" explicit.
  */
 const STATE_CLASSES = {
   ok: 'bg-emerald-500',
@@ -26,14 +32,26 @@ export default function StatusPill({
   dataTestid,
   title,
   dataAttrs = {},
+  variant = 'status',
+  count,
 }) {
   const dot = STATE_CLASSES[state] ?? STATE_CLASSES.neutral;
-  const inner = (
-    <>
+  const marker =
+    variant === 'count' ? (
+      // The number is meaningful content (a tally), so it stays readable to
+      // assistive tech — unlike the health dot, whose color carries nothing.
+      <span className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold tabular-nums">
+        {count}
+      </span>
+    ) : (
       <span
         className={`inline-block w-2.5 h-2.5 rounded-full ${dot}`}
         aria-hidden="true"
       />
+    );
+  const inner = (
+    <>
+      {marker}
       <span className="text-sm text-slate-700 dark:text-slate-200">{label}</span>
     </>
   );
