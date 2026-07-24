@@ -78,17 +78,23 @@ test.describe('Dashboard journal count pill (#437) @e2e', () => {
     const journal = page.getByTestId('status-pill-journal');
     await expect(journal).toBeVisible();
 
-    // The number is present as a tally, and the copy names it as a journal
-    // count — NOT the old health-pill phrasing "Journal 4 positions".
-    await expect(journal).toContainText('4');
+    // The tally is an exact numeric badge child — the count itself, not a
+    // color dot that happens to sit beside a new label.
+    await expect(journal.locator('span').filter({ hasText: /^4$/ })).toHaveCount(1);
+    // It is NOT a health pill: health dots are aria-hidden color spans; the
+    // count variant carries no such dot.
+    await expect(journal.locator('span[aria-hidden="true"]')).toHaveCount(0);
     await expect(journal).toContainText('positions in Journal');
+    // Descriptive hover names it as a journal tally, not a status.
+    await expect(journal).toHaveAttribute('title', '4 open positions in your journal');
 
     // Navigational: the count links to the journal.
     await expect(journal).toHaveAttribute('href', '/journal');
 
-    // It is NOT a health pill: the three real health pills carry no numeric
-    // content in their dot, so the journal item alone surfaces its count text.
-    await expect(page.getByTestId('status-pill-schwab')).toContainText('Schwab connected');
+    // Contrast: the real health pills DO carry an aria-hidden color dot.
+    await expect(
+      page.getByTestId('status-pill-schwab').locator('span[aria-hidden="true"]')
+    ).toHaveCount(1);
   });
 
   test('singular copy when exactly one journaled position', async ({ page }) => {
@@ -100,8 +106,9 @@ test.describe('Dashboard journal count pill (#437) @e2e', () => {
     await page.waitForLoadState('networkidle');
 
     const journal = page.getByTestId('status-pill-journal');
-    await expect(journal).toContainText('1');
+    await expect(journal.locator('span').filter({ hasText: /^1$/ })).toHaveCount(1);
     await expect(journal).toContainText('position in Journal');
     await expect(journal).not.toContainText('positions in Journal');
+    await expect(journal).toHaveAttribute('title', '1 open position in your journal');
   });
 });
