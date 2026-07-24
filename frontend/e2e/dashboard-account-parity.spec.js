@@ -202,4 +202,33 @@ test.describe('Dashboard account parity (#420) @e2e', () => {
       "doesn't match broker"
     );
   });
+
+  test('reconcile badge renders INSIDE the account tile; strip tiles share height parity (#436)', async ({
+    page,
+  }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, kpis: KPIS });
+    await page.goto('/dashboard');
+    await page.waitForLoadState('networkidle');
+
+    // The badge is a DESCENDANT of the account-value tile's bordered box —
+    // not a sibling floating below it (the #436 defect).
+    const accountValue = page.getByTestId('kpi-account-value');
+    await expect(
+      accountValue.locator('[data-reconcile-badge="reconciled"]')
+    ).toHaveCount(1);
+
+    // The three tiles in the reconciliation strip share one height baseline
+    // (the badge no longer makes the account tile taller than its neighbours).
+    const [aBox, cBox, dBox] = await Promise.all([
+      page.getByTestId('kpi-account-value').boundingBox(),
+      page.getByTestId('kpi-cash').boundingBox(),
+      page.getByTestId('kpi-day-change').boundingBox(),
+    ]);
+    expect(aBox).not.toBeNull();
+    expect(cBox).not.toBeNull();
+    expect(dBox).not.toBeNull();
+    // Allow 1px for sub-pixel rounding.
+    expect(Math.abs(aBox.height - cBox.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(aBox.height - dBox.height)).toBeLessThanOrEqual(1);
+  });
 });

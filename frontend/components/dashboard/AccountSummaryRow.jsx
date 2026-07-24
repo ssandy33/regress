@@ -145,8 +145,11 @@ export default function AccountSummaryRow({ summary, loading }) {
       className="grid grid-cols-2 lg:grid-cols-4 gap-4"
     >
       {/* Account value hero — emphasis (blue ring + span) applied by the parent
-          wrapper so the shared StatCard recipe stays intact (design spec). */}
-      <div className="col-span-2 lg:col-span-2 ring-1 ring-blue-500/40 rounded-lg relative">
+          wrapper so the shared StatCard recipe stays intact (design spec).
+          The reconcile badge is passed as the StatCard `footer` so it renders
+          INSIDE the tile's bordered box rather than escaping below it (#436);
+          `h-full` keeps the three tiles on one height baseline. */}
+      <div className="col-span-2 lg:col-span-2 ring-1 ring-blue-500/40 rounded-lg h-full">
         <StatCard
           label="Account value"
           value={accountValue}
@@ -157,12 +160,8 @@ export default function AccountSummaryRow({ summary, loading }) {
             'data-reconciles': summary.reconciles ? 'true' : 'false',
             'data-reconcile-state': reconcileState,
           }}
+          footer={connected ? <ReconcileBadge state={reconcileState} /> : null}
         />
-        {connected && (
-          <div className="px-4 pb-3 -mt-2">
-            <ReconcileBadge state={reconcileState} />
-          </div>
-        )}
       </div>
       <StatCard
         label="Cash & sweep"
