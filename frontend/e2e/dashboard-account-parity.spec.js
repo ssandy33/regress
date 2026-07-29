@@ -208,11 +208,12 @@ test.describe('Dashboard account parity (#420) @e2e', () => {
   }) => {
     await mockDashboard(page, { ...BASE_PAYLOAD, kpis: KPIS });
     await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
 
     // The badge is a DESCENDANT of the account-value tile's bordered box —
-    // not a sibling floating below it (the #436 defect).
+    // not a sibling floating below it (the #436 defect). The visibility +
+    // count assertions auto-wait for render, so no whole-page networkidle.
     const accountValue = page.getByTestId('kpi-account-value');
+    await expect(accountValue).toBeVisible();
     await expect(
       accountValue.locator('[data-reconcile-badge="reconciled"]')
     ).toHaveCount(1);
