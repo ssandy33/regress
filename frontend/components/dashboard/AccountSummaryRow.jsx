@@ -142,13 +142,19 @@ export default function AccountSummaryRow({ summary, loading }) {
   return (
     <div
       data-testid="dashboard-account-summary"
-      className="grid grid-cols-2 lg:grid-cols-4 gap-4"
+      className="grid grid-cols-2 lg:grid-cols-4 gap-4 auto-rows-fr"
     >
       {/* Account value hero — emphasis (blue ring + span) applied by the parent
           wrapper so the shared StatCard recipe stays intact (design spec).
           The reconcile badge is passed as the StatCard `footer` so it renders
-          INSIDE the tile's bordered box rather than escaping below it (#436);
-          `h-full` keeps the three tiles on one height baseline. */}
+          INSIDE the tile's bordered box rather than escaping below it (#436).
+
+          Height parity (#436) needs BOTH pieces: `h-full` stretches a tile to
+          its own grid row, and `auto-rows-fr` makes every row equal. Below
+          `lg` the hero spans both columns and so sits on a *separate* row from
+          Cash & sweep / Day change — `h-full` alone would only equalise within
+          each row, leaving the hero free to be taller. At `lg` there is a
+          single row and `auto-rows-fr` is a no-op. */}
       <div className="col-span-2 lg:col-span-2 ring-1 ring-blue-500/40 rounded-lg h-full">
         <StatCard
           label="Account value"

@@ -220,16 +220,30 @@ test.describe('Dashboard account parity (#420) @e2e', () => {
 
     // The three tiles in the reconciliation strip share one height baseline
     // (the badge no longer makes the account tile taller than its neighbours).
-    const [aBox, cBox, dBox] = await Promise.all([
-      page.getByTestId('kpi-account-value').boundingBox(),
-      page.getByTestId('kpi-cash').boundingBox(),
-      page.getByTestId('kpi-day-change').boundingBox(),
-    ]);
-    expect(aBox).not.toBeNull();
-    expect(cBox).not.toBeNull();
-    expect(dBox).not.toBeNull();
-    // Allow 1px for sub-pixel rounding.
-    expect(Math.abs(aBox.height - cBox.height)).toBeLessThanOrEqual(1);
-    expect(Math.abs(aBox.height - dBox.height)).toBeLessThanOrEqual(1);
+    //
+    // Asserted at BOTH breakpoints the component defines. These are different
+    // layouts, not the same one resized: at `lg` all three tiles sit on one
+    // grid row, but below `lg` the hero spans both columns onto a row of its
+    // own — so `h-full` alone cannot equalise it against Cash & sweep / Day
+    // change, and `auto-rows-fr` on the grid is what carries the narrow case.
+    // The default 1280px viewport only ever exercised the wide layout.
+    for (const [name, width, height] of [
+      ['narrow (grid-cols-2)', 800, 900],
+      ['wide (lg:grid-cols-4)', 1280, 900],
+    ]) {
+      await page.setViewportSize({ width, height });
+
+      const [aBox, cBox, dBox] = await Promise.all([
+        page.getByTestId('kpi-account-value').boundingBox(),
+        page.getByTestId('kpi-cash').boundingBox(),
+        page.getByTestId('kpi-day-change').boundingBox(),
+      ]);
+      expect(aBox, name).not.toBeNull();
+      expect(cBox, name).not.toBeNull();
+      expect(dBox, name).not.toBeNull();
+      // Allow 1px for sub-pixel rounding.
+      expect(Math.abs(aBox.height - cBox.height), name).toBeLessThanOrEqual(1);
+      expect(Math.abs(aBox.height - dBox.height), name).toBeLessThanOrEqual(1);
+    }
   });
 });
