@@ -202,4 +202,48 @@ test.describe('Dashboard account parity (#420) @e2e', () => {
       "doesn't match broker"
     );
   });
+
+  test('reconcile badge renders INSIDE the account tile; strip tiles share height parity (#436)', async ({
+    page,
+  }) => {
+    await mockDashboard(page, { ...BASE_PAYLOAD, kpis: KPIS });
+    await page.goto('/dashboard');
+
+    // The badge is a DESCENDANT of the account-value tile's bordered box —
+    // not a sibling floating below it (the #436 defect). The visibility +
+    // count assertions auto-wait for render, so no whole-page networkidle.
+    const accountValue = page.getByTestId('kpi-account-value');
+    await expect(accountValue).toBeVisible();
+    await expect(
+      accountValue.locator('[data-reconcile-badge="reconciled"]')
+    ).toHaveCount(1);
+
+    // The three tiles in the reconciliation strip share one height baseline
+    // (the badge no longer makes the account tile taller than its neighbours).
+    //
+    // Asserted at BOTH breakpoints the component defines. These are different
+    // layouts, not the same one resized: at `lg` all three tiles sit on one
+    // grid row, but below `lg` the hero spans both columns onto a row of its
+    // own — so `h-full` alone cannot equalise it against Cash & sweep / Day
+    // change, and `auto-rows-fr` on the grid is what carries the narrow case.
+    // The default 1280px viewport only ever exercised the wide layout.
+    for (const [name, width, height] of [
+      ['narrow (grid-cols-2)', 800, 900],
+      ['wide (lg:grid-cols-4)', 1280, 900],
+    ]) {
+      await page.setViewportSize({ width, height });
+
+      const [aBox, cBox, dBox] = await Promise.all([
+        page.getByTestId('kpi-account-value').boundingBox(),
+        page.getByTestId('kpi-cash').boundingBox(),
+        page.getByTestId('kpi-day-change').boundingBox(),
+      ]);
+      expect(aBox, name).not.toBeNull();
+      expect(cBox, name).not.toBeNull();
+      expect(dBox, name).not.toBeNull();
+      // Allow 1px for sub-pixel rounding.
+      expect(Math.abs(aBox.height - cBox.height), name).toBeLessThanOrEqual(1);
+      expect(Math.abs(aBox.height - dBox.height), name).toBeLessThanOrEqual(1);
+    }
+  });
 });
