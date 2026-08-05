@@ -20,6 +20,6 @@ pytest-cov==6.0.0
 schemathesis>=4.0,<5
 scipy==1.14.1
 PyJWT==2.13.0
-cryptography==48.0.1
+cryptography==50.0.0
 PyYAML==6.0.2
 yfinance==0.2.50
