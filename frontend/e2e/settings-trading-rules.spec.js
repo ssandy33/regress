@@ -33,7 +33,7 @@ function defaultRulesConfig() {
       delta_range_cc: { min: 0.2, max: 0.35 },
       min_monthly_return_pct: 2.0,
       earnings_buffer_days: 7,
-      min_call_distance_pct: 5.0,
+      min_call_distance_pct: 10.0,
       min_call_distance_from_cost_basis_pct: 0.0,
     },
     position: {
@@ -432,6 +432,7 @@ test.describe('Settings → Trading Rules — save lifecycle @smoke @e2e', () =>
     await openTradingRulesTab(page);
 
     await page.getByTestId('rules-field-min_open_interest').fill('999');
+    await page.getByTestId('rules-field-min_call_distance_pct').fill('5');
     await page.getByTestId('settings-reset-rules').click();
     await expect(page.getByTestId('confirm-dialog')).toBeVisible();
     await page.getByTestId('confirm-dialog-confirm').click();
@@ -439,6 +440,10 @@ test.describe('Settings → Trading Rules — save lifecycle @smoke @e2e', () =>
     await expect(
       page.getByTestId('rules-field-min_open_interest'),
     ).toHaveValue('500');
+    // The covered-call distance rule resets to the 10% default (issue TBD).
+    await expect(
+      page.getByTestId('rules-field-min_call_distance_pct'),
+    ).toHaveValue('10');
     // Optional fields reset to unset, not to a proposed number.
     await expect(
       page.getByTestId('rules-field-max_open_positions'),

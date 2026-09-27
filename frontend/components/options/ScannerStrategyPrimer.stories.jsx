@@ -37,6 +37,11 @@ const meta = {
   },
   argTypes: {
     strategy: { control: { type: 'inline-radio' }, options: ['cc', 'csp'] },
+    callDistancePct: {
+      control: { type: 'number', step: 0.5, min: 0 },
+      description:
+        'Covered-call distance threshold in percent (the "10% rule"); defaults to the Settings catalog default.',
+    },
   },
 };
 
@@ -51,6 +56,12 @@ export const CoveredCallCollapsed = {
 export const CoveredCallExpanded = {
   name: 'Covered Call — Expanded',
   args: { strategy: 'cc' },
+  decorators: [withPrefilledStorage(false)],
+};
+
+export const CoveredCallCustomThreshold = {
+  name: 'Covered Call — Custom threshold (7.5%)',
+  args: { strategy: 'cc', callDistancePct: 7.5 },
   decorators: [withPrefilledStorage(false)],
 };
 
