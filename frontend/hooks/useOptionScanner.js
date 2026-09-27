@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { scanOptions } from '../api/client';
+import { DEFAULT_MIN_CALL_DISTANCE_PCT } from '../components/settings/rulesFieldCatalog';
 
 function computeCapitalFields(recommendations, strategy, capitalAvailable, currentPrice) {
   const capital = parseFloat(capitalAvailable);
@@ -64,7 +65,7 @@ export function useOptionScanner() {
   const [minDte, setMinDte] = useState(25);
   const [maxDte, setMaxDte] = useState(50);
   const [returnTarget, setReturnTarget] = useState(1.0);
-  const [callDistance, setCallDistance] = useState(10.0);
+  const [callDistance, setCallDistance] = useState(DEFAULT_MIN_CALL_DISTANCE_PCT);
   const [minDelta, setMinDelta] = useState(0.15);
   const [maxDelta, setMaxDelta] = useState(0.35);
   const [earningsBuffer, setEarningsBuffer] = useState(5);
@@ -145,7 +146,7 @@ export function useOptionScanner() {
     setMinDte(25);
     setMaxDte(50);
     setReturnTarget(1.0);
-    setCallDistance(10.0);
+    setCallDistance(DEFAULT_MIN_CALL_DISTANCE_PCT);
     setMinDelta(0.15);
     setMaxDelta(0.35);
     setEarningsBuffer(5);

@@ -306,3 +306,13 @@ export const FIELDS = {
     },
   ],
 };
+
+/**
+ * The single frontend default for the covered-call distance rule
+ * (`min_call_distance_pct`, the "10% rule"). Derived from the catalog entry so
+ * the scanner hook, the filter fallback and the strategy primer cannot drift
+ * from the Settings default.
+ */
+export const DEFAULT_MIN_CALL_DISTANCE_PCT = FIELDS.entry.find(
+  (f) => f.key === 'min_call_distance_pct',
+).default;

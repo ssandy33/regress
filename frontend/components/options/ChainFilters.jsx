@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { DEFAULT_MIN_CALL_DISTANCE_PCT } from '../settings/rulesFieldCatalog';
 
 export default function ChainFilters({
   ticker, setTicker,
@@ -143,7 +144,7 @@ export default function ChainFilters({
                   type="number"
                   step="0.5"
                   value={callDistance}
-                  onChange={(e) => setCallDistance(parseFloat(e.target.value) || 10)}
+                  onChange={(e) => setCallDistance(parseFloat(e.target.value) || DEFAULT_MIN_CALL_DISTANCE_PCT)}
                   className={inputClass}
                 />
               </div>

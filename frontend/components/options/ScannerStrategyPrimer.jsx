@@ -6,9 +6,15 @@
 // has read it. Reacts to the active `strategy` prop so the copy and the
 // localStorage key swap together.
 //
+// The covered-call "when to use" sentence names the live call-distance
+// threshold (`callDistancePct`, the same value the filter input sends with the
+// scan) rather than a hardcoded 10 / 110.
+//
 // Spec: frontend/design-specs/scanner-education-v0.5.7.md (Affordance 1)
 
 import { useState } from 'react';
+import { DEFAULT_MIN_CALL_DISTANCE_PCT } from '../settings/rulesFieldCatalog';
+import { formatThresholdPct } from './scannerRejectionLabels';
 
 const COPY = {
   cc: {
@@ -21,8 +27,9 @@ const COPY = {
       'If the stock closes above the strike, your shares get called away at that strike — capping your upside.',
       'Best when you are neutral-to-mildly-bullish and would be happy to sell at the strike.',
     ],
-    whenToUse:
-      'Use this on shares you already own and would not mind parting with at the strike price. The 10% rule limits the strike to no less than ~90% of cost basis so you cannot be forced to sell at a loss.',
+    // `t` is the call-distance threshold in percent (e.g. 10).
+    whenToUse: (t) =>
+      `Use this on shares you already own and would not mind parting with at the strike price. The ${formatThresholdPct(t)}% rule requires the strike to be at least ${formatThresholdPct(100 + t)}% of your cost basis, so if your shares are called away, you lock in at least a ${formatThresholdPct(t)}% gain.`,
   },
   csp: {
     title: 'Cash-Secured Put — what you are about to do',
@@ -70,7 +77,15 @@ function writePersistedCollapsed(key, collapsed) {
   }
 }
 
-export default function ScannerStrategyPrimer({ strategy = 'cc' }) {
+// Fall back to the catalog default when the threshold is missing, not a
+// finite number, or negative.
+function resolveCallDistancePct(value) {
+  const n = Number(value);
+  if (value === null || value === undefined || value === '') return DEFAULT_MIN_CALL_DISTANCE_PCT;
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MIN_CALL_DISTANCE_PCT;
+}
+
+export default function ScannerStrategyPrimer({ strategy = 'cc', callDistancePct }) {
   const normalized = normalizeStrategy(strategy);
   const storageKey = `${STORAGE_KEY_PREFIX}${normalized}`;
 
@@ -89,6 +104,10 @@ export default function ScannerStrategyPrimer({ strategy = 'cc' }) {
 
   const copy = COPY[normalized];
   const expanded = !collapsed;
+  const whenToUse =
+    typeof copy.whenToUse === 'function'
+      ? copy.whenToUse(resolveCallDistancePct(callDistancePct))
+      : copy.whenToUse;
 
   const handleToggle = () => {
     const nextCollapsed = !collapsed;
@@ -141,9 +160,12 @@ export default function ScannerStrategyPrimer({ strategy = 'cc' }) {
               <li key={i}>{b}</li>
             ))}
           </ul>
-          <p className="text-xs text-slate-600 dark:text-slate-300">
+          <p
+            data-testid="scanner-strategy-primer-when-to-use"
+            className="text-xs text-slate-600 dark:text-slate-300"
+          >
             <span className="font-semibold">When to use it: </span>
-            {copy.whenToUse}
+            {whenToUse}
           </p>
         </div>
       )}
