@@ -14,6 +14,7 @@ from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
 from app.services.alpha_vantage_client import get_next_earnings_date
 from app.services.greeks import calculate_greeks
+from app.services.covered_call_rule import fails_10pct_raw, meets_call_distance
 from app.services.rejection_messages import HumanizeContext, humanize_reasons
 from app.services.rules_config import DEFAULT_RULES_CONFIG
 from app.utils.parsing import to_float, to_int
@@ -510,17 +511,23 @@ class OptionScanner:
 
         # Strategy-specific strike filter
         if req.strategy == "covered_call":
-            min_strike = req.cost_basis * (1 + req.min_call_distance_pct / 100)
-            if strike < min_strike:
-                distance = ((strike - req.cost_basis) / req.cost_basis) * 100
+            # Distance rule, evaluated at cent precision so the decision
+            # agrees with the "at least $Z" the rejection message names.
+            fails_margin = not meets_call_distance(
+                strike, req.cost_basis, req.min_call_distance_pct
+            )
+            if fails_margin:
                 reasons.append(
-                    f"fails_10pct_rule: strike {distance:.1f}% above basis, "
-                    f"requires {req.min_call_distance_pct}%"
+                    fails_10pct_raw(strike, req.cost_basis, req.min_call_distance_pct)
                 )
             # Cost-basis floor — an independent rule from the distance margin
             # above (PRD #209 §R3). A strike below the cost-basis floor locks
             # in a share loss if assigned. Gated on the per-request toggle.
-            if req.cost_basis_floor_enabled:
+            # Folded into ``fails_10pct_rule`` (issue TBD): it is only
+            # evaluated when the margin passed, so a below-basis strike is
+            # reported once. It still fires when the floor is configured
+            # stricter than the margin, for strikes in [Z_margin, Z_floor).
+            if req.cost_basis_floor_enabled and not fails_margin:
                 floor_pct = req.min_call_distance_from_cost_basis_pct or 0.0
                 cost_basis_floor = req.cost_basis * (1 + floor_pct / 100)
                 if strike < cost_basis_floor:
@@ -580,8 +587,7 @@ class OptionScanner:
     def _passes_10pct_rule(self, req: OptionScanRequest, strike: float) -> bool:
         if req.strategy != "covered_call" or not req.cost_basis:
             return True
-        min_strike = req.cost_basis * (1 + req.min_call_distance_pct / 100)
-        return strike >= min_strike
+        return meets_call_distance(strike, req.cost_basis, req.min_call_distance_pct)
 
     # ---- Metrics ----
 

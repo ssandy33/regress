@@ -1,8 +1,8 @@
 """Humanize options-scanner rejection codes into plain-English sentences.
 
 The :mod:`app.services.options_scanner` module emits machine-readable rejection
-strings (``"fails_10pct_rule: strike 645.7% above basis, requires 10.0%"``) so
-the raw stream is greppable in tests and logs. Phase A (#190) layers a human
+strings (``"fails_10pct_rule: strike 9.8% above basis, requires 10.0% (strike
+$14.50, basis $13.21, min strike $14.53)"``) so the raw stream is greppable in tests and logs. Phase A (#190) layers a human
 sentence on top of each raw code so the scanner UI can speak plain English to
 less-experienced wheel traders.
 
@@ -22,15 +22,18 @@ from __future__ import annotations
 import re
 from typing import Optional, TypedDict
 
+from app.services.covered_call_rule import (
+    fails_10pct_sentence,
+    parse_fails_10pct,
+    required_call_strike,
+)
+
 # Regex patterns are intentionally tolerant: they grab the floating-point or
 # integer values out of the raw f-string output produced by
 # ``OptionScanner._check_rejection`` and the inline ``return_*`` blocks in
 # ``OptionScanner.scan``. If a pattern fails to match we fall back to the raw
-# string — never crash.
-_FAILS_10PCT_RE = re.compile(
-    r"^fails_10pct_rule:\s*strike\s*(?P<pct>-?\d+(?:\.\d+)?)%\s*above basis,\s*"
-    r"requires\s*(?P<min>-?\d+(?:\.\d+)?)%\s*$"
-)
+# string — never crash. The ``fails_10pct_rule`` parser lives in
+# :mod:`app.services.covered_call_rule` (shared with the scanner and relax).
 _ITM_PUT_RE = re.compile(
     r"^itm_put:\s*strike\s*\$(?P<strike>-?\d+(?:\.\d+)?)\s*>\s*"
     r"price\s*\$(?P<price>-?\d+(?:\.\d+)?)\s*$"
@@ -136,20 +139,25 @@ def _humanize_one(raw: str, ctx: HumanizeContext) -> str:
 
 
 def _fmt_fails_10pct(raw: str, ctx: HumanizeContext) -> str:
-    """Render ``fails_10pct_rule: strike X% above basis, requires Y%``."""
-    match = _FAILS_10PCT_RE.match(raw)
-    if not match:
+    """Render ``fails_10pct_rule`` via the canonical covered-call sentence.
+
+    New-format raw strings carry strike, basis and the required strike. A
+    legacy raw string (no dollar suffix) falls back to ``ctx["cost_basis"]``
+    to compute the required strike; with no basis either, it renders the
+    degraded sentence without dollar figures.
+    """
+    parts = parse_fails_10pct(raw)
+    if parts is None:
         return raw
-    pct = float(match.group("pct"))
-    min_pct = float(match.group("min"))
-    cost_basis = ctx.get("cost_basis")
-    basis_clause = (
-        f"your ${cost_basis:.2f} basis" if cost_basis is not None else "your cost basis"
-    )
-    return (
-        f"Strike sits {pct:.1f}% above {basis_clause}, but the {min_pct:.1f}% "
-        "rule requires at least that much room."
-    )
+    strike = parts["strike"]
+    basis = parts["basis"]
+    min_strike = parts["min_strike"]
+    if basis is None or min_strike is None:
+        ctx_basis = ctx.get("cost_basis")
+        if ctx_basis is not None:
+            basis = float(ctx_basis)
+            min_strike = required_call_strike(basis, parts["min"])
+    return fails_10pct_sentence(strike, basis, parts["min"], parts["pct"], min_strike)
 
 
 def _fmt_itm_put(raw: str, ctx: HumanizeContext) -> str:

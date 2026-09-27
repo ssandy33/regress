@@ -112,7 +112,7 @@ def test_cc_scan_1321_basis_rejects_1450_accepts_1500(client):
     assert recs[0]["rule_compliance"]["passes_10pct_rule"] is True
 
 
-@pytest.mark.tdd_red
+@pytest.mark.integration
 def test_cc_scan_below_basis_reports_single_rule(client):
     """AC3 — strike $14 on a $20 basis fails once, not twice."""
     data = _scan(
@@ -125,7 +125,7 @@ def test_cc_scan_below_basis_reports_single_rule(client):
     assert not any(c.startswith("below_cost_basis") for c in codes)
 
 
-@pytest.mark.tdd_red
+@pytest.mark.integration
 def test_cc_scan_request_threshold_flows_into_human_reason(client):
     """AC2 — a per-request T=7.5 is the T named in the sentence."""
     data = _scan(

@@ -807,7 +807,7 @@ def _reasons_for(req: OptionScanRequest, strike: float, current_price: float = 1
 
 
 class TestCoveredCallDistanceRule:
-    @pytest.mark.tdd_red
+    @pytest.mark.unit
     def test_check_rejection_1321_strike_1450_fails_with_min_strike_1453(self):
         reasons = _reasons_for(_cc_rule_request(13.21), 14.50)
         assert reasons == [
@@ -815,17 +815,17 @@ class TestCoveredCallDistanceRule:
             "(strike $14.50, basis $13.21, min strike $14.53)"
         ]
 
-    @pytest.mark.tdd_red
+    @pytest.mark.unit
     def test_check_rejection_1321_strike_1500_passes(self):
         assert _reasons_for(_cc_rule_request(13.21), 15.00) == []
 
-    @pytest.mark.tdd_red
+    @pytest.mark.unit
     def test_check_rejection_exactly_110_not_rejected(self):
         # 10.0 * 1.10 == 11.000000000000002 in raw float math — a $11.00
         # strike must pass the 10% rule on a $10.00 basis.
         assert _reasons_for(_cc_rule_request(10.0), 11.00, current_price=10.5) == []
 
-    @pytest.mark.tdd_red
+    @pytest.mark.unit
     @pytest.mark.parametrize(
         "strike,basis,expected_pass",
         [
@@ -848,14 +848,14 @@ class TestCoveredCallDistanceRule:
         assert scanner._passes_10pct_rule(req, strike) is expected_pass
         assert fired is (not expected_pass)
 
-    @pytest.mark.tdd_red
+    @pytest.mark.unit
     def test_fold_below_basis_emits_only_fails_10pct(self):
         reasons = _reasons_for(_cc_rule_request(13.21, floor_enabled=True), 12.50)
         assert len(reasons) == 1
         assert reasons[0].startswith("fails_10pct_rule")
         assert not any(r.startswith("below_cost_basis") for r in reasons)
 
-    @pytest.mark.tdd_red
+    @pytest.mark.unit
     def test_floor_stricter_than_margin_still_emits_below_cost_basis(self):
         # T=0, floor=5% → margin strike $20.00, floor strike $21.00. A $20.50
         # strike clears the margin but sits in the [Z_margin, Z_floor) band.
