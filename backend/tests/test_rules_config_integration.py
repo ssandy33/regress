@@ -304,16 +304,28 @@ def _schwab_call_chain(strike: float, *, oi: int, dte: int = 30):
 
 @pytest.mark.integration
 def test_cc_scan_surfaces_below_cost_basis_reason(client):
-    """A CC strike below cost basis is flagged ``below_cost_basis``, not dropped."""
+    """A CC strike below the cost-basis floor is flagged ``below_cost_basis``, not dropped.
+
+    Bridge edit (issue TBD): ``below_cost_basis`` is now folded into
+    ``fails_10pct_rule`` whenever the margin rule fires, so this test pins the
+    only configuration that still reports it — a floor stricter than the
+    margin (T=0, floor=5%) with the strike in the ``[$20.00, $21.00)`` band.
+    """
     _approve_watchlist(client, "TEST")  # #322 gate — approve before scanning.
-    # Strike $14 sits below the $20 cost basis.
-    chain = _schwab_call_chain(14.0, oi=500)
+    # Strike $20.50 clears the 0% margin but sits below the $21.00 floor.
+    chain = _schwab_call_chain(20.5, oi=500)
     with patch.object(OptionScanner, "_get_vix", return_value=None), patch(
         "app.services.options_scanner.get_next_earnings_date", return_value=None
     ), patch.object(SchwabClient, "get_option_chain", return_value=chain):
         resp = client.post(
             "/api/options/scan",
-            json={"ticker": "TEST", "strategy": "covered_call", "cost_basis": 20.0},
+            json={
+                "ticker": "TEST",
+                "strategy": "covered_call",
+                "cost_basis": 20.0,
+                "min_call_distance_pct": 0,
+                "min_call_distance_from_cost_basis_pct": 5,
+            },
         )
     assert resp.status_code == 200
     rejected = resp.json()["rejected"]
@@ -324,7 +336,10 @@ def test_cc_scan_surfaces_below_cost_basis_reason(client):
     ]
     assert below, "expected a below_cost_basis rejection"
     # The candidate is present (not silently dropped) with a human sentence.
-    assert below[0]["strike"] == 14.0
+    assert below[0]["strike"] == 20.5
+    assert below[0]["rejection_reasons"] == [
+        "below_cost_basis: strike $20.50 < floor $21.00"
+    ]
     assert any("cost-basis floor" in s for s in below[0]["human_reasons"])
 
 
