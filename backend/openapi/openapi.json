@@ -2560,7 +2560,7 @@
       },
       "EntryRules": {
         "additionalProperties": false,
-        "description": "Entry rules — what makes a good entry (PRD #209 §R3).\n\nCost-basis-relative covered-call rules\n--------------------------------------\nThis group carries **two distinct** covered-call cost-basis rules. They are\nindependent rules (PRD #209 §R3 / ADR-002 D3) and both are measured from the\nposition's adjusted **cost basis** — never from spot price. ADR-002's\n\"One correction to PRD #209\" established that the scanner already measures\nthe covered-call distance rule from cost basis, not from current price.\n\n- ``min_call_distance_pct`` — a **percentage margin above cost basis**. A\n  covered-call strike must sit at least this whole-percent *above* the\n  adjusted cost basis to be a recommendation; otherwise the scanner emits\n  the ``fails_10pct_rule`` rejection. The strike floor is\n  ``cost_basis * (1 + min_call_distance_pct / 100)``. Default ``5.0`` →\n  strike must be ≥ 5% above cost basis.\n\n- ``min_call_distance_from_cost_basis_pct`` — a **bare at-or-above-cost-basis\n  floor**. A covered-call strike below\n  ``cost_basis * (1 + min_call_distance_from_cost_basis_pct / 100)`` would\n  lock in a capital loss on the shares if assigned, so the scanner emits the\n  ``below_cost_basis`` rejection. Default ``0.0`` → the floor is exactly the\n  cost basis (a strike at or above cost basis is acceptable).\n\nThe two are not redundant: ``min_call_distance_pct`` is the *premium-quality*\nmargin a trader wants on a good entry, while\n``min_call_distance_from_cost_basis_pct`` is the *hard loss-avoidance* floor\nbelow which the trade is structurally bad. With the catalog defaults\n(``5.0`` and ``0.0``) the margin rule is the stricter of the two; a trader\nwho lowers the margin still keeps the loss-avoidance floor.",
+        "description": "Entry rules — what makes a good entry (PRD #209 §R3).\n\nCost-basis-relative covered-call rules\n--------------------------------------\nThis group carries **two distinct** covered-call cost-basis rules. They are\nindependent rules (PRD #209 §R3 / ADR-002 D3) and both are measured from the\nposition's adjusted **cost basis** — never from spot price. ADR-002's\n\"One correction to PRD #209\" established that the scanner already measures\nthe covered-call distance rule from cost basis, not from current price.\n\n- ``min_call_distance_pct`` — a **percentage margin above cost basis**. A\n  covered-call strike must sit at least this whole-percent *above* the\n  adjusted cost basis to be a recommendation; otherwise the scanner emits\n  the ``fails_10pct_rule`` rejection. The strike floor is\n  ``cost_basis * (1 + min_call_distance_pct / 100)``, evaluated at cent\n  precision (``app.services.covered_call_rule``). Default ``10.0`` →\n  strike must be ≥ 10% above cost basis (the \"10% rule\"), so if the\n  shares are called away the trader locks in at least a 10% gain.\n\n- ``min_call_distance_from_cost_basis_pct`` — a **bare at-or-above-cost-basis\n  floor**. A covered-call strike below\n  ``cost_basis * (1 + min_call_distance_from_cost_basis_pct / 100)`` would\n  lock in a capital loss on the shares if assigned, so the scanner emits the\n  ``below_cost_basis`` rejection. Default ``0.0`` → the floor is exactly the\n  cost basis (a strike at or above cost basis is acceptable).\n\nThe two are not redundant: ``min_call_distance_pct`` is the gain a trader\nwants to lock in if called away, while\n``min_call_distance_from_cost_basis_pct`` is the *hard loss-avoidance* floor\nbelow which the trade is structurally bad. Premium is not part of either\nrule. With the catalog defaults (``10.0`` and ``0.0``) the margin rule is\nthe stricter of the two; a trader who lowers the margin still keeps the\nloss-avoidance floor.\n\n``below_cost_basis`` is only reported when the floor is configured stricter\nthan the margin; otherwise it is folded into ``fails_10pct_rule`` (a strike\nfailing the margin is reported once, not twice).",
         "properties": {
           "delta_range_cc": {
             "$ref": "#/components/schemas/RangeRule",
@@ -2594,7 +2594,7 @@
             "type": "number"
           },
           "min_call_distance_pct": {
-            "default": 5.0,
+            "default": 10.0,
             "title": "Min Call Distance Pct",
             "type": "number"
           },
@@ -5200,7 +5200,7 @@
               },
               "earnings_buffer_days": 7,
               "min_call_distance_from_cost_basis_pct": 0.0,
-              "min_call_distance_pct": 5.0,
+              "min_call_distance_pct": 10.0,
               "min_monthly_return_pct": 2.0
             }
           },
@@ -5264,7 +5264,7 @@
               },
               "earnings_buffer_days": 7,
               "min_call_distance_from_cost_basis_pct": 0.0,
-              "min_call_distance_pct": 5.0,
+              "min_call_distance_pct": 10.0,
               "min_monthly_return_pct": 2.0
             }
           },

@@ -90,7 +90,7 @@ def _rejected_at(data: dict, strike: float) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.tdd_red
+@pytest.mark.integration
 def test_cc_scan_1321_basis_rejects_1450_accepts_1500(client):
     """AC1/AC7 — default T=10: $14.50 rejected naming $14.53; $15.00 passes."""
     data = _scan(
