@@ -434,7 +434,7 @@ def _store_min_call_distance(pct: float) -> None:
         db.close()
 
 
-@pytest.mark.tdd_red
+@pytest.mark.integration
 def test_relax_fails_10pct_new_format_recovers_using_dollar_math(client):
     """New-format raw strings are re-evaluated in dollars, not the rounded pct.
 
@@ -470,7 +470,7 @@ def test_relax_fails_10pct_new_format_recovers_using_dollar_math(client):
     ]
 
 
-@pytest.mark.tdd_red
+@pytest.mark.integration
 def test_relax_fails_10pct_threshold_text_reads_scan_threshold(client):
     """The popover names the scan's T (from the payload), not the stored 5."""
     _store_min_call_distance(5.0)
@@ -491,7 +491,7 @@ def test_relax_fails_10pct_threshold_text_reads_scan_threshold(client):
     assert data["relaxed_threshold_text"] == "5%"
 
 
-@pytest.mark.tdd_red
+@pytest.mark.integration
 def test_relax_fails_10pct_relaxed_threshold_clamped_at_zero(client):
     """T=3 relaxes to 0%, never negative; a below-basis strike stays rejected."""
     rejected = [
