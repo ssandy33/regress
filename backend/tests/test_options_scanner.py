@@ -765,3 +765,123 @@ class TestEmptyResponse:
         assert result["ticker"] == "NVDA"
         assert result["strategy"] == "cash_secured_put"
         assert result["empty_reason"] == "some reason"
+
+
+# ---------------------------------------------------------------------------
+# Covered-call distance rule — one threshold, cent precision, no double count
+# (issue TBD). Direct ``_check_rejection`` / ``_passes_10pct_rule`` calls.
+# ---------------------------------------------------------------------------
+
+
+def _cc_rule_request(
+    cost_basis: float,
+    *,
+    min_call_distance_pct: float = 10.0,
+    floor_enabled: bool = True,
+    floor_pct: float = 0.0,
+) -> OptionScanRequest:
+    return OptionScanRequest(
+        ticker="F",
+        strategy="covered_call",
+        cost_basis=cost_basis,
+        shares_held=100,
+        min_dte=21,
+        max_dte=45,
+        min_return_pct=0.5,
+        min_call_distance_pct=min_call_distance_pct,
+        min_delta=0.15,
+        max_delta=0.35,
+        min_open_interest=50,
+        max_bid_ask_spread_pct=10.0,
+        cost_basis_floor_enabled=floor_enabled,
+        min_call_distance_from_cost_basis_pct=floor_pct,
+    )
+
+
+def _reasons_for(req: OptionScanRequest, strike: float, current_price: float = 12.71):
+    # A clean contract — only the strike-distance rules can fire.
+    return OptionScanner()._check_rejection(
+        req, strike=strike, current_price=current_price,
+        delta=0.25, oi=500, bid=0.30, ask=0.31, mid=0.305, dte=30,
+    )
+
+
+class TestCoveredCallDistanceRule:
+    @pytest.mark.tdd_red
+    def test_check_rejection_1321_strike_1450_fails_with_min_strike_1453(self):
+        reasons = _reasons_for(_cc_rule_request(13.21), 14.50)
+        assert reasons == [
+            "fails_10pct_rule: strike 9.8% above basis, requires 10.0% "
+            "(strike $14.50, basis $13.21, min strike $14.53)"
+        ]
+
+    @pytest.mark.tdd_red
+    def test_check_rejection_1321_strike_1500_passes(self):
+        assert _reasons_for(_cc_rule_request(13.21), 15.00) == []
+
+    @pytest.mark.tdd_red
+    def test_check_rejection_exactly_110_not_rejected(self):
+        # 10.0 * 1.10 == 11.000000000000002 in raw float math — a $11.00
+        # strike must pass the 10% rule on a $10.00 basis.
+        assert _reasons_for(_cc_rule_request(10.0), 11.00, current_price=10.5) == []
+
+    @pytest.mark.tdd_red
+    @pytest.mark.parametrize(
+        "strike,basis,expected_pass",
+        [
+            (12.50, 13.21, False),
+            (14.50, 13.21, False),
+            (11.00, 10.00, True),
+            (14.53, 13.21, True),
+            (15.00, 13.21, True),
+            (14.52, 13.21, False),
+        ],
+    )
+    def test_passes_10pct_rule_agrees_with_check_rejection(
+        self, strike, basis, expected_pass
+    ):
+        req = _cc_rule_request(basis)
+        scanner = OptionScanner()
+        fired = any(
+            r.startswith("fails_10pct_rule") for r in _reasons_for(req, strike)
+        )
+        assert scanner._passes_10pct_rule(req, strike) is expected_pass
+        assert fired is (not expected_pass)
+
+    @pytest.mark.tdd_red
+    def test_fold_below_basis_emits_only_fails_10pct(self):
+        reasons = _reasons_for(_cc_rule_request(13.21, floor_enabled=True), 12.50)
+        assert len(reasons) == 1
+        assert reasons[0].startswith("fails_10pct_rule")
+        assert not any(r.startswith("below_cost_basis") for r in reasons)
+
+    @pytest.mark.tdd_red
+    def test_floor_stricter_than_margin_still_emits_below_cost_basis(self):
+        # T=0, floor=5% → margin strike $20.00, floor strike $21.00. A $20.50
+        # strike clears the margin but sits in the [Z_margin, Z_floor) band.
+        req = _cc_rule_request(
+            20.0, min_call_distance_pct=0.0, floor_enabled=True, floor_pct=5.0
+        )
+        reasons = _reasons_for(req, 20.50, current_price=20.0)
+        assert reasons == ["below_cost_basis: strike $20.50 < floor $21.00"]
+
+    @pytest.mark.unit
+    def test_csp_unaffected_by_call_distance(self):
+        req = OptionScanRequest(
+            ticker="F",
+            strategy="cash_secured_put",
+            capital_available=5000.0,
+            cost_basis=10.0,
+            min_call_distance_pct=10.0,
+            min_delta=0.15,
+            max_delta=0.35,
+            min_open_interest=50,
+            max_bid_ask_spread_pct=10.0,
+        )
+        scanner = OptionScanner()
+        # Strike $10.50 is above the $10 basis and above the $10.25 price.
+        reasons = _reasons_for(req, 10.50, current_price=10.25)
+        assert scanner._passes_10pct_rule(req, 10.50) is True
+        assert not any(r.startswith("fails_10pct_rule") for r in reasons)
+        assert not any(r.startswith("below_cost_basis") for r in reasons)
+        assert any(r.startswith("itm_put") for r in reasons)
