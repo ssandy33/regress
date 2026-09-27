@@ -523,12 +523,14 @@ class OptionScanner:
             # Cost-basis floor — an independent rule from the distance margin
             # above (PRD #209 §R3). A strike below the cost-basis floor locks
             # in a share loss if assigned. Gated on the per-request toggle.
-            # Folded into ``fails_10pct_rule`` (issue TBD): it is only
-            # evaluated when the margin passed, so a below-basis strike is
-            # reported once. It still fires when the floor is configured
-            # stricter than the margin, for strikes in [Z_margin, Z_floor).
-            if req.cost_basis_floor_enabled and not fails_margin:
-                floor_pct = req.min_call_distance_from_cost_basis_pct or 0.0
+            # Folded into ``fails_10pct_rule`` (issue TBD): when the floor is
+            # no stricter than the margin it is redundant with a margin
+            # failure, so a below-basis strike is reported once. A floor
+            # configured stricter than the margin is always evaluated, so its
+            # higher required strike is never hidden.
+            floor_pct = req.min_call_distance_from_cost_basis_pct or 0.0
+            floor_redundant = fails_margin and floor_pct <= req.min_call_distance_pct
+            if req.cost_basis_floor_enabled and not floor_redundant:
                 cost_basis_floor = req.cost_basis * (1 + floor_pct / 100)
                 if strike < cost_basis_floor:
                     reasons.append(
