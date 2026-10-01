@@ -1,0 +1,64 @@
+name: Milestone patch keeper
+
+# Cloud-independent replacement for the local hourly scheduled task.
+# Runs on GitHub Actions infrastructure regardless of whether any local
+# Claude app is open. Auth via the Claude GitHub App (OAuth).
+#
+# Disabled until ready: set repo variable MILESTONE_KEEPER_ENABLED=true
+# AND add the CLAUDE_CODE_OAUTH_TOKEN secret (via `/install-github-app`).
+
+on:
+  schedule:
+    # NOTE: GitHub Actions cron is UTC. ~3 sweeps/day.
+    - cron: "23 13 * * *"
+    - cron: "23 17 * * *"
+    - cron: "23 21 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: milestone-keeper
+  cancel-in-progress: false
+
+jobs:
+  keep-milestone-clear:
+    if: vars.MILESTONE_KEEPER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run milestone patch keeper
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: "--max-turns 40 --allowedTools Bash,Read,Edit,Write,Glob,Grep"
+          prompt: |
+            You are the milestone patch keeper for this repo (ssandy33/regress).
+            Trunk-based development: default branch is `main`; merging a PR into
+            `main` triggers GitHub Actions that auto-deploy to QA. `gh` is
+            authenticated in this environment. Keep the current patch milestone clear.
+
+            1. Identify the active patch milestone: the OPEN milestone whose title
+               matches `vMAJOR.MINOR.x` (e.g. v1.7.x) that has open issues. If several
+               qualify, pick the highest version.
+            2. List its open issues with `gh issue list --milestone "<title>" --state open`.
+            3. If zero open issues: report "Milestone <title> is clear" and stop.
+            4. For each open issue:
+               - Investigate the root cause.
+               - If well-defined / labeled `ready-to-fix`: create a branch, implement
+                 the fix, open a PR into `main` with `Closes #N`, ensure CI passes, then
+                 merge it (squash). Merging to `main` auto-deploys to QA.
+               - If ambiguous / `needs-investigation` with no clear cause / `needs-design`
+                 / risky: DO NOT guess. Post a triage comment with root-cause analysis +
+                 plan, apply appropriate labels, and leave it for a human.
+            5. NEVER cut a release: no git tags, no GitHub releases, no version bumps,
+               no publish. Stop at merge-to-main (QA deploy).
+            6. End with a concise summary: milestone, issues fixed & merged (with PR
+               links), issues triaged-only and why, issues still open.
