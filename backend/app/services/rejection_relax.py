@@ -16,7 +16,7 @@ V1 contract (v1.0.8 freeze, see ``plans/have-the-cto-review-bubbly-orbit.md``):
   delta_out_of_range Widen the band by ±0.05 on each side
   low_open_interest  Floor ÷ 2
   wide_bid_ask_spread Cap × 1.5
-  fails_10pct_rule   Required distance − 5 percentage points
+  fails_10pct_rule   Required distance − 5 percentage points (min 0%)
   below_cost_basis   Cost-basis floor − 5 percentage points
   return_below_target Target − 1 percentage point
   return_above_cap   Cap + 50 percentage points
@@ -64,6 +64,11 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.models.schemas import RejectedStrike
+from app.services.covered_call_rule import (
+    format_threshold_pct,
+    meets_call_distance,
+    parse_fails_10pct,
+)
 from app.services.rules_config import RulesConfig
 
 logger = logging.getLogger(__name__)
@@ -137,14 +142,12 @@ class NotRelaxableError(ValueError):
 
 # ---------------------------------------------------------------------------
 # Regexes for parsing the raw rejection-reason strings emitted by
-# ``OptionScanner._check_rejection`` and ``rejection_messages``.
+# ``OptionScanner._check_rejection`` and ``rejection_messages``. The
+# ``fails_10pct_rule`` parser is shared from
+# :mod:`app.services.covered_call_rule`.
 # ---------------------------------------------------------------------------
 
 
-_FAILS_10PCT_RE = re.compile(
-    r"^fails_10pct_rule:\s*strike\s*(?P<pct>-?\d+(?:\.\d+)?)%\s*above basis,\s*"
-    r"requires\s*(?P<min>-?\d+(?:\.\d+)?)%\s*$"
-)
 _BELOW_COST_BASIS_RE = re.compile(
     r"^below_cost_basis:\s*strike\s*\$(?P<strike>-?\d+(?:\.\d+)?)\s*<\s*"
     r"floor\s*\$(?P<floor>-?\d+(?:\.\d+)?)\s*$"
@@ -197,14 +200,24 @@ def _extract_rule_family(raw: str) -> Optional[str]:
 # without proof.
 
 
+def _relaxed_call_distance(requires: float) -> float:
+    """-5pp, clamped at 0% so a below-basis strike never "recovers"."""
+    return max(0.0, requires - 5.0)
+
+
 def _still_fails_fails_10pct(raw: str) -> bool:
-    match = _FAILS_10PCT_RE.match(raw)
-    if not match:
+    parts = parse_fails_10pct(raw)
+    if parts is None:
         return True
-    pct = float(match.group("pct"))
-    requires = float(match.group("min"))
-    relaxed_requires = requires - 5.0  # -5pp
-    return pct < relaxed_requires
+    relaxed_requires = _relaxed_call_distance(parts["min"])
+    if parts["strike"] is not None and parts["basis"] is not None:
+        # New format — re-evaluate in dollars with the same cent-precision
+        # rule the scanner uses.
+        return not meets_call_distance(
+            parts["strike"], parts["basis"], relaxed_requires
+        )
+    # Legacy format (no dollar suffix) — fall back to the rounded percent.
+    return parts["pct"] < relaxed_requires
 
 
 def _still_fails_below_cost_basis(raw: str) -> bool:
@@ -314,10 +327,16 @@ def _fmt_band(min_v: float, max_v: float) -> str:
     return f"{min_v:.2f}–{max_v:.2f}"  # en-dash separator
 
 
+def _fmt_call_distance_pair(current: float) -> tuple[str, str]:
+    relaxed = _relaxed_call_distance(current)
+    return (
+        f"{format_threshold_pct(current)}%",
+        f"{format_threshold_pct(relaxed)}%",
+    )
+
+
 def _thresholds_fails_10pct(rules: RulesConfig) -> tuple[str, str]:
-    current = float(rules.entry.min_call_distance_pct)
-    relaxed = current - 5.0
-    return _fmt_pct(current), _fmt_pct(relaxed)
+    return _fmt_call_distance_pair(float(rules.entry.min_call_distance_pct))
 
 
 def _thresholds_below_cost_basis(rules: RulesConfig) -> tuple[str, str]:
@@ -396,6 +415,24 @@ def _threshold_texts_for_return_above(
     return ("—", "—")
 
 
+def _threshold_texts_for_fails_10pct(
+    rejected: list[RejectedStrike], rules: RulesConfig
+) -> tuple[str, str]:
+    """Special-case ``fails_10pct_rule`` — read ``T`` from a raw reason.
+
+    The scanner UI sends its own ``min_call_distance_pct`` on every scan, so
+    the stored config can disagree with the threshold the rejections were
+    evaluated against. The first parseable raw string carries the scan's
+    ``T``; fall back to the stored config when none is present.
+    """
+    for r in rejected:
+        for raw in r.rejection_reasons or []:
+            parts = parse_fails_10pct(raw)
+            if parts is not None:
+                return _fmt_call_distance_pair(parts["min"])
+    return _thresholds_fails_10pct(rules)
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -429,11 +466,16 @@ def preview_relax(
     predicate = _STILL_FAILS_PREDICATES[rule]
 
     # Threshold-text resolution. ``return_above_cap`` reads its cap from the
-    # rejection-reason payload (no persisted config field) — handled
-    # explicitly so the formatter signature stays uniform.
+    # rejection-reason payload (no persisted config field), and
+    # ``fails_10pct_rule`` reads the scan's T from it — handled explicitly so
+    # the formatter signature stays uniform.
     if rule == "return_above_cap":
         current_text, relaxed_text = _threshold_texts_for_return_above(
             req.rejected
+        )
+    elif rule == "fails_10pct_rule":
+        current_text, relaxed_text = _threshold_texts_for_fails_10pct(
+            req.rejected, rules
         )
     else:
         current_text, relaxed_text = _THRESHOLD_FORMATTERS[rule](rules)

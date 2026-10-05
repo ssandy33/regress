@@ -44,8 +44,10 @@ import {
   CANONICAL_RULE_ORDER,
   REJECTION_RULE_LABELS,
   extractRuleFamily,
+  formatFails10pctSentence,
   formatNearPassReason,
   labelForRuleFamily,
+  parseFails10pct,
 } from './scannerRejectionLabels';
 
 // Binary rule families — no meaningful "relax to X" exists. The chip is
@@ -92,7 +94,7 @@ function writePersistedCollapsed(key, collapsed) {
 // Keys are the code prefix (everything before the colon in a raw rejection).
 const CLIENT_COPY_FALLBACK = {
   fails_10pct_rule:
-    'Strike is below 90% of your cost basis — selling here could force you to part with shares at a loss.',
+    'Strike is below the minimum your call-distance rule requires above your cost basis.',
   itm_put:
     'Put is already in the money. CSPs work best below current price; this would be immediate intrinsic loss.',
   delta_out_of_range:
@@ -111,6 +113,12 @@ function humanizeFallback(raw) {
   // Extract the code prefix (before the first colon) and look it up. If the
   // raw string has no colon, treat the whole string as the code.
   const code = extractRuleFamily(raw) || raw;
+  if (code === 'fails_10pct_rule') {
+    // Render the canonical rule sentence from the raw string's own numbers
+    // (threshold, strike, basis, required strike) before the static copy.
+    const sentence = formatFails10pctSentence(parseFails10pct(raw));
+    if (sentence) return sentence;
+  }
   return CLIENT_COPY_FALLBACK[code] || raw;
 }
 

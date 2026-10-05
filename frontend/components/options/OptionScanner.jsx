@@ -51,7 +51,10 @@ export default function OptionScannerPage() {
               Collapsed by default on first visit, state persisted in
               localStorage per-strategy. Reacts to the active strategy in the
               filter sidebar so it stays in sync with the user's current choice. */}
-          <ScannerStrategyPrimer strategy={normalizePrimerStrategy(scanner.strategy)} />
+          <ScannerStrategyPrimer
+            strategy={normalizePrimerStrategy(scanner.strategy)}
+            callDistancePct={scanner.callDistance}
+          />
 
           {/* Schwab API Status Banner */}
           {!schwab.loading && !schwab.isAvailable && (

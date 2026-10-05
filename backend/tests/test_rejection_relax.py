@@ -398,3 +398,127 @@ def test_relax_low_oi_threshold_text_uses_rules_config(client):
     data = res.json()
     assert data["current_threshold_text"] == "500"
     assert data["relaxed_threshold_text"] == "250"
+
+
+# ---------------------------------------------------------------------------
+# fails_10pct_rule — dollar math, scan threshold, 0% clamp (#456)
+# ---------------------------------------------------------------------------
+
+
+def _fails_raw(pct: str, requires: str, strike: str, basis: str, min_strike: str) -> str:
+    return (
+        f"fails_10pct_rule: strike {pct}% above basis, requires {requires}% "
+        f"(strike ${strike}, basis ${basis}, min strike ${min_strike})"
+    )
+
+
+def _store_min_call_distance(pct: float) -> None:
+    """Persist a ``rules_config`` row with an explicit ``min_call_distance_pct``."""
+    import json
+
+    from app.main import app
+    from app.models.database import AppSetting, get_db
+    from app.services.rules_config import RULES_CONFIG_KEY
+
+    override = app.dependency_overrides[get_db]
+    db = next(override())
+    try:
+        db.add(
+            AppSetting(
+                key=RULES_CONFIG_KEY,
+                value=json.dumps({"entry": {"min_call_distance_pct": pct}}),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+@pytest.mark.integration
+def test_relax_fails_10pct_new_format_recovers_using_dollar_math(client):
+    """New-format raw strings are re-evaluated in dollars, not the rounded pct.
+
+    Relaxed T' = 10 - 5 = 5 → required strike on a $13.21 basis is $13.87.
+    """
+    rejected = [
+        # $14.00 >= $13.87 → recovers.
+        {
+            "strike": 14.0,
+            "expiration": "2026-06-26",
+            "rejection_reasons": [
+                _fails_raw("6.0", "10.0", "14.00", "13.21", "14.53")
+            ],
+            "human_reasons": [],
+        },
+        # The pct field claims 6.0% but the dollars say $13.50 < $13.87 — the
+        # dollar figures win, so this strike does NOT recover.
+        {
+            "strike": 13.5,
+            "expiration": "2026-06-26",
+            "rejection_reasons": [
+                _fails_raw("6.0", "10.0", "13.50", "13.21", "14.53")
+            ],
+            "human_reasons": [],
+        },
+    ]
+    res = _post(client, _payload("fails_10pct_rule", rejected))
+    assert res.status_code == 200
+    data = res.json()
+    assert data["recovered_count"] == 1
+    assert data["recovered_strikes"] == [
+        {"strike": 14.0, "expiration": "2026-06-26"}
+    ]
+
+
+@pytest.mark.integration
+def test_relax_fails_10pct_threshold_text_reads_scan_threshold(client):
+    """The popover names the scan's T (from the payload), not the stored 5."""
+    _store_min_call_distance(5.0)
+    rejected = [
+        {
+            "strike": 14.5,
+            "expiration": "2026-06-26",
+            "rejection_reasons": [
+                _fails_raw("9.8", "10.0", "14.50", "13.21", "14.53")
+            ],
+            "human_reasons": [],
+        },
+    ]
+    res = _post(client, _payload("fails_10pct_rule", rejected))
+    assert res.status_code == 200
+    data = res.json()
+    assert data["current_threshold_text"] == "10%"
+    assert data["relaxed_threshold_text"] == "5%"
+
+
+@pytest.mark.integration
+def test_relax_fails_10pct_relaxed_threshold_clamped_at_zero(client):
+    """T=3 relaxes to 0%, never negative; a below-basis strike stays rejected."""
+    rejected = [
+        # 1.1% above basis → clears the 0% relaxed rule → recovers.
+        {
+            "strike": 13.35,
+            "expiration": "2026-06-26",
+            "rejection_reasons": [
+                _fails_raw("1.1", "3.0", "13.35", "13.21", "13.61")
+            ],
+            "human_reasons": [],
+        },
+        # Below basis → still fails at 0%.
+        {
+            "strike": 12.5,
+            "expiration": "2026-06-26",
+            "rejection_reasons": [
+                _fails_raw("-5.4", "3.0", "12.50", "13.21", "13.61")
+            ],
+            "human_reasons": [],
+        },
+    ]
+    res = _post(client, _payload("fails_10pct_rule", rejected))
+    assert res.status_code == 200
+    data = res.json()
+    assert data["current_threshold_text"] == "3%"
+    assert data["relaxed_threshold_text"] == "0%"
+    assert data["recovered_strikes"] == [
+        {"strike": 13.35, "expiration": "2026-06-26"}
+    ]

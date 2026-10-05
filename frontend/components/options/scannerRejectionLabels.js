@@ -81,8 +81,14 @@ export function labelForRuleFamily(family) {
 //
 // Pattern: `Would pass — {observed} {operator} {threshold} ({gap}).`
 
+// `fails_10pct_rule` carries an optional dollar suffix — `(strike $X, basis
+// $B, min strike $Z)` — appended by the backend's `covered_call_rule.py`.
+// Legacy strings (no suffix) still match, with groups 3-5 undefined. Not
+// end-anchored, deliberately: backward tolerant of either format.
+const FAILS_10PCT_RE = /^fails_10pct_rule:\s*strike\s*(-?\d+(?:\.\d+)?)%\s*above basis,\s*requires\s*(-?\d+(?:\.\d+)?)%(?:\s*\(strike\s*\$(-?\d+(?:\.\d+)?),\s*basis\s*\$(-?\d+(?:\.\d+)?),\s*min strike\s*\$(-?\d+(?:\.\d+)?)\))?/i;
+
 const NEAR_PASS_REGEXES = {
-  fails_10pct_rule: /^fails_10pct_rule:\s*strike\s*(-?\d+(?:\.\d+)?)%\s*above basis,\s*requires\s*(-?\d+(?:\.\d+)?)%/i,
+  fails_10pct_rule: FAILS_10PCT_RE,
   below_cost_basis: /^below_cost_basis:\s*strike\s*\$(-?\d+(?:\.\d+)?)\s*<\s*floor\s*\$(-?\d+(?:\.\d+)?)/i,
   itm_put: /^itm_put:\s*strike\s*\$(-?\d+(?:\.\d+)?)\s*>\s*price\s*\$(-?\d+(?:\.\d+)?)/i,
   delta_out_of_range: /^delta_out_of_range:\s*\|(-?\d+(?:\.\d+)?)\|\s*not in\s*\[(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\]/i,
@@ -112,11 +118,84 @@ function fmtDollars(value) {
   return `$${n.toFixed(2)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Covered-call distance rule (`fails_10pct_rule`) — the canonical sentence.
+// ---------------------------------------------------------------------------
+//
+// Mirrors `fails_10pct_sentence` in `backend/app/services/covered_call_rule.py`
+// byte-for-byte so the backend `human_reasons` and the client fallback read
+// the same. The required strike (`minStrike`) always comes from the backend;
+// the frontend never recomputes it.
+
+function optionalFloat(value) {
+  return value === undefined ? null : parseFloat(value);
+}
+
+function parsedFromMatch(match) {
+  return {
+    pct: parseFloat(match[1]),
+    min: parseFloat(match[2]),
+    strike: optionalFloat(match[3]),
+    basis: optionalFloat(match[4]),
+    minStrike: optionalFloat(match[5]),
+  };
+}
+
+/**
+ * Parse a raw `fails_10pct_rule` string (new or legacy format).
+ *
+ * @param {string} raw
+ * @returns {{pct: number, min: number, strike: number|null, basis: number|null, minStrike: number|null}|null}
+ *   Parsed values, or `null` when the string does not match.
+ */
+export function parseFails10pct(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const match = FAILS_10PCT_RE.exec(raw.trim());
+  return match ? parsedFromMatch(match) : null;
+}
+
+/**
+ * Format a percent threshold for display: at most two decimals, trailing
+ * zeros stripped (10 → "10", 7.5 → "7.5", 7.25 → "7.25").
+ *
+ * @param {number} value
+ * @returns {string}
+ */
+export function formatThresholdPct(value) {
+  return String(Number(Number(value).toFixed(2)));
+}
+
+/**
+ * Render the canonical covered-call distance sentence, e.g.
+ * "Strike $14.50 is 9.8% above your $13.21 basis. Your 10% rule needs a
+ * strike of at least $14.53." Negative distances read "below". Legacy raw
+ * strings (no dollar suffix) render a degraded sentence with no dollars.
+ *
+ * @param {ReturnType<typeof parseFails10pct>} parsed
+ * @returns {string|null} The sentence, or `null` when `parsed` is null.
+ */
+export function formatFails10pctSentence(parsed) {
+  if (!parsed) return null;
+  // Decide the word on the signed distance (a raw "-0.0%" parses to -0) and
+  // strike vs. basis, never on the rounded magnitude, so a strike a hair under
+  // basis reads "0.0% below" rather than "0.0% above".
+  const below =
+    parsed.pct < 0 ||
+    Object.is(parsed.pct, -0) ||
+    (parsed.strike != null && parsed.basis != null && parsed.strike < parsed.basis);
+  const word = below ? 'below' : 'above';
+  const magnitude = `${Math.abs(Number(parsed.pct.toFixed(1))).toFixed(1)}%`;
+  const threshold = formatThresholdPct(parsed.min);
+  if (parsed.basis == null || parsed.minStrike == null) {
+    return `Strike is ${magnitude} ${word} your cost basis. Your ${threshold}% rule needs more room above your basis.`;
+  }
+  const lead = parsed.strike == null ? 'Strike is' : `Strike ${fmtDollars(parsed.strike)} is`;
+  return `${lead} ${magnitude} ${word} your ${fmtDollars(parsed.basis)} basis. Your ${threshold}% rule needs a strike of at least ${fmtDollars(parsed.minStrike)}.`;
+}
+
 function nearPassFails10pct(match) {
-  const pct = parseFloat(match[1]);
-  const requires = parseFloat(match[2]);
-  const gap = requires - pct;
-  return `Would pass — strike is ${pct.toFixed(1)}% above basis, your ${requires.toFixed(1)}% rule requires ${requires.toFixed(1)}% (${fmtPp(gap, 1)} short).`;
+  const sentence = formatFails10pctSentence(parsedFromMatch(match));
+  return `Would pass — ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`;
 }
 
 function nearPassBelowCostBasis(match) {

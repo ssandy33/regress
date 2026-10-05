@@ -30,9 +30,11 @@ const single = [
   {
     strike: 12.5,
     expiration: '2026-06-18',
-    rejection_reasons: ['fails_10pct_rule: strike -5.4% above basis, requires 10.0%'],
+    rejection_reasons: [
+      'fails_10pct_rule: strike -5.4% above basis, requires 10.0% (strike $12.50, basis $13.21, min strike $14.53)',
+    ],
     human_reasons: [
-      'Strike sits -5.4% above your $13.21 basis, but the 10.0% rule requires at least that much room.',
+      'Strike $12.50 is 5.4% below your $13.21 basis. Your 10% rule needs a strike of at least $14.53.',
     ],
   },
 ];
@@ -58,9 +60,9 @@ const multi = [
 const many = (() => {
   const samples = [
     {
-      raw: 'fails_10pct_rule: strike -8.1% above basis, requires 10.0%',
+      raw: 'fails_10pct_rule: strike -8.1% above basis, requires 10.0% (strike $12.14, basis $13.21, min strike $14.53)',
       human:
-        'Strike sits -8.1% above your $13.21 basis, but the 10.0% rule requires at least that much room.',
+        'Strike $12.14 is 8.1% below your $13.21 basis. Your 10% rule needs a strike of at least $14.53.',
     },
     {
       raw: 'delta_out_of_range: |0.42| not in [0.15, 0.35]',

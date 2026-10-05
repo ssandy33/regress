@@ -205,8 +205,10 @@ class EntryRules(BaseModel):
       covered-call strike must sit at least this whole-percent *above* the
       adjusted cost basis to be a recommendation; otherwise the scanner emits
       the ``fails_10pct_rule`` rejection. The strike floor is
-      ``cost_basis * (1 + min_call_distance_pct / 100)``. Default ``5.0`` →
-      strike must be ≥ 5% above cost basis.
+      ``cost_basis * (1 + min_call_distance_pct / 100)``, evaluated at cent
+      precision (``app.services.covered_call_rule``). Default ``10.0`` →
+      strike must be ≥ 10% above cost basis (the "10% rule"), so if the
+      shares are called away the trader locks in at least a 10% gain.
 
     - ``min_call_distance_from_cost_basis_pct`` — a **bare at-or-above-cost-basis
       floor**. A covered-call strike below
@@ -215,12 +217,17 @@ class EntryRules(BaseModel):
       ``below_cost_basis`` rejection. Default ``0.0`` → the floor is exactly the
       cost basis (a strike at or above cost basis is acceptable).
 
-    The two are not redundant: ``min_call_distance_pct`` is the *premium-quality*
-    margin a trader wants on a good entry, while
+    The two are not redundant: ``min_call_distance_pct`` is the gain a trader
+    wants to lock in if called away, while
     ``min_call_distance_from_cost_basis_pct`` is the *hard loss-avoidance* floor
-    below which the trade is structurally bad. With the catalog defaults
-    (``5.0`` and ``0.0``) the margin rule is the stricter of the two; a trader
-    who lowers the margin still keeps the loss-avoidance floor.
+    below which the trade is structurally bad. Premium is not part of either
+    rule. With the catalog defaults (``10.0`` and ``0.0``) the margin rule is
+    the stricter of the two; a trader who lowers the margin still keeps the
+    loss-avoidance floor.
+
+    ``below_cost_basis`` is only reported when the floor is configured stricter
+    than the margin; otherwise it is folded into ``fails_10pct_rule`` (a strike
+    failing the margin is reported once, not twice).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -239,9 +246,9 @@ class EntryRules(BaseModel):
     # Calendar days of buffer to keep clear of an earnings date. PRD #209 §R3 —
     # reconciled catalog value (resolves the scanner's prior 5-day drift).
     earnings_buffer_days: int = 7
-    # Covered-call premium-quality margin above cost basis, whole-percent. See
-    # the class docstring. PRD #209 §R3.
-    min_call_distance_pct: float = 5.0
+    # Covered-call margin above cost basis, whole-percent — the "10% rule".
+    # See the class docstring. PRD #209 §R3; default raised 5 → 10 (#456).
+    min_call_distance_pct: float = 10.0
     # Covered-call hard at-or-above-cost-basis floor, whole-percent. See the
     # class docstring. PRD #209 §R3.
     min_call_distance_from_cost_basis_pct: float = 0.0

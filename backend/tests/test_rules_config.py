@@ -100,7 +100,7 @@ def test_default_config_entry_matches_catalog():
     assert (e.delta_range_cc.min, e.delta_range_cc.max) == (0.20, 0.35)
     assert e.min_monthly_return_pct == 2.0
     assert e.earnings_buffer_days == 7
-    assert e.min_call_distance_pct == 5.0
+    assert e.min_call_distance_pct == 10.0
     assert e.min_call_distance_from_cost_basis_pct == 0.0
 
 
@@ -691,3 +691,21 @@ def test_sizing_cap_account_accepts_strings():
 # intentionally no enforcement test here because there is no enforcement to
 # test — inventing one would be a stop-and-ask violation.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Covered-call distance default (#456)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+def test_stored_partial_entry_without_field_gets_default_10(db):
+    """A stored entry group omitting ``min_call_distance_pct`` resolves to 10.
+
+    Tagged integration (not unit) because it drives a real DB session — per
+    the #271 lesson, no ``db.add`` inside a ``unit`` body.
+    """
+    _store(db, json.dumps({"entry": {"min_monthly_return_pct": 3.0}}))
+    cfg = load_rules_config(db)
+    assert cfg.entry.min_monthly_return_pct == 3.0
+    assert cfg.entry.min_call_distance_pct == 10.0

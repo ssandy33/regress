@@ -88,9 +88,11 @@ const SCAN_PAYLOAD = {
     {
       strike: 12.5,
       expiration: '2026-06-18',
-      rejection_reasons: ['fails_10pct_rule: strike -5.4% above basis, requires 10.0%'],
+      rejection_reasons: [
+        'fails_10pct_rule: strike -5.4% above basis, requires 10.0% (strike $12.50, basis $13.21, min strike $14.53)',
+      ],
       human_reasons: [
-        'Strike sits -5.4% above your $13.21 basis, but the 10.0% rule requires at least that much room.',
+        'Strike $12.50 is 5.4% below your $13.21 basis. Your 10% rule needs a strike of at least $14.53.',
       ],
     },
     {
@@ -309,17 +311,19 @@ test.describe('Scanner education — humanized rejected strikes @e2e', () => {
 //   $13.50 / 2026-06-26 — 1 reason   (near-pass, delta out of range)
 //   $14.00 / 2026-06-26 — 1 reason   (near-pass, low open interest)
 //   $13.00 / 2026-07-31 — 2 reasons  (normal)
-//   $5.00  / 2026-06-26 — 5 reasons  (structural — below cost basis dominates)
+//   $5.00  / 2026-06-26 — 5 reasons  (structural — far below cost basis)
 //   $6.00  / 2026-07-31 — 5 reasons  (structural)
 // Rule-family counts across all five strikes:
-//   below_cost_basis        : 2  ($5.00, $6.00)
 //   delta_out_of_range      : 4  ($13.50, $13.00, $5.00, $6.00)
 //   low_open_interest       : 4  ($14.00, $13.00, $5.00, $6.00)
-//   wide_bid_ask_spread     : 2  ($5.00, $6.00)
 //   fails_10pct_rule        : 2  ($5.00, $6.00)
+//   zero_bid                : 2  ($5.00, $6.00)
+//   wide_bid_ask_spread     : 2  ($5.00, $6.00)
+// A below-basis strike reports fails_10pct_rule only — below_cost_basis is
+// folded into it (#456), so there is no separate "Cost basis" chip.
 // Order count-desc, canonical-order tie-break:
 //   delta_out_of_range (4), low_open_interest (4), fails_10pct_rule (2),
-//   below_cost_basis (2), wide_bid_ask_spread (2)
+//   zero_bid (2), wide_bid_ask_spread (2)
 const TIERED_SCAN_PAYLOAD = {
   ticker: 'F',
   current_price: 13.21,
@@ -365,15 +369,15 @@ const TIERED_SCAN_PAYLOAD = {
       strike: 5.0,
       expiration: '2026-06-26',
       rejection_reasons: [
-        'fails_10pct_rule: strike -62.2% above basis, requires 10.0%',
-        'below_cost_basis: strike $5.00 < floor $13.21',
+        'fails_10pct_rule: strike -62.2% above basis, requires 10.0% (strike $5.00, basis $13.21, min strike $14.53)',
+        'zero_bid',
         'delta_out_of_range: |0.92| not in [0.20, 0.35]',
         'low_open_interest: 8 < 50',
         'wide_bid_ask_spread: 22.5% > 10.0%',
       ],
       human_reasons: [
-        'Strike sits -62.2% above your $13.21 basis, but the 10.0% rule requires at least that much room.',
-        'Strike $5.00 is below your $13.21 cost-basis floor — if assigned, you would lock in a loss on the shares.',
+        'Strike $5.00 is 62.2% below your $13.21 basis. Your 10% rule needs a strike of at least $14.53.',
+        "No buyer is showing a bid right now, so there's no real market to sell into.",
         'Delta +0.92 is outside your 0.20–0.35 range — too close to the money.',
         'Only 8 contracts open — too thin to trade comfortably (the scanner requires at least 50).',
         'The bid/ask spread is 22.5% of the mid price — wider than your 10.0% limit.',
@@ -384,15 +388,15 @@ const TIERED_SCAN_PAYLOAD = {
       strike: 6.0,
       expiration: '2026-07-31',
       rejection_reasons: [
-        'fails_10pct_rule: strike -54.6% above basis, requires 10.0%',
-        'below_cost_basis: strike $6.00 < floor $13.21',
+        'fails_10pct_rule: strike -54.6% above basis, requires 10.0% (strike $6.00, basis $13.21, min strike $14.53)',
+        'zero_bid',
         'delta_out_of_range: |0.88| not in [0.20, 0.35]',
         'low_open_interest: 12 < 50',
         'wide_bid_ask_spread: 18.0% > 10.0%',
       ],
       human_reasons: [
-        'Strike sits -54.6% above your $13.21 basis, but the 10.0% rule requires at least that much room.',
-        'Strike $6.00 is below your $13.21 cost-basis floor — if assigned, you would lock in a loss on the shares.',
+        'Strike $6.00 is 54.6% below your $13.21 basis. Your 10% rule needs a strike of at least $14.53.',
+        "No buyer is showing a bid right now, so there's no real market to sell into.",
         'Delta +0.88 is outside your 0.20–0.35 range — too close to the money.',
         'Only 12 contracts open — too thin to trade comfortably (the scanner requires at least 50).',
         'The bid/ask spread is 18.0% of the mid price — wider than your 10.0% limit.',
@@ -555,7 +559,8 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
 
     // Counts (per-strike dedupe inside the aggregator):
     //   delta_out_of_range: 4, low_open_interest: 4, fails_10pct_rule: 2,
-    //   below_cost_basis: 2, wide_bid_ask_spread: 2.
+    //   zero_bid: 2, wide_bid_ask_spread: 2. No below_cost_basis chip — it
+    //   is folded into fails_10pct_rule (#456).
     await expect(
       page.getByTestId('scanner-rejected-strikes-summary-rule-delta_out_of_range')
     ).toHaveAttribute('data-count', '4');
@@ -566,8 +571,11 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
       page.getByTestId('scanner-rejected-strikes-summary-rule-fails_10pct_rule')
     ).toHaveAttribute('data-count', '2');
     await expect(
-      page.getByTestId('scanner-rejected-strikes-summary-rule-below_cost_basis')
+      page.getByTestId('scanner-rejected-strikes-summary-rule-zero_bid')
     ).toHaveAttribute('data-count', '2');
+    await expect(
+      page.getByTestId('scanner-rejected-strikes-summary-rule-below_cost_basis')
+    ).toHaveCount(0);
     await expect(
       page.getByTestId('scanner-rejected-strikes-summary-rule-wide_bid_ask_spread')
     ).toHaveAttribute('data-count', '2');
@@ -577,13 +585,14 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
     await expect(summary).toContainText('Delta');
     await expect(summary).toContainText('Open interest');
     await expect(summary).toContainText('Distance from basis');
-    await expect(summary).toContainText('Cost basis');
+    await expect(summary).toContainText('Zero bid');
     await expect(summary).toContainText('Spread');
+    await expect(summary).not.toContainText('Cost basis');
 
     // DOM order: count-desc, with canonical-rule-order tie-break. The two
     // count-4 chips come first; delta_out_of_range precedes low_open_interest
     // in canonical order. Among the count-2 chips, fails_10pct_rule precedes
-    // below_cost_basis precedes wide_bid_ask_spread.
+    // zero_bid precedes wide_bid_ask_spread.
     const chips = summary.locator('button[data-testid^="scanner-rejected-strikes-summary-rule-"]');
     await expect(chips).toHaveCount(5);
     await expect(chips.nth(0)).toHaveAttribute(
@@ -600,7 +609,7 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
     );
     await expect(chips.nth(3)).toHaveAttribute(
       'data-testid',
-      'scanner-rejected-strikes-summary-rule-below_cost_basis'
+      'scanner-rejected-strikes-summary-rule-zero_bid'
     );
     await expect(chips.nth(4)).toHaveAttribute(
       'data-testid',
@@ -670,7 +679,7 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
     ).toHaveCount(0);
     await expect(structuralRow).toContainText('5 reasons');
     await structuralRow.getByTestId('scanner-rejected-strike-group-toggle').click();
-    await expect(structuralRow).toContainText('cost-basis floor');
+    await expect(structuralRow).toContainText('needs a strike of at least $14.53');
   });
 });
 
@@ -1056,12 +1065,12 @@ const BOUNDARY_SCAN_PAYLOAD = {
       strike: 7.0,
       expiration: '2026-07-31',
       rejection_reasons: [
-        'fails_10pct_rule: strike -47.0% above basis, requires 10.0%',
+        'fails_10pct_rule: strike -47.0% above basis, requires 10.0% (strike $7.00, basis $13.21, min strike $14.53)',
         'delta_out_of_range: |0.85| not in [0.20, 0.35]',
         'low_open_interest: 11 < 50',
       ],
       human_reasons: [
-        'Strike sits -47.0% above your $13.21 basis, but the 10.0% rule requires at least that much room.',
+        'Strike $7.00 is 47.0% below your $13.21 basis. Your 10% rule needs a strike of at least $14.53.',
         'Delta +0.85 is outside your 0.20–0.35 range — too close to the money.',
         'Only 11 contracts open — too thin to trade comfortably (the scanner requires at least 50).',
       ],
@@ -1135,7 +1144,7 @@ test.describe('Scanner education — Rejected Strikes ≥3-reason collapse (#259
     await expect(toggles).toHaveCount(2);
     await expect(toggles.first()).toContainText('Show');
     await expect(groups.first()).toContainText('5 reasons hidden');
-    await expect(groups.first()).not.toContainText('cost-basis floor');
+    await expect(groups.first()).not.toContainText('needs a strike of at least');
   });
 
   test('clicking Show on one ≥3-reason group expands ALL ≥3-reason groups (single global flag)', async ({
@@ -1162,8 +1171,8 @@ test.describe('Scanner education — Rejected Strikes ≥3-reason collapse (#259
     await expect(groups.nth(1)).toHaveAttribute('data-collapsed', 'false');
 
     // Bullet text is now rendered in both groups; toggle wording flips to Hide.
-    await expect(groups.nth(0)).toContainText('cost-basis floor');
-    await expect(groups.nth(1)).toContainText('cost-basis floor');
+    await expect(groups.nth(0)).toContainText('needs a strike of at least $14.53');
+    await expect(groups.nth(1)).toContainText('needs a strike of at least $14.53');
     await expect(
       page.getByTestId('scanner-rejected-strike-group-toggle').first()
     ).toContainText('Hide');
@@ -1209,7 +1218,7 @@ test.describe('Scanner education — Rejected Strikes ≥3-reason collapse (#259
 
     const groups = page.getByTestId('scanner-rejected-strike-group');
     await expect(groups.first()).toHaveAttribute('data-collapsed', 'false');
-    await expect(groups.first()).toContainText('cost-basis floor');
+    await expect(groups.first()).toContainText('needs a strike of at least $14.53');
   });
 
   test('rows with < 3 reasons are NOT wrapped in the collapse group', async ({

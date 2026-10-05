@@ -307,7 +307,9 @@ class OptionScanRequest(BaseModel):
     min_iv_rank: Optional[float] = None
     # Covered-call cost-basis floor toggle. When True (default), a CC strike
     # below the cost-basis floor is flagged with a ``below_cost_basis``
-    # rejection reason; the candidate is never dropped.
+    # rejection reason; the candidate is never dropped. ``below_cost_basis`` is
+    # suppressed when ``fails_10pct_rule`` already fired for the strike, unless
+    # the floor is configured stricter than the margin.
     cost_basis_floor_enabled: bool = True
     # Covered-call at-or-above-cost-basis floor margin, whole-percent — None
     # means resolve from rules_config (entry.min_call_distance_from_cost_basis_pct).

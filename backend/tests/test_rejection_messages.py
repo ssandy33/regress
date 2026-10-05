@@ -21,22 +21,61 @@ class TestFails10PctRule:
 
     @pytest.mark.unit
     def test_with_cost_basis_in_context(self):
-        raw = ["fails_10pct_rule: strike 645.7% above basis, requires 10.0%"]
-        ctx: HumanizeContext = {"cost_basis": 13.26}
+        raw = [
+            "fails_10pct_rule: strike 9.8% above basis, requires 10.0% "
+            "(strike $14.50, basis $13.21, min strike $14.53)"
+        ]
+        ctx: HumanizeContext = {"cost_basis": 13.21}
         out = humanize_reasons(raw, ctx)
-        assert len(out) == 1
-        sentence = out[0]
-        assert "645.7%" in sentence
-        assert "$13.26 basis" in sentence
-        assert "10.0% rule requires" in sentence
+        assert out == [
+            "Strike $14.50 is 9.8% above your $13.21 basis. "
+            "Your 10% rule needs a strike of at least $14.53."
+        ]
 
     @pytest.mark.unit
     def test_without_cost_basis_in_context(self):
+        # Legacy raw (no dollar suffix) and no ctx → the degraded sentence.
         raw = ["fails_10pct_rule: strike 5.0% above basis, requires 10.0%"]
         out = humanize_reasons(raw, context=None)
-        assert out[0].startswith("Strike sits 5.0%")
-        assert "your cost basis" in out[0]
-        assert "10.0% rule" in out[0]
+        assert out == [
+            "Strike is 5.0% above your cost basis. "
+            "Your 10% rule needs more room above your basis."
+        ]
+
+    @pytest.mark.unit
+    def test_legacy_raw_with_ctx_basis_renders_full_sentence(self):
+        # Legacy raw carries no strike, so the sentence cannot name one; the
+        # ctx basis is enough to compute and show the required strike.
+        raw = ["fails_10pct_rule: strike 9.8% above basis, requires 10.0%"]
+        out = humanize_reasons(raw, {"cost_basis": 13.21})
+        assert out == [
+            "Strike is 9.8% above your $13.21 basis. "
+            "Your 10% rule needs a strike of at least $14.53."
+        ]
+
+    @pytest.mark.unit
+    def test_negative_distance_below_wording(self):
+        raw = [
+            "fails_10pct_rule: strike -5.4% above basis, requires 10.0% "
+            "(strike $12.50, basis $13.21, min strike $14.53)"
+        ]
+        out = humanize_reasons(raw, {"cost_basis": 13.21})
+        assert out == [
+            "Strike $12.50 is 5.4% below your $13.21 basis. "
+            "Your 10% rule needs a strike of at least $14.53."
+        ]
+        assert "-5.4" not in out[0]
+
+    @pytest.mark.unit
+    def test_threshold_from_raw_not_hardcoded(self):
+        raw = [
+            "fails_10pct_rule: strike 5.0% above basis, requires 7.5% "
+            "(strike $13.87, basis $13.21, min strike $14.20)"
+        ]
+        out = humanize_reasons(raw, {"cost_basis": 13.21})
+        assert "Your 7.5% rule" in out[0]
+        assert "$14.20" in out[0]
+        assert "10%" not in out[0]
 
 
 class TestItmPut:
@@ -162,13 +201,14 @@ class TestMapperShape:
     @pytest.mark.unit
     def test_multiple_reasons_preserve_order(self):
         raw = [
-            "fails_10pct_rule: strike 5.0% above basis, requires 10.0%",
+            "fails_10pct_rule: strike 5.0% above basis, requires 10.0% "
+            "(strike $13.92, basis $13.26, min strike $14.59)",
             "zero_bid",
             "low_open_interest: 12 < 50",
         ]
         out = humanize_reasons(raw, {"cost_basis": 13.26})
         assert len(out) == 3
-        assert out[0].startswith("Strike sits 5.0%")
+        assert out[0].startswith("Strike $")
         assert out[1].startswith("No buyer")
         assert out[2].startswith("Only 12 contracts")
 

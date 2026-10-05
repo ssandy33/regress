@@ -14,8 +14,8 @@
  * those three values.
  *
  * Q6 — the two cost-basis fields are distinct rules (#156 `EntryRules`
- * docstring): `min_call_distance_pct` is a *premium-quality margin above
- * adjusted cost basis*; `min_call_distance_from_cost_basis_pct` is a *bare
+ * docstring): `min_call_distance_pct` is the *margin above adjusted cost
+ * basis* (the "10% rule"); `min_call_distance_from_cost_basis_pct` is a *bare
  * at-or-above-cost-basis loss-avoidance floor*. Their labels and helper text
  * below reflect those definitions.
  *
@@ -177,11 +177,11 @@ export const FIELDS = {
       key: 'min_call_distance_pct',
       label: 'Min call distance above cost basis (margin)',
       suffix: '%',
-      default: 5,
+      default: 10,
       optional: false,
       validate: 'nonNeg',
       helper:
-        'The premium-quality margin: a covered-call strike must sit at least this far above your adjusted cost basis to be recommended. Measured from cost basis, not spot.',
+        'The margin rule: a covered-call strike must sit at least this far above your adjusted cost basis to be recommended, so if your shares are called away you lock in at least this gain. Measured from cost basis, not spot.',
     },
     {
       key: 'min_call_distance_from_cost_basis_pct',
@@ -306,3 +306,13 @@ export const FIELDS = {
     },
   ],
 };
+
+/**
+ * The single frontend default for the covered-call distance rule
+ * (`min_call_distance_pct`, the "10% rule"). Derived from the catalog entry so
+ * the scanner hook, the filter fallback and the strategy primer cannot drift
+ * from the Settings default.
+ */
+export const DEFAULT_MIN_CALL_DISTANCE_PCT = FIELDS.entry.find(
+  (f) => f.key === 'min_call_distance_pct',
+).default;
