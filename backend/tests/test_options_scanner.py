@@ -881,6 +881,15 @@ class TestCoveredCallDistanceRule:
         assert reasons[1] == "below_cost_basis: strike $19.00 < floor $23.00"
 
     @pytest.mark.unit
+    def test_floor_equal_to_margin_uses_cent_precision(self):
+        # floor == margin == 10%: 10.0 * 1.10 is 11.000000000000002 in float,
+        # but an $11.00 strike must pass both rules on a $10.00 basis.
+        req = _cc_rule_request(
+            10.0, min_call_distance_pct=10.0, floor_enabled=True, floor_pct=10.0
+        )
+        assert _reasons_for(req, 11.00, current_price=10.5) == []
+
+    @pytest.mark.unit
     def test_csp_unaffected_by_call_distance(self):
         req = OptionScanRequest(
             ticker="F",

@@ -21,6 +21,7 @@ Pure and stdlib-only, so it is safe to import from ``options_scanner``,
 
 from __future__ import annotations
 
+import math
 import re
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional, TypedDict
@@ -132,16 +133,22 @@ def fails_10pct_sentence(
     """Render the canonical human sentence for a ``fails_10pct_rule`` reason.
 
     ``pct`` is the strike's distance from basis in percent (negative when the
-    strike is below basis). The below/above word is chosen on the value
-    rounded to one decimal, so a tiny negative never renders "-0.0% below".
+    strike is below basis). The below/above word comes from the signed
+    distance (and strike vs. basis when both are known), never from the
+    rounded magnitude, so a strike a hair under basis reads "0.0% below"
+    rather than "0.0% above".
 
     Degrades gracefully: without a basis and required strike (legacy raw with
     no context) the sentence drops the dollar figures; without a strike it
     drops only the strike figure.
     """
-    rounded = round(pct, 1) + 0.0
-    word = "below" if rounded < 0 else "above"
-    magnitude = f"{abs(rounded):.1f}%"
+    below = (
+        pct < 0
+        or math.copysign(1.0, pct) < 0  # a raw "-0.0%" parses to -0.0
+        or (strike is not None and cost_basis is not None and strike < cost_basis)
+    )
+    word = "below" if below else "above"
+    magnitude = f"{abs(round(pct, 1)):.1f}%"
     threshold = format_threshold_pct(distance_pct)
 
     if cost_basis is None or min_strike is None:

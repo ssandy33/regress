@@ -176,11 +176,15 @@ export function formatThresholdPct(value) {
  */
 export function formatFails10pctSentence(parsed) {
   if (!parsed) return null;
-  // Decide the word on the rounded value so -0.04 never reads "-0.0% below";
-  // `+ 0` normalizes a negative zero.
-  const rounded = Number(parsed.pct.toFixed(1)) + 0;
-  const word = rounded < 0 ? 'below' : 'above';
-  const magnitude = `${Math.abs(rounded).toFixed(1)}%`;
+  // Decide the word on the signed distance (a raw "-0.0%" parses to -0) and
+  // strike vs. basis, never on the rounded magnitude, so a strike a hair under
+  // basis reads "0.0% below" rather than "0.0% above".
+  const below =
+    parsed.pct < 0 ||
+    Object.is(parsed.pct, -0) ||
+    (parsed.strike != null && parsed.basis != null && parsed.strike < parsed.basis);
+  const word = below ? 'below' : 'above';
+  const magnitude = `${Math.abs(Number(parsed.pct.toFixed(1))).toFixed(1)}%`;
   const threshold = formatThresholdPct(parsed.min);
   if (parsed.basis == null || parsed.minStrike == null) {
     return `Strike is ${magnitude} ${word} your cost basis. Your ${threshold}% rule needs more room above your basis.`;

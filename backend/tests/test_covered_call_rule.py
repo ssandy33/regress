@@ -150,8 +150,16 @@ def test_sentence_below_wording_renders_abs():
 
 
 @pytest.mark.unit
-def test_sentence_rounded_zero_is_above_not_negative_zero():
+def test_sentence_hair_below_basis_reads_below_not_negative_zero():
+    # A strike a hair under basis rounds to 0.0% but is still below basis.
     sentence = fails_10pct_sentence(13.20, 13.21, 10.0, -0.04, 14.53)
-    assert "0.0% above" in sentence
+    assert "0.0% below" in sentence
     assert "-0.0" not in sentence
-    assert "below" not in sentence
+
+
+@pytest.mark.unit
+def test_sentence_legacy_negative_zero_pct_reads_below():
+    # Legacy raw "strike -0.0% above basis" parses to -0.0 with no strike.
+    sentence = fails_10pct_sentence(None, 100.0, 10.0, -0.0, 110.0)
+    assert "0.0% below" in sentence
+    assert "-0.0" not in sentence

@@ -14,7 +14,11 @@ from app.services.schwab_client import SchwabClient, SchwabClientError
 from app.services.schwab_auth import SchwabAuthError
 from app.services.alpha_vantage_client import get_next_earnings_date
 from app.services.greeks import calculate_greeks
-from app.services.covered_call_rule import fails_10pct_raw, meets_call_distance
+from app.services.covered_call_rule import (
+    fails_10pct_raw,
+    meets_call_distance,
+    required_call_strike,
+)
 from app.services.rejection_messages import HumanizeContext, humanize_reasons
 from app.services.rules_config import DEFAULT_RULES_CONFIG
 from app.utils.parsing import to_float, to_int
@@ -531,8 +535,10 @@ class OptionScanner:
             floor_pct = req.min_call_distance_from_cost_basis_pct or 0.0
             floor_redundant = fails_margin and floor_pct <= req.min_call_distance_pct
             if req.cost_basis_floor_enabled and not floor_redundant:
-                cost_basis_floor = req.cost_basis * (1 + floor_pct / 100)
-                if strike < cost_basis_floor:
+                # Same cent-precision decision as the margin, so a floor equal
+                # to the margin can never reject a strike the margin accepts.
+                if not meets_call_distance(strike, req.cost_basis, floor_pct):
+                    cost_basis_floor = required_call_strike(req.cost_basis, floor_pct)
                     reasons.append(
                         f"below_cost_basis: strike ${strike:.2f} < "
                         f"floor ${cost_basis_floor:.2f}"
