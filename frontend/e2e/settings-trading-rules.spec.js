@@ -440,7 +440,7 @@ test.describe('Settings → Trading Rules — save lifecycle @smoke @e2e', () =>
     await expect(
       page.getByTestId('rules-field-min_open_interest'),
     ).toHaveValue('500');
-    // The covered-call distance rule resets to the 10% default (issue TBD).
+    // The covered-call distance rule resets to the 10% default (#456).
     await expect(
       page.getByTestId('rules-field-min_call_distance_pct'),
     ).toHaveValue('10');

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * E2E coverage for the covered-call distance rule (issue TBD) — one
+ * E2E coverage for the covered-call distance rule (#456) — one
  * threshold, one message.
  *
  *   E1  The strategy primer states the T% rule derived from the live

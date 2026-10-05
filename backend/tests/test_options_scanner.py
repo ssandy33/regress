@@ -769,7 +769,7 @@ class TestEmptyResponse:
 
 # ---------------------------------------------------------------------------
 # Covered-call distance rule — one threshold, cent precision, no double count
-# (issue TBD). Direct ``_check_rejection`` / ``_passes_10pct_rule`` calls.
+# (#456). Direct ``_check_rejection`` / ``_passes_10pct_rule`` calls.
 # ---------------------------------------------------------------------------
 
 

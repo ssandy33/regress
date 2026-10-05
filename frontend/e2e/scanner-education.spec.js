@@ -320,7 +320,7 @@ test.describe('Scanner education — humanized rejected strikes @e2e', () => {
 //   zero_bid                : 2  ($5.00, $6.00)
 //   wide_bid_ask_spread     : 2  ($5.00, $6.00)
 // A below-basis strike reports fails_10pct_rule only — below_cost_basis is
-// folded into it (issue TBD), so there is no separate "Cost basis" chip.
+// folded into it (#456), so there is no separate "Cost basis" chip.
 // Order count-desc, canonical-order tie-break:
 //   delta_out_of_range (4), low_open_interest (4), fails_10pct_rule (2),
 //   zero_bid (2), wide_bid_ask_spread (2)
@@ -560,7 +560,7 @@ test.describe('Scanner education — Rejected Strikes sort + summary + near-pass
     // Counts (per-strike dedupe inside the aggregator):
     //   delta_out_of_range: 4, low_open_interest: 4, fails_10pct_rule: 2,
     //   zero_bid: 2, wide_bid_ask_spread: 2. No below_cost_basis chip — it
-    //   is folded into fails_10pct_rule (issue TBD).
+    //   is folded into fails_10pct_rule (#456).
     await expect(
       page.getByTestId('scanner-rejected-strikes-summary-rule-delta_out_of_range')
     ).toHaveAttribute('data-count', '4');

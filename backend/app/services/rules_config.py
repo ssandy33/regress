@@ -247,7 +247,7 @@ class EntryRules(BaseModel):
     # reconciled catalog value (resolves the scanner's prior 5-day drift).
     earnings_buffer_days: int = 7
     # Covered-call margin above cost basis, whole-percent — the "10% rule".
-    # See the class docstring. PRD #209 §R3; default raised 5 → 10 (issue TBD).
+    # See the class docstring. PRD #209 §R3; default raised 5 → 10 (#456).
     min_call_distance_pct: float = 10.0
     # Covered-call hard at-or-above-cost-basis floor, whole-percent. See the
     # class docstring. PRD #209 §R3.

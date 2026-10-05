@@ -1,4 +1,4 @@
-"""Integration tests for the covered-call distance rule (issue TBD).
+"""Integration tests for the covered-call distance rule (#456).
 
 Full stack: ``POST /api/options/scan`` through the router's ``rules_config``
 backfill into :class:`OptionScanner`, with the Schwab chain patched. Covers:

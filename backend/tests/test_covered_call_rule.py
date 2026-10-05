@@ -1,4 +1,4 @@
-"""Unit tests for :mod:`app.services.covered_call_rule` (issue TBD).
+"""Unit tests for :mod:`app.services.covered_call_rule` (#456).
 
 The covered-call distance rule is ``strike >= cost_basis * (1 + T/100)``
 where ``T`` is ``min_call_distance_pct``. This module owns the required-strike

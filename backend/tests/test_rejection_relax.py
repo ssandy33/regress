@@ -401,7 +401,7 @@ def test_relax_low_oi_threshold_text_uses_rules_config(client):
 
 
 # ---------------------------------------------------------------------------
-# fails_10pct_rule — dollar math, scan threshold, 0% clamp (issue TBD)
+# fails_10pct_rule — dollar math, scan threshold, 0% clamp (#456)
 # ---------------------------------------------------------------------------
 
 

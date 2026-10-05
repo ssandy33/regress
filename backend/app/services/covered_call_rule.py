@@ -1,4 +1,4 @@
-"""Covered-call distance rule — the single source of truth (issue TBD).
+"""Covered-call distance rule — the single source of truth (#456).
 
 The rule: a covered-call strike must satisfy
 ``strike >= cost_basis * (1 + T / 100)`` where ``T`` is

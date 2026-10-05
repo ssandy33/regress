@@ -306,7 +306,7 @@ def _schwab_call_chain(strike: float, *, oi: int, dte: int = 30):
 def test_cc_scan_surfaces_below_cost_basis_reason(client):
     """A CC strike below the cost-basis floor is flagged ``below_cost_basis``, not dropped.
 
-    Bridge edit (issue TBD): ``below_cost_basis`` is now folded into
+    Bridge edit (#456): ``below_cost_basis`` is now folded into
     ``fails_10pct_rule`` whenever the margin rule fires, so this test pins the
     only configuration that still reports it — a floor stricter than the
     margin (T=0, floor=5%) with the strike in the ``[$20.00, $21.00)`` band.

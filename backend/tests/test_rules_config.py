@@ -694,7 +694,7 @@ def test_sizing_cap_account_accepts_strings():
 
 
 # ---------------------------------------------------------------------------
-# Covered-call distance default (issue TBD)
+# Covered-call distance default (#456)
 # ---------------------------------------------------------------------------
 
 
